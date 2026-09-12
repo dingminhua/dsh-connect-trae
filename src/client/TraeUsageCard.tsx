@@ -182,19 +182,14 @@ export function TraeUsageCard({ t, settingsScope }: TraeUsageCardProps) {
       // fresh catalog by model id, so refresh never silently loses enabled
       // choices, image opt-ins, or context budgets.
       //
-      // A stored selection is a *filter* over the catalog, and it is only
-      // meaningful for the models it was made against. Once Trae adds a model,
-      // a selection saved earlier does not list it, so keeping the filter
-      // verbatim would refresh the directory and still not show the new model.
-      // Widening it to every model the catalog can call is the same convention
-      // the Host already uses for an empty selection (it serves the whole
-      // directory); a model the user deliberately switched off before the
-      // refresh still stays off, because it is in the saved selection.
-      const carried = activeEnabledIds.size > 0
-        ? [...activeEnabledIds].filter(id => freshIds.has(id))
-        : []
-      const newlySeen = [...freshIds].filter(id => !activeEnabledIds.has(id))
-      const stillEnabled = [...carried, ...newlySeen]
+      // Refresh must NOT widen the selection. A model absent from it is either
+      // one the user switched off or one Trae added since it was saved, and
+      // neither is the card's decision to make: enabling everything the fresh
+      // catalog offers would silently turn a curated selection into "select
+      // all" on every refresh. (The Host's "an empty selection serves the whole
+      // directory" rule covers a selection that was never made at all — it is
+      // not a licence to fill one in here.)
+      const stillEnabled = [...activeEnabledIds].filter(id => freshIds.has(id))
       const stillImages = [...activeImageIds].filter(id => freshIds.has(id))
       const stillBudgets: Record<string, number> = {}
       for (const id of freshIds) {

@@ -54,6 +54,37 @@ describe('Trae provider registration', () => {
     expect(models.find(model => model.id === 'DeepSeek-V4-Flash')?.inputModalities).toEqual(['text'])
   })
 
+  it('never widens the user selection when the directory is refreshed', async () => {
+    // Regression guard: the card's refresh handler briefly unioned the fresh
+    // catalog into the saved selection, so pressing refresh silently turned a
+    // curated 2-model choice into "select all". The served catalog is derived
+    // from `enabledModelIds`, so that widening is observable right here.
+    const ctx = new Context()
+    context = ctx
+    await ctx.plugin(LlmRuntime)
+    await ctx.plugin(MemorySettings)
+    await ctx.plugin(Trae, { edition: 'auto' })
+    await expect.poll(() => ctx.llm.listProviders().map(provider => provider.id)).toContain('trae')
+
+    const chosen = ['DeepSeek-V4-Flash', 'DeepSeek-V4-Pro']
+    await ctx.settings.update(Trae.TRAE_SETTINGS_NS, { enabledModelIds: chosen })
+    const served = (await ctx.llm.listModels('trae')).map(model => model.id)
+    expect([...served].sort()).toEqual([...chosen].sort())
+
+    // A refresh rewrites `lastCatalog` (the directory), not the selection. The
+    // selection must survive verbatim — not grow to include the rest of the
+    // directory, and not silently lose the rows it names.
+    const directory = (await ctx.llm.listModels('trae')).map(model => ({
+      id: model.id,
+      name: model.name,
+      input: ['text'],
+    }))
+    await ctx.settings.update(Trae.TRAE_SETTINGS_NS, { lastCatalog: directory })
+    await ctx.settings.update(Trae.TRAE_SETTINGS_NS, { enabledModelIds: chosen })
+    const afterRefresh = (await ctx.llm.listModels('trae')).map(model => model.id)
+    expect([...afterRefresh].sort()).toEqual([...chosen].sort())
+  })
+
   it('embeds the credit multiplier of the directory actually being served', async () => {
     const ctx = new Context()
     context = ctx
