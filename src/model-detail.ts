@@ -1,10 +1,18 @@
 export const TRAE_MODEL_DETAIL_PATH = '/api/ide/v1/batch_get_detail_param'
 
+/**
+ * TraeCode functions, in the IDE's own probe order.
+ *
+ * This list previously mixed TraeWork functions (`solo_agent_remote`,
+ * `solo_work_remote`, `solo_agent_lite`, `solo_work_lite`, `solo_design_*`)
+ * with TraeCode ones, which is how the TraeWork catalog leaked into this
+ * plugin. Only TraeCode entries remain, so a `batch_get_detail_param` probe
+ * cannot answer a TraeWork model set.
+ */
 export const TRAE_MODEL_DETAIL_FUNCTIONS = [
-  'ui_builder_v2', 'solo_coder', 'chat_v3', 'solo_builder', 'builder_v3', 'builder', 'chat', 'inline_chat',
-  'git_ai', 'custom_agent_generation', 'utils', 'code_reviewer', 'code_review_summary', 'solo_agent',
-  'solo_agent_remote', 'solo_work_remote', 'solo_agent_lite', 'solo_work_lite', 'solo_design_lite',
-  'solo_design_remote', 'multimodal', 'system_diagnosis',
+  'chat_v3', 'builder_v3', 'ui_builder_v2', 'builder', 'chat', 'inline_chat',
+  'solo_coder', 'git_ai', 'custom_agent_generation', 'utils', 'code_reviewer',
+  'code_review_summary', 'multimodal', 'system_diagnosis',
 ] as const
 
 export interface TraeModelDetailRequest {

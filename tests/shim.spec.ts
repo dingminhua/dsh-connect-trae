@@ -37,7 +37,10 @@ describe('Trae loopback shim', () => {
     const response = await fetch(`${shim.baseUrl()}/v1/models`, { headers: { authorization: `Bearer ${shim.token()}` } })
     expect(response.status).toBe(200)
     const body = await response.json() as { data: { id: string }[] }
-    expect(body.data.map(item => item.id)).toContain('auto')
+    // TraeCode set: `auto` is a TraeWork-only entry the TraeCode forwarding
+    // path rejects, so it must not appear even before discovery runs.
+    expect(body.data.map(item => item.id)).toContain('glm-5.2')
+    expect(body.data.map(item => item.id)).not.toContain('auto')
   })
 
   it('rejects missing bearer and hostile Host', async () => {

@@ -339,7 +339,12 @@ export function apply(ctx: Context, config: Config): void {
     } catch (error: unknown) {
       ctx.logger.warn('dsh-connect-trae: wire-id resolution failed at startup; falling back to display ids', error)
     }
-    catalog.set(configuredModels(current()))
+    // `discoverModels()` above already installed the live TraeCode catalog on
+    // success. Only when it produced nothing (no credentials, offline, startup
+    // failure) fall back to the settings-derived list / built-in defaults —
+    // doing this unconditionally discarded every discovered model and left the
+    // plugin serving only the 5 built-in fallbacks.
+    if (catalog.current() === FALLBACK_TRAE_MODELS) catalog.set(configuredModels(current()))
     const trae = createTraeAdapter({
       shim,
       catalog,

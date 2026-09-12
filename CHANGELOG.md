@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.4.1 (2026-09-13)
+
+### Fixes
+
+- **模型列表与调用统一改为 TraeCode 产品线**（此前取的是 TraeWork 的模型集）。Trae 按产品线切分目录，`get_detail_param` 的 `function` 决定返回哪一套：`solo_work_lite` / `solo_work_remote` 属 TraeWork，`chat_v3` / `builder_v3` 属 TraeCode。插件此前用 `solo_work_lite` 取目录、并以 TraeWork 的 `solo_agent_remote,solo_work_remote` 拉 Remote 目录，导致暴露的是 TraeWork 模型集：
+  - `TRAE_SOLO_FUNCTION` 由 `solo_work_lite` 改为 `chat_v3`。该常量同时决定模型列表与转发调用，二者不会再漂移。
+  - Remote 目录请求函数由 `solo_agent_remote,solo_work_remote` 改为 `chat_v3`。
+  - `TRAE_MODEL_DETAIL_FUNCTIONS` 移除 `solo_agent`、`solo_agent_remote`、`solo_work_remote`、`solo_agent_lite`、`solo_work_lite`、`solo_design_lite`、`solo_design_remote`、`solo_builder` 八个 TraeWork 函数，只留 TraeCode 的。
+- **模型目录改以 `get_detail_param` 为准，不再以 Remote 目录为骨架**。实测同一账号：Remote 的 TraeCode 组列出了 `chat_v3` 拒绝的模型（`Doubao-Seed-Evolving`、`glm-5.3`、`qwen3.8-max`、`kimi-k2.8-preview`、`glm-5.3-flash`，调用一律 4001 `param is invalid`），又漏掉了可调用的模型（`glm-4.7`、`glm-4.6`、`kimi-k2`、`qwen-3.5`、`minimax-m2`、`qwen3-coder`）。现在逐条枚举 wire 目录，Remote 只用于补充展示名等元数据。本机实测由「TraeWork 模型集」变为 **24 个 TraeCode 可调用模型**，TraeCode 独占模型全部可用，且不再有不可调用项泄漏。
+- **只保留 Trae 提供 `display_name` 的行**。同一次响应里有 21/48 行是内部功能项而非可选模型（`custom_model_*`、`fast_apply`、`fast_apply_new`、`title_generation`、`input_optimization`、`summary`、`doubao-for-auto`、`glm-4.7-auto`），此前被当作模型暴露。注意 `is_invisible_to_user` 不能用作判据——Trae 对 `glm-4.7`、`kimi-k2`、`minimax-m2` 等正常模型同样标记为 invisible。
+- **修复启动时发现的模型目录被覆盖**：`shim.ready` 回调先跑 `discoverModels()` 装好实时目录，紧接着无条件执行 `catalog.set(configuredModels(current()))`。全新配置下 `lastCatalog` 为空，这一步会退回内置兜底表，把刚发现的模型全部丢弃——表现为插件永远只提供 5 个硬编码模型。现在仅在发现未产出时才回退。
+- **修复目录中的重复 id**：`get_detail_param` 会把同一 `config_name` 列出两次（实测 `kimi-k3`），而 `PiAiAdapter` 对重复 id 直接抛 `invalid or duplicate model metadata`、整条目录不可用。现在按 id 去重，保留首行。
+- 内置兜底表改为全部可经 TraeCode 调用：移除 `auto`（TraeCode 目录不含且 `chat_v3` 拒绝），新增 `kimi-k3`、`minimax-m3`。`kimi-k2.6` 虽不在 TraeCode wire 目录中，但转发调用实际接受，故保留可调用性判断依据。
+- 一处判断依据说明：`wireConfigName` 不再由合并产出（行 id 即 wire `config_name`，映射为恒等），字段保留声明以兼容旧版本已保存的目录，桥接层仍照常读取。
+
 ## 1.4.0 (2026-09-10)
 
 ### Changes

@@ -30,8 +30,15 @@ describe('Trae catalog', () => {
     expect(catalog.current().some(model => model.id === 'DeepSeek-V4-Flash')).toBe(true)
     expect(catalog.current().every(model => model.contextWindow === undefined)).toBe(true)
     expect(traeInputModalities(FALLBACK_TRAE_MODELS.find(model => model.id === 'glm-5.2')!)).toEqual(['text'])
-    expect(traeInputModalities(FALLBACK_TRAE_MODELS.find(model => model.id === 'kimi-k2.6')!)).toEqual(['text'])
+    expect(traeInputModalities(FALLBACK_TRAE_MODELS.find(model => model.id === 'kimi-k3')!)).toEqual(['text'])
     expect(traeInputModalities(FALLBACK_TRAE_MODELS.find(model => model.id === 'DeepSeek-V4-Pro')!)).toEqual(['text'])
+  })
+
+  it('carries only models the TraeCode forwarding path accepts', () => {
+    // `auto` is a TraeWork-only entry: the TraeCode wire catalog omits it and
+    // `chat_v3` rejects it with 4001, so it must not be offered as a bootstrap
+    // default on a machine that has no fetched catalog yet.
+    expect(FALLBACK_TRAE_MODELS.some(model => model.id === 'auto')).toBe(false)
   })
 
   it('ignores uncertain upstream multimodal flags and keeps one text-only entry per model', () => {
@@ -100,16 +107,17 @@ describe('traeModelDisplayName', () => {
 })
 
 describe('mergeTraeModelSources', () => {
-  it('keeps the remote directory id as the model id and attaches the wire config_name', () => {
+  it('enumerates the wire catalog and enriches each row from the remote directory', () => {
     const remote: TraeDiscoveredModel[] = [
       { id: 'Doubao-Seed-Code', name: 'Seed-Code', multimodal: true, contextWindow: 128_000, maxContextWindow: 256_000, creditMultiplier: 1.5, reasoningSupported: true, reasoning: { supported: ['low', 'high', 'xhigh'], defaultEffort: 'high' } },
       { id: 'glm-5.2', name: 'GLM-5.2', multimodal: false, contextWindow: 168_000, reasoningSupported: false },
     ]
     const wire = [
-      { id: 'Doubao_1_6', name: 'Seed-Code' },
+      { id: 'Doubao-Seed-Code', name: 'Seed-Code' },
       { id: 'glm-5.2', name: 'GLM-5.2' },
     ]
     const merged = mergeTraeModelSources(remote, wire)
+    // The wire config_name is the id, so no display→wire translation is needed.
     expect(merged.map(model => model.id)).toEqual(['Doubao-Seed-Code', 'glm-5.2'])
     expect(merged[0]).toMatchObject({
       id: 'Doubao-Seed-Code',
@@ -118,48 +126,46 @@ describe('mergeTraeModelSources', () => {
       maxContextWindow: 256_000,
       creditMultiplier: 1.5,
       input: ['text'],
-      wireConfigName: 'Doubao_1_6',
     })
     // Reasoning comes from the remote skeleton, mapped to Trae wire effort strings.
     expect(merged[0]?.reasoningEfforts).toEqual({ low: 'light', high: 'high', xhigh: 'extra_high' })
-    // A remote model whose wire id equals its own id needs no wireConfigName.
+    // A wire row whose id equals its display name needs no wireConfigName.
     expect(merged[1]).toMatchObject({ id: 'glm-5.2', name: 'GLM-5.2', input: ['text'] })
     expect(merged[1]?.wireConfigName).toBeUndefined()
   })
 
-  it('joins by config_name id first, then display name case-insensitively, and drops wire-only rows', () => {
+  it('keeps every wire-callable row even when Remote never advertises it', () => {
+    // The live TraeCode account exposes callable config_names the Remote
+    // directory omits entirely (glm-4.7, glm-4.6, kimi-k2, qwen-3.5,
+    // minimax-m2, qwen3-coder). Enumerating wire — not Remote — is what makes
+    // those reachable; a remote-first merge silently dropped them.
     const remote: TraeDiscoveredModel[] = [
-      // Exact id match: id is already the wire config_name.
       { id: 'glm-5.2', name: 'GLM-5.2', multimodal: false, reasoningSupported: false },
-      // Display-name match with a differing wire id → wireConfigName attached.
-      { id: 'remote-doubao', name: 'seed-code', multimodal: true, reasoningSupported: false, creditMultiplier: 2 },
     ]
     const wire = [
       { id: 'glm-5.2', name: 'GLM-5.2' },
-      { id: 'wire-doubao', name: 'SEED-CODE' },
-      { id: 'wire-orphan', name: 'No Remote Match' },
+      { id: 'glm-4.7', name: 'GLM-4.7' },
+      { id: 'qwen-3.5', name: 'Qwen3.5-Plus' },
     ]
     const merged = mergeTraeModelSources(remote, wire)
-    expect(merged.map(model => model.id)).toEqual(['glm-5.2', 'remote-doubao'])
-    expect(merged[1]?.wireConfigName).toBe('wire-doubao')
-    expect(merged[1]?.creditMultiplier).toBe(2)
-    // The wire-only orphan is dropped (no remote skeleton to expose).
-    expect(merged.some(model => model.id === 'wire-orphan')).toBe(false)
+    expect(merged.map(model => model.id)).toEqual(['glm-5.2', 'glm-4.7', 'qwen-3.5'])
+    // Remote knows nothing of glm-4.7, so its display name falls back to the
+    // wire name — still a coherent row, and still callable.
+    expect(merged[1]).toMatchObject({ id: 'glm-4.7', name: 'GLM-4.7' })
   })
 
-  it('drops remote models that map to no wire config_name (uncallable → would 4001)', () => {
-    // Doubao-Seed-Code and glm-5.3 are advertised by the Remote directory but
-    // are NOT current `config_name`s in get_detail_param; sending them makes
-    // every request fail with 4001 "param is invalid". They must not ship.
+  it('excludes Remote rows that are not current wire config_names (uncallable → would 4001)', () => {
+    // Doubao-Seed-Evolving, glm-5.3, qwen3.8-max, kimi-k2.8-preview and
+    // glm-5.3-flash are all advertised by the Remote TraeCode group yet absent
+    // from get_detail_param; every one of them answers 4001 "param is
+    // invalid". Serving them produced a list the forwarding call rejects.
     const remote: TraeDiscoveredModel[] = [
-      { id: 'Doubao-Seed-Code', name: 'Seed-Code', multimodal: true, reasoningSupported: true },
+      { id: 'Doubao-Seed-Evolving', name: 'Seed-Evolving', multimodal: true, reasoningSupported: true },
       { id: 'glm-5.3', name: 'GLM-5.3', multimodal: false, reasoningSupported: false },
+      { id: 'qwen3.8-max', name: 'Qwen3.8-Max', multimodal: false, reasoningSupported: false },
       { id: 'glm-5.2', name: 'GLM-5.2', multimodal: false, reasoningSupported: false },
     ]
-    const wire = [
-      { id: 'glm-5.2', name: 'GLM-5.2' },
-      { id: 'Doubao-Seed-2.0-Code', name: 'Doubao-Seed-2.1-Turbo' },
-    ]
+    const wire = [{ id: 'glm-5.2', name: 'GLM-5.2' }]
     const merged = mergeTraeModelSources(remote, wire)
     expect(merged.map(model => model.id)).toEqual(['glm-5.2'])
   })

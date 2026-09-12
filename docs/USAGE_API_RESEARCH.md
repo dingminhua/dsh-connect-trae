@@ -96,6 +96,56 @@ start_time, end_time, page_size, page_num, usage_type, Request
 - 埋点/统计请求（`mcs.zijieapi.com`、`clarity.ms`、`bing`、`monitor_browser`）不含用量数据，可忽略。
 - 从 Network 实测确认：用量页真正的数据请求就是 `api.trae.cn/trae/api/v2/pay/*`（已全部复现）和 `query_user_usage_group_by_session`（明细，空）。
 
+## 产品线切分：TraeCode 与 TraeWork（2026-09-13 补充）
+
+Trae 按**产品线**切分积分与模型，两者必须一致取用，否则会出现「列表里有、一调就 4001」。
+
+### 积分侧
+
+官方文档（`docs.trae.cn/ide_plans-and-billing`）：积分按适用产品分为**通用积分**（TraeCode + TraeWork）与 **Work 专属积分**（仅 TraeWork）。
+
+`www.trae.cn` 前端 bundle 里对应的判定逻辑（`26138.54b732f3ed.js`）：
+
+```js
+reqSource === Mk.IDE                       // 请求方是 TraeCode
+  ? packs.filter(p => p.entitlement_base_info.available_endpoint !== nf.Work)
+  : packs                                  // TraeWork 用完整列表
+```
+
+同文件枚举：`[nf.General = 0] = "General"`、`[nf.Work = 1] = "Work"`。
+
+即 **TraeCode 消费的是 `available_endpoint !== 1` 的 pack 集合**。本仓库 `src/web-status.ts` 现用 `remaining(0)` / `remaining(1)` 分桶，与该逻辑等价（该字段只取 0/1）。
+
+### 模型侧（本次修复的来源）
+
+`get_detail_param` 的 `function` 决定返回哪条产品线的目录：
+
+| function | 产品线 | 说明 |
+|---|---|---|
+| `solo_work_lite`、`solo_agent_remote`、`solo_work_remote` | TraeWork | 插件此前误用 |
+| `chat_v3`、`builder_v3` | **TraeCode** | 现用；两者给出的可选模型集一致 |
+
+同一账号实测差异：
+
+- TraeWork（`solo_work_lite`）独有：`kimi-k2.6`、`qwen3.8-max`、`glm-5-turbo`、`Seed-Evolving`
+- TraeCode（`chat_v3`）独有且**可调用**：`glm-4.7`、`glm-4.6`、`glm-5.1`、`kimi-k2`、`qwen-3.5`、`minimax-m2`、`qwen3-coder`
+
+### Remote 目录不可作为模型骨架
+
+`solo.trae.cn/api/remote/v1/models?functions=chat_v3` 会返回 TraeCode 组，但它**不是可调用契约**：列出的 `Doubao-Seed-Evolving`、`glm-5.3`、`qwen3.8-max`、`kimi-k2.8-preview`、`glm-5.3-flash` 全部被 `chat_v3` 以 4001 `param is invalid` 拒绝，同时又漏掉上表 TraeCode 独有模型。故目录以 `get_detail_param` 为准，Remote 仅用于补充展示名等元数据。
+
+### `display_name` 是「可选模型」的判据
+
+同一次 `chat_v3` 响应 48 行中只有 27 行带 `display_config.display_name`，其余 21 行是内部功能项（`custom_model_*`、`fast_apply`、`fast_apply_new`、`title_generation`、`input_optimization`、`summary`、`doubao-for-auto`、`glm-4.7-auto`）。
+
+**`is_invisible_to_user` 不能用作判据**：Trae 对 `glm-4.7`、`kimi-k2`、`minimax-m2` 等正常可选模型同样置 `true`。
+
+### 其它已核实
+
+- `ide_user_ent_usage`（v1/v2）与 `web_user_ent_usage` 返回同一份数据，是别名而非独立列表。
+- `/trae/api/v2/pay/query_user_usage_group_by_session` 返回 404 Page not found；消费明细在 v1 下为 `total:0`（见上节），v2 路径不存在。
+- 推理能力：本次 `get_detail_param` 对 TraeCode 与 TraeWork 两条线各 27/25 个模型均未返回可解析的 reasoning 字段（`parseReasoningCapability` 全为 undefined），推理档位仍由 raw-chat 配置路径解析，非本次回归。
+
 ## 建议下一步
 
 1. ~~将已验证的额度/积分/签到/活动接口封装为插件只读命令（如 `trae.usage`）~~ **已完成（2026-08-28）**：

@@ -13,7 +13,7 @@ describe('Trae SOLO protocol', () => {
       model: 'glm-5.2', messages: [{ role: 'user', content: 'hello' }, { role: 'assistant', tool_calls: [{ id: '1', function: { name: 'read', arguments: '{}' } }] }],
       tools: [{ type: 'function', function: { name: 'read', parameters: { type: 'object' } } }], stream: false,
     })))
-    expect(prepared).toMatchObject({ model: 'glm-5.2', config_name: 'glm-5.2', function: 'solo_work_lite', stream: true })
+    expect(prepared).toMatchObject({ model: 'glm-5.2', config_name: 'glm-5.2', function: 'chat_v3', stream: true })
     expect(prepared.messages[0].content).toEqual([{ type: 'text', text: 'hello' }])
     expect(prepared.messages[1].tool_calls[0].function_call).toEqual({ name: 'read', arguments: '{}' })
     expect(prepared.messages[1].tool_calls[0].function).toBeUndefined()
@@ -38,7 +38,7 @@ describe('Trae SOLO protocol', () => {
       ],
       model: 'Doubao-Seed-Code',
       config_name: 'Doubao-Seed-Code',
-      function: 'solo_work_lite',
+      function: 'chat_v3',
       stream: true,
     })
   })

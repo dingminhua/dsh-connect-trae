@@ -39,11 +39,14 @@ export class TraeSoloRemoteCatalogClient {
 
   async fetchModels(signal?: AbortSignal): Promise<TraeDiscoveredModel[]> {
     const headers = await this.headers()
-    const response = await this.fetchImpl(`${this.baseUrl}/models?functions=solo_agent_remote,solo_work_remote`, { headers, signal: signal ?? AbortSignal.timeout(30_000) })
+    // TraeCode groups only. The previous `solo_agent_remote,solo_work_remote`
+    // pair is the TraeWork catalog and was the source of this plugin serving
+    // TraeWork models; `chat_v3` is the TraeCode conversation entry point.
+    const response = await this.fetchImpl(`${this.baseUrl}/models?functions=chat_v3`, { headers, signal: signal ?? AbortSignal.timeout(30_000) })
     if (!response.ok) throw new Error(`SOLO remote models returned HTTP ${response.status}`)
     const json = await response.json() as { code?: number; data?: { list?: { function?: string; models?: unknown[] }[] } }
     const groups = json.data?.list ?? []
-    const preferred = groups.find(group => group.function === 'solo_agent_remote') ?? groups[0]
+    const preferred = groups.find(group => group.function === 'chat_v3') ?? groups[0]
     const seen = new Set<string>()
     const models: TraeDiscoveredModel[] = []
     for (const raw of preferred?.models ?? []) {

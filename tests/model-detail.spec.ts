@@ -14,8 +14,18 @@ describe('Trae model detail request', () => {
       ab_autotest_advanced_mode: 0,
     })
     expect(body.functions).toContain('inline_chat')
-    expect(body.functions).toContain('solo_agent')
-    expect(body.functions).toContain('solo_work_remote')
+    expect(body.functions).toContain('chat_v3')
+    expect(body.functions).toContain('builder_v3')
+  })
+
+  it('probes TraeCode functions only, never TraeWork ones', () => {
+    // The TraeWork functions this list used to carry (solo_agent,
+    // solo_agent_remote, solo_work_remote, solo_agent_lite, solo_work_lite,
+    // solo_design_lite, solo_design_remote, solo_builder) answer the TraeWork
+    // catalog. Mixing them in is what let the TraeWork model set leak into a
+    // TraeCode plugin.
+    const workFunctions = TRAE_MODEL_DETAIL_FUNCTIONS.filter(name => /^solo_(work|agent|design)/.test(name))
+    expect(workFunctions).toEqual([])
   })
 
   it('carries an exact custom config identity when requested', () => {

@@ -5,15 +5,15 @@ import type { TraeCredential } from '../src/auth.ts'
 const credential: TraeCredential = { accessToken: 'token', userId: 'uid', host: 'https://host', expiresAtMs: Date.now() + 1000, edition: 'solo', source: 'desktop' }
 
 describe('TraeSoloRemoteCatalogClient', () => {
-  it('parses model capabilities from the preferred solo_agent_remote group', async () => {
+  it('parses model capabilities from the TraeCode chat_v3 group', async () => {
     const fetchImpl = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => new Response(JSON.stringify({ code: 0, data: { list: [
-      { function: 'solo_agent_remote', models: [{
+      { function: 'chat_v3', models: [{
         name: 'qwen3.8-max', display_name: 'Qwen3.8-Max', multimodal: true, max_mode: true,
         context_window_tokens: { dev: 200000, max: 1000000 },
         reasoning_effort_config: { support_thinking: true, options: ['light', 'high', 'extra_high'], default_level: 'high' },
         features: JSON.stringify({ consumption_rate: { enable: true, data: { rate: 1.5 } }, reasoning: { enable: true } }),
       }] },
-      { function: 'solo_work_remote', models: [{ name: 'ignored' }] },
+      { function: 'builder_v3', models: [{ name: 'ignored' }] },
     ] } }), { status: 200 }))
     const client = new TraeSoloRemoteCatalogClient({ credential: async () => credential, fetchImpl: fetchImpl as unknown as typeof fetch })
     await expect(client.fetchModels()).resolves.toEqual([{
@@ -22,7 +22,9 @@ describe('TraeSoloRemoteCatalogClient', () => {
       reasoningSupported: true,
       reasoning: { supported: ['low', 'high', 'xhigh'], defaultEffort: 'high' },
     }])
-    expect(fetchImpl.mock.calls[0]?.[0]).toBe('https://solo.trae.cn/api/remote/v1/models?functions=solo_agent_remote,solo_work_remote')
+    // TraeCode only: the TraeWork functions this used to request
+    // (`solo_agent_remote,solo_work_remote`) answer the TraeWork catalog.
+    expect(fetchImpl.mock.calls[0]?.[0]).toBe('https://solo.trae.cn/api/remote/v1/models?functions=chat_v3')
   })
 
   it('fails clearly when the catalog response contains no usable models', async () => {

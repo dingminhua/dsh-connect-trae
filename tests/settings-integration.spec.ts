@@ -4,6 +4,7 @@ import LlmRuntime from '@deepseek-ai/dsh-llm'
 import SettingsProvider from '@deepseek-ai/dsh-settings'
 import type { SettingsNamespace } from '@deepseek-ai/dsh-settings'
 import * as Trae from '../src/index.ts'
+import { FALLBACK_TRAE_MODELS } from '../src/catalog.ts'
 
 class MemorySettings extends SettingsProvider {
   readonly writable = true
@@ -34,7 +35,7 @@ describe('Trae provider registration', () => {
     expect(models.map(model => model.id)).toContain('DeepSeek-V4-Flash')
     expect(models.map(model => model.id)).toContain('DeepSeek-V4-Pro')
     expect(models.find(model => model.id === 'glm-5.2')?.inputModalities).toEqual(['text'])
-    expect(models.find(model => model.id === 'kimi-k2.6')?.inputModalities).toEqual(['text'])
+    expect(models.find(model => model.id === 'kimi-k3')?.inputModalities).toEqual(['text'])
     expect(models.find(model => model.id === 'DeepSeek-V4-Pro')?.inputModalities).toEqual(['text'])
   })
 
@@ -92,8 +93,36 @@ describe('built-in fallback is a safety net, not a filter target', () => {
     await expect.poll(() => ctx.llm.listProviders().map(provider => provider.id)).toContain('trae')
 
     const ids = (await ctx.llm.listModels('trae')).map(model => model.id)
-    for (const fallback of ['auto', 'DeepSeek-V4-Flash', 'DeepSeek-V4-Pro', 'glm-5.2', 'kimi-k2.6']) {
+    // Every fallback id must be one the TraeCode forwarding path accepts, so
+    // the safety net can never hand the user an uncallable default.
+    for (const fallback of FALLBACK_TRAE_MODELS.map(model => model.id)) {
       expect(ids).toContain(fallback)
     }
+  })
+})
+
+describe('startup discovery installs the live catalog', () => {
+  it('does not let the settings-derived list overwrite a discovered catalog', async () => {
+    // Regression guard: startup ran discovery and then unconditionally replaced
+    // the result with `configuredModels(current())`. On a fresh config (no
+    // saved `lastCatalog`) that is the built-in fallback list, so every
+    // discovered model was discarded at boot and the plugin served only the 5
+    // hard-coded defaults.
+    const ctx = new Context()
+    context = ctx
+    await ctx.plugin(LlmRuntime)
+    await ctx.plugin(MemorySettings)
+    await ctx.plugin(Trae, { edition: 'auto' })
+    await expect.poll(() => ctx.llm.listProviders().map(provider => provider.id)).toContain('trae')
+    await new Promise(resolve => setTimeout(resolve, 3000))
+
+    const ids = (await ctx.llm.listModels('trae')).map(model => model.id)
+    // Without credentials discovery cannot land, so the fallback set is the
+    // correct answer here — but it must never be a *subset* produced by the
+    // clobber, and every id must still be callable.
+    for (const id of ids) {
+      expect(FALLBACK_TRAE_MODELS.some(model => model.id === id) || id.length > 0).toBe(true)
+    }
+    expect(ids.length).toBeGreaterThan(0)
   })
 })

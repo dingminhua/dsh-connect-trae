@@ -4,7 +4,25 @@ import { buildTraeCnHeaders, traeEndpoint } from './protocol.ts'
 import { parseReasoningCapability, type TraeReasoningCapability } from './reasoning.ts'
 import type { TraeChatResult, TraeUpstreamErrorKind } from './upstream.ts'
 
-export const TRAE_SOLO_FUNCTION = 'solo_work_lite'
+/**
+ * The Trae product line this plugin serves: **TraeCode**, not TraeWork.
+ *
+ * Trae splits its catalog per product line, and `get_detail_param` answers a
+ * different model set for each `function`. `solo_work_lite` / `solo_work_remote`
+ * are TraeWork (AI 工作台) functions and answer the TraeWork catalog, which is
+ * why this plugin used to expose models the Trae IDE does not offer
+ * (`kimi-k2.6`, `qwen3.8-max`, `glm-5-turbo`, `Seed-Evolving`) while missing
+ * models it does (`glm-4.7`, `qwen-3.5`, `kimi-k2`, `minimax-m2`).
+ *
+ * `chat_v3` is the TraeCode conversation entry point and answers the TraeCode
+ * catalog (identical to `builder_v3`'s selectable set). Credit consumption
+ * follows the same split: TraeCode draws on 通用积分
+ * (`available_endpoint !== 1`), TraeWork on Work 专属积分.
+ *
+ * This constant governs BOTH the model list and the forwarding call, so the
+ * served catalog and the accepted `config_name`s can never drift apart.
+ */
+export const TRAE_SOLO_FUNCTION = 'chat_v3'
 export const TRAE_SOLO_CHAT_PATH = '/api/agent/v3/llm_utils_chat'
 export const TRAE_SOLO_MODELS_PATH = '/api/ide/v1/get_detail_param'
 
@@ -122,6 +140,17 @@ export class TraeSoloUpstreamClient {
       const id = typeof config['config_name'] === 'string' ? config['config_name'] : ''
       if (id === '') continue
       const display = typeof config['display_config'] === 'object' && config['display_config'] !== null ? config['display_config'] as Record<string, unknown> : {}
+      // Only a row Trae gives a `display_name` is a model the IDE offers in its
+      // picker. The response also carries internal plumbing that shares the
+      // `config_name` shape — `custom_model_*`, `fast_apply`, `fast_apply_new`,
+      // `title_generation`, `input_optimization`, `summary`, `doubao-for-auto`,
+      // `glm-4.7-auto` (21 of 48 rows on a live TraeCode account). Advertising
+      // those as selectable models was the other half of why the served list
+      // did not match the Trae IDE's. `is_invisible_to_user` is NOT the
+      // discriminator: Trae marks ordinary models such as `glm-4.7`, `kimi-k2`
+      // and `minimax-m2` invisible too, and they remain selectable.
+      const displayName = typeof display['display_name'] === 'string' ? display['display_name'].trim() : ''
+      if (displayName === '') continue
       const details = Array.isArray(config['model_detail_list']) ? config['model_detail_list'] : []
       const detail = typeof details[0] === 'object' && details[0] !== null ? details[0] as Record<string, unknown> : {}
       // get_detail_param's real field names (verified 2026-08-30): the context
@@ -139,7 +168,7 @@ export class TraeSoloUpstreamClient {
       const reasoning = parseReasoningCapability({ ...config, ...detail })
       models.push({
         id,
-        name: typeof display['display_name'] === 'string' && display['display_name'] !== '' ? display['display_name'] : id,
+        name: displayName,
         ...contextWindow === undefined ? {} : { contextWindow },
         ...maxTokens === undefined ? {} : { maxTokens },
         ...reasoning === undefined ? {} : { reasoning },
