@@ -170,3 +170,62 @@ describe('wire credit multiplier', () => {
     expect(models[0]?.creditMultiplier).toBeUndefined()
   })
 })
+
+describe('wire catalog de-duplication', () => {
+  const contact = JSON.stringify({ consumption_rate: { enable: true, data: { rate: 0.5 } } })
+  const row = (over: Record<string, unknown>) => ({
+    config_name: 'x', display_config: { display_name: 'X' },
+    display_contact_config: contact, config_source: 1,
+    context_window_tokens: { dev: 100000 }, model_detail_list: [{ prompt_max_tokens: 100000, max_tokens: 8000 }],
+    ...over,
+  })
+  const fetchWith = (rows: unknown[]) => {
+    const fetchImpl = vi.fn(async (_u: string | URL | Request, _i?: RequestInit) =>
+      new Response(JSON.stringify({ config_info_list: rows }), { status: 200 }))
+    return new TraeSoloUpstreamClient({
+      credential: async () => credential, identity: async () => identity,
+      baseUrl: 'https://host', fetchImpl: fetchImpl as unknown as typeof fetch,
+    })
+  }
+
+  it('drops config_source 3 rows that shadow a built-in of the same name', async () => {
+    // `deepseek-v4-pro` (source 3) answers 4001 while `DeepSeek-V4-Pro` works.
+    const models = await fetchWith([
+      row({ config_name: 'DeepSeek-V4-Pro', display_config: { display_name: 'DeepSeek-V4-Pro' } }),
+      row({ config_name: 'deepseek-v4-pro', display_config: { display_name: 'DeepSeek-V4-Pro' }, config_source: 3 }),
+    ]).fetchModels()
+    expect(models.map(m => m.id)).toEqual(['DeepSeek-V4-Pro'])
+  })
+
+  it('keeps the picker-visible variant, not Trae first-listed advisor one', async () => {
+    // Trae lists `glm-5.2_advisor_doubao` first and flags it invisible; the
+    // plain `glm-5.2` is what the IDE offers.
+    const models = await fetchWith([
+      row({ config_name: 'glm-5.2_advisor_doubao', display_config: { display_name: 'GLM-5.2' }, is_invisible_to_user: true }),
+      row({ config_name: 'glm-5.2', display_config: { display_name: 'GLM-5.2' }, is_invisible_to_user: false }),
+    ]).fetchModels()
+    expect(models.map(m => m.id)).toEqual(['glm-5.2'])
+  })
+
+  it('prefers the visible variant even when it advertises a larger window', async () => {
+    // Seed-Code: `Doubao_1_6` (116k, invisible) is listed before
+    // `Doubao-Seed-Code` (256k, visible). Keeping the first row lost 140k.
+    const models = await fetchWith([
+      row({ config_name: 'Doubao_1_6', display_config: { display_name: 'Seed-Code' }, is_invisible_to_user: true, context_window_tokens: { dev: 116000 }, model_detail_list: [{ prompt_max_tokens: 116000, max_tokens: 8000 }] }),
+      row({ config_name: 'Doubao-Seed-Code', display_config: { display_name: 'Seed-Code' }, is_invisible_to_user: false, context_window_tokens: { dev: 256000 }, model_detail_list: [{ prompt_max_tokens: 256000, max_tokens: 8000 }] }),
+    ]).fetchModels()
+    expect(models.map(m => m.id)).toEqual(['Doubao-Seed-Code'])
+    expect(models[0]?.contextWindow).toBe(256000)
+  })
+
+  it('matches display names case-insensitively and keeps Trae order', async () => {
+    // `kimi-k3` (source 1) and `Kimi-k3` (source 3) share a name; distinct
+    // names keep first-seen order.
+    const models = await fetchWith([
+      row({ config_name: 'glm-5.2', display_config: { display_name: 'GLM-5.2' } }),
+      row({ config_name: 'kimi-k3', display_config: { display_name: 'Kimi-K3' } }),
+      row({ config_name: 'kimi-k3-custom', display_config: { display_name: 'Kimi-k3' }, config_source: 3 }),
+    ]).fetchModels()
+    expect(models.map(m => m.id)).toEqual(['glm-5.2', 'kimi-k3'])
+  })
+})

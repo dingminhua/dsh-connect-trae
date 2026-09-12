@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.4.3 (2026-09-13)
+
+### Fixes
+
+- **模型列表去除同名重复项**：TraeCode 目录里有 6 组同名行，模型选择器会并列显示两行完全相同的 `GLM-5.2 · x0.78`。去重后模型数由 27 → 21。两类成因分别处理：
+  - **`config_source: 3` 直接丢弃**：它是 OpenAI 兼容自定义模型的占位条目，与内置模型同名但调不通——`deepseek-v4-pro` / `deepseek-v4-flash` 调用返回 4001 `param is invalid`，而同名的内置 `DeepSeek-V4-Pro` / `DeepSeek-V4-Flash` 正常。
+  - **Trae 同源双注册按可见性择一**：`Doubao_1_6` / `Doubao-Seed-Code`、`glm-5.2_advisor_doubao` / `glm-5.2`、`glm-5.1` / `glm-5.1_advisor` 两个 id 实测**都能调通**，保留 `is_invisible_to_user !== true` 的那行。
+  - **特别注意「保留首行」是错的**：Trae 把 `_advisor`/legacy 变体排在前面且标记不可见，而它往往窗口更小。按首行规则会让 `GLM-5.2` 落到 advisor 变体、`Seed-Code` 丢掉 140k 上下文（116k vs 256k）。输出顺序仍按 Trae 首次出现的次序。
+  - `DeepSeek-V4-Pro 正式版` 与 `DeepSeek-V4-Pro` 是 Trae 给出的两个不同显示名，**不去重**（IDE 菜单同样并列显示）。
+- 新增 4 项去重回归测试（`config_source` 过滤、可见性优先、窗口不被降级、大小写不敏感与顺序保持）；去掉可见性优先后其中 2 项确实失败。
+
 ## 1.4.2 (2026-09-13)
 
 ### Fixes

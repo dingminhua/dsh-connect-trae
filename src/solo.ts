@@ -39,6 +39,11 @@ function finitePositive(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined
 }
 
+/** A finite number at or above zero; `0` is a meaningful flag value here. */
+function finiteNonNegative(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined
+}
+
 export function prepareSoloBody(source: string, defaultModel = 'glm-5.2'): string {
   const input = JSON.parse(source) as Record<string, unknown>
   const requestedModel = typeof input['model'] === 'string' && input['model'].trim() !== '' ? input['model'].trim() : defaultModel
@@ -167,11 +172,22 @@ export class TraeSoloUpstreamClient {
     const document = await response.json() as Record<string, unknown>
     const list = Array.isArray(document['config_info_list']) ? document['config_info_list'] : []
     const models: TraeSoloModel[] = []
+    // One row per display name. Trae double-registers several models under a
+    // single `display_name` (an `_advisor` variant beside the plain one, or a
+    // legacy id beside the current one); both ids are callable, but a picker
+    // showing two identical `GLM-5.2 · x0.78` rows is noise.
+    const byName = new Map<string, { model: TraeSoloModel; visible: boolean; order: number }>()
     for (const raw of list) {
       if (typeof raw !== 'object' || raw === null) continue
       const config = raw as Record<string, unknown>
       const id = typeof config['config_name'] === 'string' ? config['config_name'] : ''
       if (id === '') continue
+      // `config_source: 3` marks an OpenAI-compatible custom-model placeholder
+      // rather than a Trae built-in (`1`). They shadow a built-in of the same
+      // display name and are not callable through `chat_v3` — `deepseek-v4-pro`
+      // and `deepseek-v4-flash` answer 4001 "param is invalid" while their
+      // built-in namesakes succeed.
+      if (finiteNonNegative(config['config_source']) === 3) continue
       const display = typeof config['display_config'] === 'object' && config['display_config'] !== null ? config['display_config'] as Record<string, unknown> : {}
       // Only a row Trae gives a `display_name` is a model the IDE offers in its
       // picker. The response also carries internal plumbing that shares the
@@ -200,14 +216,31 @@ export class TraeSoloUpstreamClient {
       const maxTokens = finitePositive(detail['max_tokens'])
       const reasoning = parseReasoningCapability({ ...config, ...detail })
       const creditMultiplier = wireCreditMultiplier(config)
-      models.push({
+      const candidate: TraeSoloModel = {
         id,
         name: displayName,
         ...contextWindow === undefined ? {} : { contextWindow },
         ...maxTokens === undefined ? {} : { maxTokens },
         ...reasoning === undefined ? {} : { reasoning },
         ...creditMultiplier === undefined ? {} : { creditMultiplier },
-      })
+      }
+      const nameKey = displayName.toLowerCase()
+      const previous = byName.get(nameKey)
+      if (previous === undefined) {
+        byName.set(nameKey, { model: candidate, visible: config['is_invisible_to_user'] !== true, order: models.length })
+      } else if (config['is_invisible_to_user'] !== true && !previous.visible) {
+        // Prefer the row Trae actually offers in its picker. Trae lists the
+        // `_advisor` / legacy variant first but flags it `is_invisible_to_user`,
+        // and that variant often advertises a smaller window (Seed-Code: 116k
+        // vs 256k) — keeping the first row would surface the worse one under a
+        // name the user never picks.
+        byName.set(nameKey, { model: candidate, visible: true, order: previous.order })
+      }
+    }
+    // Emit in the order Trae listed each name, so the picker keeps Trae's own
+    // ranking rather than the order a replacement happened to arrive in.
+    for (const entry of [...byName.values()].sort((left, right) => left.order - right.order)) {
+      models.push(entry.model)
     }
     if (models.length === 0) throw new Error('Trae SOLO models response contained no models')
     return models

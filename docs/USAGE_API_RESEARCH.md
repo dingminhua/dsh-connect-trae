@@ -140,6 +140,33 @@ reqSource === Mk.IDE                       // 请求方是 TraeCode
 
 **`is_invisible_to_user` 不能用作判据**：Trae 对 `glm-4.7`、`kimi-k2`、`minimax-m2` 等正常可选模型同样置 `true`。
 
+但它在**同名去重**时必须参与——见下节。
+
+### 同名双注册与 `config_source` 过滤（2026-09-13）
+
+27 个带 `display_name` 的行里有 6 组同名（去重后 21 个模型）。两类成因，处理方式不同：
+
+**其一：`config_source: 3`（OpenAI 兼容自定义模型占位），该丢。** 它们与内置模型同名但调不通：
+
+| id | source | `chat_v3` 调用 |
+|---|---|---|
+| `DeepSeek-V4-Pro` | 1（内置） | ✅ |
+| `deepseek-v4-pro` | **3** | ❌ 4001 `param is invalid` |
+| `DeepSeek-V4-Flash` | 1（内置） | ✅ |
+| `deepseek-v4-flash` | **3** | ❌ 4001 |
+
+**其二：Trae 同源双注册，两个 id 都能调，需按可见性择一。** 实测两个 id 均返回正常输出：
+
+| display_name | 两个 id | 谁被保留 |
+|---|---|---|
+| Seed-Code | `Doubao_1_6`（inv=true, 116k）/ `Doubao-Seed-Code`（inv=false, 256k） | 后者 |
+| GLM-5.2 | `glm-5.2_advisor_doubao`（inv=true）/ `glm-5.2`（inv=false） | 后者 |
+| GLM-5.1 | `glm-5.1`（inv=true）/ `glm-5.1_advisor`（inv=true） | 先到者 |
+
+**关键：不能简单「保留首行」。** Trae 把 `_advisor`/legacy 变体排在前面且标 `is_invisible_to_user`，而它往往窗口更小（Seed-Code 116k vs 256k）。保留首行会让用户在 `GLM-5.2` 这个名字下拿到 advisor 变体、在 `Seed-Code` 下丢掉 140k 上下文。正确规则是**同名中优先取 `is_invisible_to_user !== true` 的那行**，全不可见时取先到者，输出顺序仍按 Trae 首次出现的次序。
+
+**注意 `DeepSeek-V4-Pro 正式版` 与 `DeepSeek-V4-Pro` 是 Trae 给出的两个不同 `display_name`，不去重**（IDE 模型菜单同样并列显示两者）。
+
 ### 积分倍率的唯一权威来源是 `display_contact_config`（2026-09-13）
 
 `get_detail_param` 每行带一个 **`display_contact_config` 字符串**，其内容是第二层 JSON，内含 Trae IDE 实际渲染的倍率：
