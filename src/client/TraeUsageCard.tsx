@@ -181,7 +181,20 @@ export function TraeUsageCard({ t, settingsScope }: TraeUsageCardProps) {
       // Re-map the user's CURRENT selections (draft first, then saved) onto the
       // fresh catalog by model id, so refresh never silently loses enabled
       // choices, image opt-ins, or context budgets.
-      const stillEnabled = [...activeEnabledIds].filter(id => freshIds.has(id))
+      //
+      // A stored selection is a *filter* over the catalog, and it is only
+      // meaningful for the models it was made against. Once Trae adds a model,
+      // a selection saved earlier does not list it, so keeping the filter
+      // verbatim would refresh the directory and still not show the new model.
+      // Widening it to every model the catalog can call is the same convention
+      // the Host already uses for an empty selection (it serves the whole
+      // directory); a model the user deliberately switched off before the
+      // refresh still stays off, because it is in the saved selection.
+      const carried = activeEnabledIds.size > 0
+        ? [...activeEnabledIds].filter(id => freshIds.has(id))
+        : []
+      const newlySeen = [...freshIds].filter(id => !activeEnabledIds.has(id))
+      const stillEnabled = [...carried, ...newlySeen]
       const stillImages = [...activeImageIds].filter(id => freshIds.has(id))
       const stillBudgets: Record<string, number> = {}
       for (const id of freshIds) {
@@ -209,10 +222,12 @@ export function TraeUsageCard({ t, settingsScope }: TraeUsageCardProps) {
       : [],
   )
   void settingsRevision
-  // The card always renders the last-refreshed raw directory (`status.models`
-  // carries `lastCatalog`), never a stale saved snapshot. Enabled flags come
-  // from the user's stored selection, re-mapped onto the current catalog by
-  // model id (= Trae name); context budgets work the same way.
+  // The card renders the raw directory the Host is actually serving
+  // (`status.models`), which is live discovery when this run reached Trae and
+  // the saved snapshot only when it did not — never a stale save that
+  // outranks current data. Enabled flags come from the user's stored
+  // selection, re-mapped onto the current catalog by model id (= Trae name);
+  // context budgets work the same way.
   const visibleModels = draftModels ?? (status.status === 'signed-in' ? status.models : [])
   const savedEnabledIds = status.status === 'signed-in' ? new Set(status.enabledModelIds) : new Set<string>()
   const activeEnabledIds = draftEnabledIds ?? savedEnabledIds

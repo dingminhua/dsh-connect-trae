@@ -127,6 +127,12 @@ export function apply(ctx: Context, config: Config): void {
   // answer yet" (no credentials, startup discovery failed or still in flight)
   // and must not be read as "nothing is callable".
   let wireResolved = false
+  // The live directory this run discovered, if any. It is the authoritative
+  // source for every model list and always outranks the saved snapshot (see
+  // `pickRaw`). Held here rather than read back off `catalog` because the
+  // catalog carries the *derived* rows (user selection, budgets, image
+  // opt-ins); the setting needs the raw wire rows.
+  let liveCatalog: readonly TraeModelInfo[] | undefined
   // Drop dead rows from a (possibly stale) saved directory. No-op when the wire
   // map has not been resolved yet, so a transient network failure never hides
   // the whole catalog.
@@ -135,12 +141,12 @@ export function apply(ctx: Context, config: Config): void {
     return rows.filter(model =>
       callableKeys.has(model.id.trim().toLowerCase()) || callableKeys.has(model.name.trim().toLowerCase()))
   }
-  // Runtime catalog derives from the last-refreshed raw directory plus the
-  // user's selection and context budgets. Legacy `models` and pre-budget
-  // `lastCatalog` rows are sanitized, so saved `@1m` variants cannot return.
-  // Dead config_names are dropped against the live wire map, so a stale save
-  // cannot resurrect `Doubao-Seed-Code` / `glm-5.3`. An empty selection serves
-  // the whole directory, so a never-configured plugin still exposes models.
+  // Runtime catalog derives from the raw directory plus the user's selection
+  // and context budgets. Legacy `models` and pre-budget `lastCatalog` rows are
+  // sanitized, so saved `@1m` variants cannot return. Dead config_names are
+  // dropped against the live wire map, so a stale save cannot resurrect
+  // `Doubao-Seed-Code` / `glm-5.3`. An empty selection serves the whole
+  // directory, so a never-configured plugin still exposes models.
   // Built-in last resort. It is this plugin's own static list, never a row
   // Remote advertised, so it must NOT be run through `dropDeadModels`: the
   // live wire map can only ever confirm the ids it happens to know, and
@@ -153,16 +159,36 @@ export function apply(ctx: Context, config: Config): void {
     const derived = deriveCatalog(applyImageSelection(sanitizeCatalog(dropDeadModels(raw)), selectedImages), enabledSet(value), value.contextBudgets ?? {})
     return derived.length > 0 ? derived : fallbackModels(value)
   }
-  const configuredModels = (value: Config): readonly TraeModelInfo[] =>
-    value.lastCatalog?.length ? derive(value, value.lastCatalog)
-      : value.models?.length ? derive(value, value.models)
-        : fallbackModels(value)
-  // What the plugin card displays: the last-refreshed raw directory, so the
-  // user re-reads the current Trae catalog rather than a stale saved snapshot.
-  const displayModels = (value: Config): readonly TraeModelInfo[] =>
-    value.lastCatalog?.length ? dropDeadModels(sanitizeCatalog(value.lastCatalog))
-      : value.models?.length ? dropDeadModels(sanitizeCatalog(value.models))
-        : FALLBACK_TRAE_MODELS
+  // Precedence for the raw directory: live discovery, then the saved snapshot.
+  //
+  // The saved `lastCatalog` / `models` is a *snapshot of the plugin's own last
+  // refresh*, not a live answer, and it used to outrank discovery. That made a
+  // successful refresh freeze the model list and every credit multiplier at
+  // whatever Trae advertised on that day: the plugin kept rendering the old
+  // rates after reconnecting, after the account changed, and after Trae ran a
+  // promotion. The snapshot is therefore demoted to what it always was — an
+  // offline fallback for a boot where discovery cannot reach Trae at all (no
+  // credentials, no network) — and a completed discovery always wins.
+  //
+  // The live rows are returned verbatim, without `dropDeadModels`: they *are*
+  // the wire map, so filtering them against themselves can only ever delete a
+  // row that discovery legitimately found. Only a stale saved snapshot is
+  // filtered, so it cannot resurrect a config_name the wire has dropped.
+  const pickRaw = (value: Config): readonly TraeModelInfo[] | undefined =>
+    liveCatalog ?? (value.lastCatalog?.length ? value.lastCatalog
+      : value.models?.length ? value.models
+        : undefined)
+  const configuredModels = (value: Config): readonly TraeModelInfo[] => {
+    const raw = pickRaw(value)
+    return raw === undefined ? fallbackModels(value) : derive(value, raw)
+  }
+  // What the plugin card displays: the raw directory the plugin is actually
+  // serving, so the user re-reads the current Trae catalog rather than a stale
+  // saved snapshot.
+  const displayModels = (value: Config): readonly TraeModelInfo[] => {
+    const raw = pickRaw(value)
+    return raw === undefined ? FALLBACK_TRAE_MODELS : dropDeadModels(sanitizeCatalog(raw))
+  }
   const store = new TraeCredentialStore({
     ...config.authFile === undefined ? {} : { storagePath: config.authFile },
     edition: config.edition ?? 'auto',
@@ -268,6 +294,11 @@ export function apply(ctx: Context, config: Config): void {
     // model it did not mention — including the built-in fallback set, which
     // Remote never advertised and so can never appear in `callableKeys`.
     wireResolved = merged.length > 0
+    // Remember the live directory as the authoritative source for every model
+    // list this run. Only a non-empty merge may replace it: a failed or empty
+    // discovery must leave whatever is already being served in place rather
+    // than demote the plugin back to the saved snapshot.
+    if (merged.length > 0) liveCatalog = merged
     // Populate the startup wire resolver (display id and display name → wire
     // config_name) so the chat bridge resolves the real config_name even when
     // the persisted catalog lacks `wireConfigName` (the settings schema drops
@@ -301,8 +332,26 @@ export function apply(ctx: Context, config: Config): void {
     onChange() {
       const next = current()
       store.setSource(next.authFile, next.edition ?? 'auto', next.accountId)
+      // `configuredModels` re-reads the live directory when this run discovered
+      // one, so changing the account/edition selection or the context budgets
+      // rebuilds the catalog from current Trae data instead of from the
+      // snapshot the settings row happens to carry.
       catalog.set(configuredModels(next))
       invalidateAdapter()
+      // A boot that could not reach Trae serves the saved snapshot — an
+      // arbitrary old day's models and rates. Nothing else in this plugin
+      // re-reads Trae outside startup and the card's explicit refresh, so that
+      // stale list used to stay on screen until the user pressed "refresh" or
+      // restarted the process. Any settings change (and in particular an
+      // account or edition switch, which is exactly the moment the served data
+      // is known to be wrong) now also re-reads Trae. Discovery is
+      // fire-and-forget and never awaited on this path, and a failed or empty
+      // result leaves the current catalog untouched.
+      if (liveCatalog === undefined) {
+        void discoverModels().catch((error: unknown) => {
+          ctx.logger.warn('dsh-connect-trae: background rediscovery failed; keeping the saved directory', error)
+        })
+      }
     },
   }
   // DSH 0.1.2 replaced the free `installSettingsSection` helper with the
