@@ -140,6 +140,35 @@ reqSource === Mk.IDE                       // 请求方是 TraeCode
 
 **`is_invisible_to_user` 不能用作判据**：Trae 对 `glm-4.7`、`kimi-k2`、`minimax-m2` 等正常可选模型同样置 `true`。
 
+### 积分倍率的唯一权威来源是 `display_contact_config`（2026-09-13）
+
+`get_detail_param` 每行带一个 **`display_contact_config` 字符串**，其内容是第二层 JSON，内含 Trae IDE 实际渲染的倍率：
+
+```json
+{
+  "activity_discount": {"enable":true,"subKey":"limited_discount",
+    "data":{"current":{"discount_type":"limited",
+                       "before_consumption_rate":0.8,   // 原价
+                       "consumption_rate":0.08,          // 折后价 ← IDE 显示这个
+                       "discount":10}}},                 // 1 折
+  "consumption_rate": {"enable":true,"data":{"rate":0.08}}   // 同为折后价
+}
+```
+
+**`solo.trae.cn/api/remote/v1/models` 的 `consumption_rate` 不可用于倍率**：它的 `activity_discount` 对同一活动报 `discount_type:"none"`、`discount:100`（即「无折扣」），返回 `0.8`，而 IDE 与 `display_contact_config` 都是 `0.08`（限时 1 折）。此前插件读的是 Remote，因此显示的倍率与 IDE 不符——**同一模型两处相差 10 倍**。
+
+实测对照（本机 TraeCode CN 账号，2026-09-13）：
+
+| 模型 | IDE 显示 | Remote 报 | `display_contact_config` |
+|---|---|---|---|
+| Seed-2.1-Pro | 0.08x | 0.80 | **0.08** ✅ |
+| Seed-Evolving | 0.08x | 0.80 | **0.08** ✅ |
+| Seed-2.1-Turbo | 0.20x | 0.20 | 0.20 |
+| GLM-5.2 | 0.78x | 0.78 | 0.78 |
+| DeepSeek-V4-Pro 正式版 | 0.36x | 0.36 | 0.36 |
+
+折扣类型均已在切分中体现：`limited`（限时折扣，带 `end_at`）、`subsidy`（专属补贴）、`off_peak`（闲时折扣，带 `time_windows`，随调用时刻变化）、会员折扣（独立 `discount` 块）。倍率读取以 **wire 的 `display_contact_config` 为准，Remote 仅作兜底**。
+
 ### 其它已核实
 
 - `ide_user_ent_usage`（v1/v2）与 `web_user_ent_usage` 返回同一份数据，是别名而非独立列表。

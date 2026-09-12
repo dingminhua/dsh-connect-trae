@@ -106,6 +106,33 @@ describe('traeModelDisplayName', () => {
   })
 })
 
+describe('mergeTraeModelSources credit multiplier precedence', () => {
+  it('prefers the wire rate over the Remote directory rate', () => {
+    // The Remote `/models` payload reported 0.8 for Seed-2.1-Pro while the
+    // Trae IDE showed 0.08x (限时 1 折). The discounted figure only exists in
+    // the wire row, so the merge must let it win — a Remote-first choice
+    // renders a rate the user can see is wrong.
+    const remote: TraeDiscoveredModel[] = [
+      { id: 'Doubao-Seed-2.1-Pro', name: 'Seed-2.1-Pro', multimodal: false, creditMultiplier: 0.8, reasoningSupported: false },
+    ]
+    const wire = [
+      { id: 'Doubao-Seed-2.1-Pro', name: 'Seed-2.1-Pro', creditMultiplier: 0.08 },
+    ]
+    const merged = mergeTraeModelSources(remote, wire)
+    expect(merged[0]?.creditMultiplier).toBe(0.08)
+    expect(traeModelDisplayName(merged[0]!)).toBe('Seed-2.1-Pro · x0.08')
+  })
+
+  it('falls back to the Remote rate when the wire row carries none', () => {
+    const remote: TraeDiscoveredModel[] = [
+      { id: 'glm-5.2', name: 'GLM-5.2', multimodal: false, creditMultiplier: 0.78, reasoningSupported: false },
+    ]
+    const wire = [{ id: 'glm-5.2', name: 'GLM-5.2' }]
+    const merged = mergeTraeModelSources(remote, wire)
+    expect(merged[0]?.creditMultiplier).toBe(0.78)
+  })
+})
+
 describe('mergeTraeModelSources', () => {
   it('enumerates the wire catalog and enriches each row from the remote directory', () => {
     const remote: TraeDiscoveredModel[] = [

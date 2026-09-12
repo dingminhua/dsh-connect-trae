@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.4.2 (2026-09-13)
+
+### Fixes
+
+- **修正积分倍率取错数据源**：模型名里的倍率此前读的是 `solo.trae.cn` 的 Remote 目录，而 Trae IDE 实际渲染的倍率在 `get_detail_param` 每行的 `display_contact_config` 字段里（该字段是第二层 JSON 字符串）。两者对同一模型可达 **10 倍**差异——`Seed-2.1-Pro` / `Seed-Evolving` 在 IDE 显示 `x0.08`（限时 1 折），Remote 却报 `0.8`，因为它的 `activity_discount` 对同一活动写 `discount_type:"none"`、`discount:100`（即「无折扣」）。现以 wire 的 `display_contact_config.consumption_rate.data.rate` 为准，Remote 仅在 wire 未提供时兜底。
+- 该值本身已是折后价，故 `limited`（限时）、`subsidy`（专属补贴）、`off_peak`（闲时）、会员折扣四类折扣无需分别处理，与 IDE 显示口径一致。
+- 实测对齐用户的 Trae IDE 截图：`Seed-2.1-Pro · x0.08`、`Seed-2.1-Turbo · x0.20`、`Seed-Code · x0.06`、`GLM-5.2 · x0.78`、`DeepSeek-V4-Flash 正式版 · x0.08`、`DeepSeek-V4-Pro 正式版 · x0.36`、`Kimi-K3 · x1.83` 全部一致（此前 `Seed-2.1-Pro`、`Seed-Evolving` 显示 `x0.80`）。
+- `display_contact_config` 缺失、被禁用或 JSON 损坏时，模型行照常保留、倍率留空，不会因此丢模型。
+
 ## 1.4.1 (2026-09-13)
 
 ### Fixes

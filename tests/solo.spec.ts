@@ -122,3 +122,51 @@ describe('Trae SOLO protocol', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('wire credit multiplier', () => {
+  const client = (body: unknown) => {
+    const fetchImpl = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) =>
+      new Response(JSON.stringify(body), { status: 200 }))
+    return new TraeSoloUpstreamClient({
+      credential: async () => credential, identity: async () => identity,
+      baseUrl: 'https://host', fetchImpl: fetchImpl as unknown as typeof fetch,
+    })
+  }
+  const row = (contactConfig: string) => ({
+    config_info_list: [{
+      config_name: 'Doubao-Seed-2.1-Pro',
+      display_config: { display_name: 'Seed-2.1-Pro' },
+      display_contact_config: contactConfig,
+      context_window_tokens: { dev: 100000 },
+      model_detail_list: [{ prompt_max_tokens: 100000, max_tokens: 16000 }],
+    }],
+  })
+  const contact = (rate: number, before?: number) => JSON.stringify({
+    activity_discount: before === undefined ? undefined : {
+      enable: true, subKey: 'limited_discount',
+      data: { current: { discount_type: 'limited', before_consumption_rate: before, consumption_rate: rate, discount: 10 } },
+    },
+    consumption_rate: { enable: true, data: { rate } },
+  })
+
+  it('reads the effective rate from display_contact_config, not the Remote directory', async () => {
+    // 限时 1 折: the list price is 0.8 but the IDE renders 0.08. Only
+    // `display_contact_config` carries the discounted figure; the Remote
+    // `/models` payload reports 0.8 for the same model and must not win.
+    const models = await client(row(contact(0.08, 0.8))).fetchModels()
+    expect(models[0]?.creditMultiplier).toBe(0.08)
+  })
+
+  it('omits the rate when the contact config is absent or disabled', async () => {
+    const absent = await client(row('')).fetchModels()
+    expect(absent[0]?.creditMultiplier).toBeUndefined()
+    const disabled = await client(row(JSON.stringify({ consumption_rate: { enable: false, data: { rate: 0.5 } } }))).fetchModels()
+    expect(disabled[0]?.creditMultiplier).toBeUndefined()
+  })
+
+  it('survives a malformed contact config without dropping the model', async () => {
+    const models = await client(row('{not json')).fetchModels()
+    expect(models.map(model => model.id)).toEqual(['Doubao-Seed-2.1-Pro'])
+    expect(models[0]?.creditMultiplier).toBeUndefined()
+  })
+})

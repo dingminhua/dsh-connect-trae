@@ -77,6 +77,8 @@ export interface TraeWireModel {
   contextWindow?: number
   maxTokens?: number
   reasoning?: TraeReasoningCapability
+  /** Effective (post-discount) credit multiplier the Trae IDE displays. */
+  creditMultiplier?: number
 }
 
 /** Normalise a display name for cross-source joining. */
@@ -141,12 +143,17 @@ export function mergeTraeModelSources(
     if (seen.has(key)) continue
     seen.add(key)
     const model = remoteById.get(key) ?? remoteByName.get(displayKey(wireModel.name))
+    // The wire rate wins whenever it is present. It is the post-discount figure
+    // the Trae IDE renders (see `wireCreditMultiplier`); the Remote directory's
+    // own `consumption_rate` can disagree — it reports `0.8` for a model the IDE
+    // shows as `0.08x` under a 限时 1 折 promotion.
+    const creditMultiplier = wireModel.creditMultiplier ?? model?.creditMultiplier
     result.push({
       id: wireModel.id,
       name: model?.name ?? wireModel.name,
       ...model?.contextWindow === undefined ? {} : { contextWindow: model.contextWindow },
       ...model?.maxContextWindow === undefined ? {} : { maxContextWindow: model.maxContextWindow },
-      ...model?.creditMultiplier === undefined ? {} : { creditMultiplier: model.creditMultiplier },
+      ...creditMultiplier === undefined ? {} : { creditMultiplier },
       input: ['text'],
       reasoningSupported: model?.reasoningSupported ?? false,
       ...model?.reasoning === undefined ? {} : {

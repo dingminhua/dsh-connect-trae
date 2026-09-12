@@ -100,6 +100,39 @@ export interface TraeSoloModel {
   contextWindow?: number
   maxTokens?: number
   reasoning?: TraeReasoningCapability
+  /** Effective (already discounted) credit multiplier, as the Trae IDE shows it. */
+  creditMultiplier?: number
+}
+
+/**
+ * Read the effective credit multiplier from a `get_detail_param` row.
+ *
+ * The rate the Trae IDE renders lives in `display_contact_config` — a *string*
+ * holding a second JSON document — and its `consumption_rate.data.rate` is
+ * already the post-discount value. `activity_discount.data.current` carries the
+ * same figure beside the list price (`before_consumption_rate`) and the
+ * discount percentage, so the two agree by construction.
+ *
+ * This is the only authoritative source. `solo.trae.cn/api/remote/v1/models`
+ * exposes a `consumption_rate` of its own, but its `activity_discount` block
+ * reports `discount_type:"none"` / `discount:100` while the real promotion is
+ * live: it returns `0.8` for `Seed-2.1-Pro` where the IDE and this field both
+ * say `0.08` (限时 1 折). Reading the Remote payload is what produced rates that
+ * disagreed with the IDE.
+ */
+function wireCreditMultiplier(config: Record<string, unknown>): number | undefined {
+  const raw = config['display_contact_config']
+  if (typeof raw !== 'string' || raw === '') return undefined
+  let parsed: unknown
+  try { parsed = JSON.parse(raw) } catch { return undefined }
+  if (typeof parsed !== 'object' || parsed === null) return undefined
+  const consumption = (parsed as Record<string, unknown>)['consumption_rate']
+  if (typeof consumption !== 'object' || consumption === null) return undefined
+  const entry = consumption as Record<string, unknown>
+  if (entry['enable'] !== true) return undefined
+  const data = entry['data']
+  if (typeof data !== 'object' || data === null) return undefined
+  return finitePositive((data as Record<string, unknown>)['rate'])
 }
 
 export interface TraeSoloClientOptions {
@@ -166,12 +199,14 @@ export class TraeSoloUpstreamClient {
       const contextWindow = promptMaxTokens ?? devTokens
       const maxTokens = finitePositive(detail['max_tokens'])
       const reasoning = parseReasoningCapability({ ...config, ...detail })
+      const creditMultiplier = wireCreditMultiplier(config)
       models.push({
         id,
         name: displayName,
         ...contextWindow === undefined ? {} : { contextWindow },
         ...maxTokens === undefined ? {} : { maxTokens },
         ...reasoning === undefined ? {} : { reasoning },
+        ...creditMultiplier === undefined ? {} : { creditMultiplier },
       })
     }
     if (models.length === 0) throw new Error('Trae SOLO models response contained no models')
