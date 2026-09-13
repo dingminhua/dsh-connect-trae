@@ -14,6 +14,12 @@
 - **修复「Trae 加载失败：adapter returned invalid context metadata」**：`mergeTraeModelSources` 的上下文窗口只从 Remote 行读取，**忽略了 wire 行自己的值**。这在「每次调用都同时抓两个源」时看不出来（Remote 恰好补上了），但 1.4.5 引入的按源选择让 `wire` 模式**只抓 wire**，于是 21 个模型全部丢失 `contextWindow`——`PiAiAdapter` 恒定输出 `context: { contextWindow: resolvedModel.contextWindow }`，缺失即 `undefined`，直接被内核 `normalizeModelInfo` 判为 `INVALID_MODEL_CONTEXT`，整个 provider 不可用。
   - 现与倍率同规则：**wire 行的值优先，Remote 行兜底**（`wireModel.contextWindow ?? model?.contextWindow`）。实测 21/21 全部带回窗口（`Seed-2.1-Pro` 100000、`Seed-Code` 224000、`Kimi-K3` 168000 等），`resolveModelInfo` 对全部 21 个模型零报错。
 
+- **修复「只勾选了 2 个，却服务了几乎全部模型」**：有**两条独立路径**把原始目录直接当成服务目录，绕过了 `enabledModelIds`：
+  - `discoverModels` 内部 `catalog.set(...)` 之前写的是合并后的**全量目录**（`applyImageSelection(merged, ...)`），完全没有走 `deriveCatalog`。
+  - `registerModelDiscovery` 回调返回的是**全量目录**（只套了 image 选择）——而 model-management 消费的正是这个通道，所以卡片勾 2 个、那边列 15 个。
+  两处现均与其它路径一致，改为 `deriveCatalog(目录, enabledSet(current()), budgets)` 再发布。实测勾选 `glm-5.2` + `glm-4.7` 两个 → 服务与广告均恰为这 2 个（修复前为 21 个 / 15 个）。
+  参考实现 `dsh-connect-workbuddy` 的 discovery 回调同样先 `deriveCatalog(discovered, new Set(state.enabledModelIds ?? []), ...)` 再返回；这两处正是与其偏离之处。
+
 ### Changes
 
 - **槽位随所选账号收敛**：账号是权威——选中 SOLO 账号即服务 SOLO 目录与该客户端的存档；`edition` 设置退化为「凭据无法解析时的兜底」。切换账号时先收敛槽位再重算目录，避免用上一个客户端的目录去交集新客户端的勾选。
@@ -25,6 +31,7 @@
 - `tests/settings-integration.spec.ts` 新增 1 项端到端：写入 SOLO 槽位后，CN 槽位所服务的目录与勾选**不被替换也不被交集**。
 - `tests/web-status.spec.ts` 新增 2 项：文档携带的 `edition` 与路由给出的槽位一致；路由未提供时回退到已登录账号自身的客户端（而非默认 `cn`）。
 - `tests/catalog.spec.ts` 新增 3 项锁定上下文窗口：**仅抓 wire 源时仍保留 wire 行自己的窗口**（退回旧写法后该测试确实失败）、wire 优先且 Remote 兜底、所选行不得出现非正整数窗口。
+- `tests/settings-integration.spec.ts` 新增 1 项：勾选 2 个模型时，服务列表与 discovery 广告列表都**恰为这 2 个**（修复前分别为 21 / 15）。
 
 - **按客户端选择模型目录，不再强行合并两个源**：Trae 有两个**互不包含**的模型目录，用户的 Trae IDE 和另一个 Trae 客户端各显示其中一个：
   - **Wire 目录**（`get_detail_param`）：27 个具名模型，倍率是**折后现价**——`Seed-2.1-Pro · x0.08`（限时 1 折）、`Seed-Evolving · x0.08`；但没有 `Kimi-K2.8-Preview`、`GLM-5.3-Flash`。

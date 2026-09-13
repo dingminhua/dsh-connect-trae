@@ -229,7 +229,11 @@ describe('the saved snapshot is a fallback, never a source of truth', () => {
       const ctx = boot()
       await ctx.plugin(LlmRuntime)
       await ctx.plugin(MemorySettings)
-      await ctx.plugin(Trae, { edition: 'auto', lastCatalog: STALE_SNAPSHOT, enabledModelIds: STALE_ENABLED })
+      // No explicit selection: an empty selection serves the whole directory, so
+      // the served list IS the directory and this test can observe it being
+      // replaced. (With a selection saved, the served list is correctly narrowed
+      // to it, and would rightly stay put.)
+      await ctx.plugin(Trae, { edition: 'auto', lastCatalog: STALE_SNAPSHOT })
       await expect.poll(() => ctx.llm.listProviders().map(provider => provider.id)).toContain('trae')
       await new Promise(resolve => setTimeout(resolve, 2500))
       // Confirm the starting point really is the stale snapshot, so the test
@@ -240,7 +244,6 @@ describe('the saved snapshot is a fallback, never a source of truth', () => {
       net.online()
       await ctx.settings.update(Trae.TRAE_SETTINGS_NS, {
         lastCatalog: STALE_SNAPSHOT,
-        enabledModelIds: STALE_ENABLED,
         contextBudgets: { 'glm-5.2': 200_000 },
       })
       await expect.poll(
@@ -350,5 +353,29 @@ describe('per-client model slots stay isolated end to end', () => {
     // neither replaced it nor intersected it.
     expect(served).toEqual(['glm-4.7'])
     expect(served).not.toContain('kimi-k2.8-preview')
+  }, 60_000)
+})
+
+describe('the user selection governs every advertised list', () => {
+  // Regression guard for the reported symptom: two models checked in the card,
+  // but nearly the whole directory served. Two independent paths published the
+  // raw directory and ignored `enabledModelIds` — `discoverModels`'s
+  // `catalog.set`, and the `registerModelDiscovery` callback, which re-fetched
+  // the directory and returned it unfiltered. Model management reads the
+  // discovery channel, so the selection has to be applied there too.
+  it('serves and advertises exactly the checked models', async () => {
+    const ctx = new Context()
+    context = ctx
+    await ctx.plugin(LlmRuntime)
+    await ctx.plugin(MemorySettings)
+    await ctx.plugin(Trae, {
+      edition: 'cn',
+      enabledModelIds: ['glm-5.2', 'glm-4.7'],
+    })
+    await expect.poll(() => ctx.llm.listProviders().map(provider => provider.id)).toContain('trae')
+    await new Promise(resolve => setTimeout(resolve, 3000))
+
+    const served = (await ctx.llm.listModels('trae')).map(model => model.id).sort()
+    expect(served).toEqual(['glm-4.7', 'glm-5.2'])
   }, 60_000)
 })

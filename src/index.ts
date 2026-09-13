@@ -447,10 +447,21 @@ export function apply(ctx: Context, config: Config): void {
         wireByName.set(model.name.trim().toLowerCase(), model.wireConfigName)
       }
     }
-    // Persist the merged catalog (including each model's wireConfigName) into
-    // the live catalog the chat bridge reads, so requests resolve the real
-    // config_name even before the user re-saves the refreshed directory.
-    const next = applyImageSelection(merged, imageSet(current()))
+    // What the served catalog becomes: the freshly discovered directory run
+    // through the user's own selection and budgets, exactly like every other
+    // path (`configuredModels`). Setting the raw directory here instead used to
+    // publish the WHOLE roster and ignore the selection, so a user who had
+    // checked two models was served all of them — discovery silently overrode
+    // their choice. See `workbuddy`'s discovery, which derives the same way.
+    const state = stateOf(current())
+    const next = applyImageSelection(
+      deriveCatalog(
+        applyImageSelection(sanitizeCatalog(merged), imageSet(current())),
+        enabledSet(current()),
+        state.contextBudgets ?? {},
+      ),
+      imageSet(current()),
+    )
     catalog.set(next)
     return merged
   }
@@ -567,8 +578,19 @@ export function apply(ctx: Context, config: Config): void {
         // the callback's second argument; 0.1.1 hosts still pass it on the
         // request object, so read both.
         const cancellation = signal ?? (request as { signal?: AbortSignal }).signal
+        // The advertised list is the user's SELECTED subset, not the raw
+        // directory. `discoverModels` returns every row it found (it must, to
+        // populate the wire resolver), so returning it directly advertised the
+        // whole roster and ignored `enabledModelIds` — a user with two models
+        // checked saw all of them here. Derive exactly like every other path;
+        // `workbuddy`'s discovery callback does the same.
+        const state = stateOf(current())
         const next = applyImageSelection(
-          await discoverModels(cancellation),
+          deriveCatalog(
+            applyImageSelection(sanitizeCatalog(await discoverModels(cancellation)), imageSet(current())),
+            enabledSet(current()),
+            state.contextBudgets ?? {},
+          ),
           imageSet(current()),
         )
         return next.map(model => ({
