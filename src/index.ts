@@ -95,18 +95,52 @@ export function traeModelSourceMode(edition: Config['edition']): TraeModelSource
   }
 }
 
+/** The two Trae clients whose model directories differ (see `TraeModelSourceMode`). */
+export type TraeEditionSlot = 'cn' | 'solo'
+
+/**
+ * One client's model directory and the user's selection within it.
+ *
+ * The two Trae clients expose different rosters (21 vs 15 models, overlapping
+ * in only 9), so each keeps its own directory and its own picks. A single
+ * shared slot cannot represent that: the selection made under one client would
+ * be intersected with the other client's directory, silently dropping every id
+ * the other side does not list.
+ */
+export interface TraeEditionState {
+  /** The last-refreshed directory for this client; what the card displays. */
+  lastCatalog?: TraeModelInfo[]
+  /** The user's selection in this client, as model ids. */
+  enabledModelIds?: string[]
+  /** Model ids the user explicitly opted into image input. */
+  imageModelIds?: string[]
+  /** Local DSH context budget per model in this client. */
+  contextBudgets?: Record<string, number>
+}
+
 export interface Config {
   authFile?: string
   edition?: 'auto' | 'cn' | 'sg' | 'solo' | 'solo-sg'
   /** Stable local account selector; tokens remain outside settings. */
   accountId?: string
-  /** The last-refreshed Trae raw directory; what the plugin card displays. */
+  /**
+   * Per-client model state, keyed `cn` | `solo`. Switching the selected account
+   * (and with it the served directory) must never drop the other client's
+   * picks.
+   */
+  editions?: Partial<Record<TraeEditionSlot, TraeEditionState>>
+  /**
+   * @deprecated Legacy single-slot fields from before the per-client split.
+   * They were always captured from the Trae IDE (`cn`), so they are read as the
+   * `cn` slot's state when `editions.cn` is absent; new writes go to
+   * `editions`.
+   */
   lastCatalog?: TraeModelInfo[]
-  /** The user's ordinary-model selection, as model id (= Trae name). */
+  /** @deprecated See {@link Config.lastCatalog}. */
   enabledModelIds?: string[]
-  /** Local DSH context budget per model; a value may only select an advertised window. */
+  /** @deprecated See {@link Config.lastCatalog}. */
   contextBudgets?: Record<string, number>
-  /** Models the user explicitly enabled for image input; text is always enabled. */
+  /** @deprecated See {@link Config.lastCatalog}. */
   imageModelIds?: string[]
   /** Legacy generated runtime catalog; kept for backwards compatibility. */
   models?: TraeModelInfo[]
@@ -123,21 +157,68 @@ const modelConfig = z.object({
   creditMultiplier: z.number(),
 })
 
+const editionStateConfig = z.object({
+  lastCatalog: z.array(modelConfig).default([]),
+  enabledModelIds: z.array(z.string()).default([]),
+  imageModelIds: z.array(z.string()).default([]),
+  contextBudgets: z.dict(z.number().step(1).min(1)).default({}),
+})
+
 export const Config: z<Config> = z.object({
   authFile: z.string().description('Optional Trae storage.json path override'),
   edition: z.union(['auto', 'cn', 'sg', 'solo', 'solo-sg']).default('auto').description('Trae edition hint'),
   accountId: z.string().description('Selected local Trae account id (never a token)'),
-  lastCatalog: z.array(modelConfig).description('Last refreshed Trae raw model directory shown by the plugin card') as z<TraeModelInfo[]>,
-  enabledModelIds: z.array(z.string()).default([]).description('Trae model ids the user enabled'),
-  contextBudgets: z.dict(z.number().step(1).min(1)).default({}).description('Local DSH context budget per Trae model'),
-  imageModelIds: z.array(z.string()).default([]).description('Trae model ids the user explicitly enabled for image input'),
+  editions: z.dict(editionStateConfig).default({}).description('Per-client model directory and selection, keyed cn | solo'),
+  lastCatalog: z.array(modelConfig).description('Deprecated: pre-split Trae model directory') as z<TraeModelInfo[]>,
+  enabledModelIds: z.array(z.string()).default([]).description('Deprecated: pre-split Trae model selection'),
+  contextBudgets: z.dict(z.number().step(1).min(1)).default({}).description('Deprecated: pre-split context budgets'),
+  imageModelIds: z.array(z.string()).default([]).description('Deprecated: pre-split image opt-in'),
   models: z.array(modelConfig).description('Legacy generated Trae model list') as z<TraeModelInfo[]>,
 })
 
+/**
+ * The slot a model-directory mode belongs to.
+ *
+ * `merge` (the unverified `sg` / `solo-sg` editions) has no client of its own,
+ * so it shares the `cn` slot rather than inventing a third one.
+ */
+export function traeEditionSlotOf(mode: TraeModelSourceMode): TraeEditionSlot {
+  return mode === 'remote' ? 'solo' : 'cn'
+}
+
+/**
+ * One client's saved model state.
+ *
+ * A config written before the split has only the flat fields. Those were always
+ * captured from the Trae IDE, so they are read as the `cn` slot's state and only
+ * when no explicit `cn` slot exists. The `solo` slot never inherits them —
+ * that inheritance is exactly the bug where a CN selection was intersected with
+ * the Remote directory and silently dropped the user's picks.
+ */
+export function traeEditionState(config: Config, slot: TraeEditionSlot): TraeEditionState {
+  const stored = config.editions?.[slot]
+  if (stored !== undefined) return stored
+  if (slot !== 'cn') return {}
+  const legacyCatalog = config.lastCatalog ?? config.models
+  return {
+    ...legacyCatalog === undefined ? {} : { lastCatalog: legacyCatalog },
+    ...config.enabledModelIds === undefined ? {} : { enabledModelIds: config.enabledModelIds },
+    ...config.imageModelIds === undefined ? {} : { imageModelIds: config.imageModelIds },
+    ...config.contextBudgets === undefined ? {} : { contextBudgets: config.contextBudgets },
+  }
+}
+
+
 export function apply(ctx: Context, config: Config): void {
   const catalog = new TraeCatalog()
-  const enabledSet = (value: Config): ReadonlySet<string> => new Set(value.enabledModelIds ?? [])
-  const imageSet = (value: Config): ReadonlySet<string> => new Set(value.imageModelIds ?? [])
+  // Which Trae client this run serves. Everything the user selects — the
+  // directory, the enabled set, image opt-ins, context budgets — is read from
+  // and written to that client's own slot, so switching accounts never
+  // intersects one client's picks with the other client's roster.
+  let slot: TraeEditionSlot = traeEditionSlotOf(traeModelSourceMode(config.edition))
+  const stateOf = (value: Config): TraeEditionState => traeEditionState(value, slot)
+  const enabledSet = (value: Config): ReadonlySet<string> => new Set(stateOf(value).enabledModelIds ?? [])
+  const imageSet = (value: Config): ReadonlySet<string> => new Set(stateOf(value).imageModelIds ?? [])
   // Display keys (lowercased id AND name) of every model known to be callable
   // via `llm_utils_chat`, populated once `discoverModels` merges Remote with
   // `get_detail_param`. A model whose id and name are both absent here is a dead
@@ -178,8 +259,9 @@ export function apply(ctx: Context, config: Config): void {
   const fallbackModels = (value: Config): readonly TraeModelInfo[] =>
     applyImageSelection(FALLBACK_TRAE_MODELS, imageSet(value))
   const derive = (value: Config, raw: readonly TraeModelInfo[]): readonly TraeModelInfo[] => {
+    const state = stateOf(value)
     const selectedImages = imageSet(value)
-    const derived = deriveCatalog(applyImageSelection(sanitizeCatalog(dropDeadModels(raw)), selectedImages), enabledSet(value), value.contextBudgets ?? {})
+    const derived = deriveCatalog(applyImageSelection(sanitizeCatalog(dropDeadModels(raw)), selectedImages), enabledSet(value), state.contextBudgets ?? {})
     return derived.length > 0 ? derived : fallbackModels(value)
   }
   // Precedence for the raw directory: live discovery, then the saved snapshot.
@@ -197,10 +279,11 @@ export function apply(ctx: Context, config: Config): void {
   // the wire map, so filtering them against themselves can only ever delete a
   // row that discovery legitimately found. Only a stale saved snapshot is
   // filtered, so it cannot resurrect a config_name the wire has dropped.
-  const pickRaw = (value: Config): readonly TraeModelInfo[] | undefined =>
-    liveCatalog ?? (value.lastCatalog?.length ? value.lastCatalog
-      : value.models?.length ? value.models
-        : undefined)
+  const pickRaw = (value: Config): readonly TraeModelInfo[] | undefined => {
+    if (liveCatalog !== undefined) return liveCatalog
+    const state = stateOf(value)
+    return state.lastCatalog?.length ? state.lastCatalog : undefined
+  }
   const configuredModels = (value: Config): readonly TraeModelInfo[] => {
     const raw = pickRaw(value)
     return raw === undefined ? fallbackModels(value) : derive(value, raw)
@@ -301,12 +384,33 @@ export function apply(ctx: Context, config: Config): void {
   const usageClient = new TraeUsageClient({ credential: () => store.resolve() })
   let current = () => config
   let invalidateAdapter = (): void => {}
+  /**
+   * Converge `slot` on the selected account's own client.
+   *
+   * The account is the authority: picking the SOLO account means serving the
+   * SOLO directory and that client's saved picks, whatever the `edition`
+   * setting happens to say (it is only the fallback for an unsigned/unresolvable
+   * credential). Every path that reads the credential refreshes this, so it
+   * converges on the real client rather than on a stale guess.
+   */
+  const slotOfCredential = async (): Promise<TraeEditionSlot> => {
+    try {
+      const credential = await store.resolve()
+      slot = credential.edition === 'solo' ? 'solo' : 'cn'
+    } catch {
+      // Unsigned/unresolvable credential: keep the slot derived from `edition`
+      // so the catalog still reflects the client the user last had selected.
+    }
+    return slot
+  }
   const discoverModels = async (signal?: AbortSignal): Promise<readonly TraeModelInfo[]> => {
     // Trae exposes two different model directories and the user's two clients
-    // show one each; `edition` picks which one this run mirrors (see
-    // `TraeModelSourceMode`). Only the selected directory is fetched, so a
-    // failure or timeout of the unused one cannot block the served catalog.
-    const mode = traeModelSourceMode(current().edition)
+    // show one each; the selected account's edition picks which one this run
+    // mirrors (see `TraeModelSourceMode`). Only the selected directory is
+    // fetched, so a failure or timeout of the unused one cannot block the
+    // served catalog.
+    const active = await slotOfCredential()
+    const mode: TraeModelSourceMode = active === 'solo' ? 'remote' : traeModelSourceMode(current().edition)
     const [remote, wire] = await Promise.all([
       mode === 'wire' ? Promise.resolve([]) : remoteCatalog.fetchModels(signal),
       mode === 'remote' ? Promise.resolve([]) : solo.fetchModels(signal),
@@ -353,8 +457,12 @@ export function apply(ctx: Context, config: Config): void {
   ctx.inject(['webServer'], (webCtx) => registerTraeUsageRoute(webCtx, {
     store,
     client: usageClient,
+    // The card addresses one client's slot at a time; `editionSlot` tells it
+    // which one so its reads and its save both target the signed-in account's
+    // own directory and selection.
+    editionSlot: () => slot,
     displayModels: () => displayModels(current()),
-    enabledModelIds: () => current().enabledModelIds ?? [],
+    enabledModelIds: () => traeEditionState(current(), slot).enabledModelIds ?? [],
     discoverModels,
     rawDiagnostic: () => rawDiagnostic(),
   }))
@@ -364,12 +472,17 @@ export function apply(ctx: Context, config: Config): void {
     onChange() {
       const next = current()
       store.setSource(next.authFile, next.authFile === undefined ? 'auto' : next.edition ?? 'auto', next.accountId)
-      // `configuredModels` re-reads the live directory when this run discovered
-      // one, so changing the account/edition selection or the context budgets
-      // rebuilds the catalog from current Trae data instead of from the
-      // snapshot the settings row happens to carry.
-      catalog.set(configuredModels(next))
-      invalidateAdapter()
+      // Resolve which client slot the (possibly newly selected) account owns,
+      // then rebuild from that slot's own directory and picks. Re-deriving only
+      // after the slot converges matters: the previous slot's directory is not
+      // this client's directory, and intersecting them silently drops every id
+      // the two rosters do not share.
+      const rebuild = (active: TraeEditionSlot): void => {
+        if (active !== slot) liveCatalog = undefined
+        slot = active
+        catalog.set(configuredModels(current()))
+        invalidateAdapter()
+      }
       // A boot that could not reach Trae serves the saved snapshot — an
       // arbitrary old day's models and rates. Nothing else in this plugin
       // re-reads Trae outside startup and the card's explicit refresh, so that
@@ -377,13 +490,21 @@ export function apply(ctx: Context, config: Config): void {
       // restarted the process. Any settings change (and in particular an
       // account or edition switch, which is exactly the moment the served data
       // is known to be wrong) now also re-reads Trae. Discovery is
-      // fire-and-forget and never awaited on this path, and a failed or empty
-      // result leaves the current catalog untouched.
-      if (liveCatalog === undefined) {
+      // fire-and-forget, and a failed or empty result leaves the catalog alone.
+      const rediscover = (): void => {
         void discoverModels().catch((error: unknown) => {
           ctx.logger.warn('dsh-connect-trae: background rediscovery failed; keeping the saved directory', error)
         })
       }
+      // `slotOfCredential` reads the new credential, which is async, so the
+      // synchronous rebuild uses the slot implied by the setting and is then
+      // corrected once the credential resolves.
+      rebuild(traeEditionSlotOf(traeModelSourceMode(next.edition)))
+      void slotOfCredential().then(active => {
+        const switched = active !== slot
+        rebuild(active)
+        if (switched || liveCatalog === undefined) rediscover()
+      }).catch(() => { rediscover() })
     },
   }
   // DSH 0.1.2 replaced the free `installSettingsSection` helper with the

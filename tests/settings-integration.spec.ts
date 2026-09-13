@@ -309,3 +309,46 @@ describe('account selection is independent of the model directory', () => {
     }
   }, 60_000)
 })
+
+describe('per-client model slots stay isolated end to end', () => {
+  it('does not intersect one client selection with the other client directory', async () => {
+    // Regression guard: the directory and the selection used to live in one
+    // global slot. Selecting models under the Trae IDE and then switching to the
+    // other client intersected that selection with the other roster, so every
+    // id the other client does not list was silently dropped — the user's picks
+    // appeared to vanish.
+    const ctx = new Context()
+    context = ctx
+    await ctx.plugin(LlmRuntime)
+    await ctx.plugin(MemorySettings)
+    await ctx.plugin(Trae, {
+      edition: 'cn',
+      lastCatalog: [
+        { id: 'glm-4.7', name: 'GLM-4.7', input: ['text'], creditMultiplier: 0.38 },
+        { id: 'DeepSeek-V4-Pro', name: 'DeepSeek-V4-Pro', input: ['text'], creditMultiplier: 0.72 },
+      ],
+      enabledModelIds: ['glm-4.7'],
+    })
+    await expect.poll(() => ctx.llm.listProviders().map(provider => provider.id)).toContain('trae')
+    await new Promise(resolve => setTimeout(resolve, 3000))
+
+    // Writing the OTHER client's slot must leave this client's selection
+    // untouched — the models served here are still the CN ones.
+    await ctx.settings.update(Trae.TRAE_SETTINGS_NS, {
+      editions: {
+        solo: {
+          lastCatalog: [{ id: 'kimi-k2.8-preview', name: 'Kimi-K2.8-Preview', input: ['text'], creditMultiplier: 0.98 }],
+          enabledModelIds: ['kimi-k2.8-preview'],
+          contextBudgets: {},
+        },
+      },
+    })
+    await new Promise(resolve => setTimeout(resolve, 1500))
+
+    const served = (await ctx.llm.listModels('trae')).map(model => model.id)
+    // The CN selection still resolves against the CN directory; the solo write
+    // neither replaced it nor intersected it.
+    expect(served).toEqual(['glm-4.7'])
+    expect(served).not.toContain('kimi-k2.8-preview')
+  }, 60_000)
+})

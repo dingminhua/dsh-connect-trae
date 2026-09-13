@@ -1,8 +1,24 @@
 # Changelog
 
-## 1.4.5 (2026-09-13)
+## 1.5.0 (2026-09-13)
+
+### Breaking Changes
+
+- **目录与勾选按客户端隔离（CN / SOLO 各一套槽位）**：`lastCatalog`、`enabledModelIds`、`imageModelIds`、`contextBudgets` 此前是**全局单槽**。两个 Trae 客户端的模型目录互不包含（21 vs 15，仅 9 个重叠），共用一槽意味着在一个客户端下勾选的模型，切到另一个客户端后会与**对方目录**求交集——凡是对方不列的 id 被静默丢弃，用户的选择看起来「凭空消失」。这正是 `dsh-connect-workbuddy` 在国际版支持里踩过并已修复的同一类缺陷。
+  - 现改为 `editions.cn` / `editions.solo` 两套独立槽位（目录、勾选、图片开关、上下文预算各一份），互不干扰；切换账号不再覆盖另一客户端的配置。
+  - 旧的扁平字段保留为 **CN 槽位的迁移来源**（旧配置一律来自 Trae IDE），**SOLO 槽位绝不继承**——那条继承路径正是丢勾选的根源。
+  - 卡片保存改为写入 `status.edition` 所指的槽位；usage 文档新增 `edition` 字段供卡片定位（与 workbuddy 的 `region` 字段同构）。
 
 ### Changes
+
+- **槽位随所选账号收敛**：账号是权威——选中 SOLO 账号即服务 SOLO 目录与该客户端的存档；`edition` 设置退化为「凭据无法解析时的兜底」。切换账号时先收敛槽位再重算目录，避免用上一个客户端的目录去交集新客户端的勾选。
+- **`merge` 模式归入 CN 槽位**：未验证的 `sg` / `solo-sg` 没有自己的客户端，共用 CN 槽位而非新造第三个。
+
+### Tests
+
+- 新增 `tests/edition-slots.spec.ts`（6 项）：`traeEditionSlotOf` 的模式→槽位映射；`traeEditionState` 的显式槽位优先、旧扁平字段**只**迁移为 CN、**SOLO 绝不继承**、pre-split `models` 列表仍作 CN 目录迁移、未配置时为空。去掉「SOLO 不继承」的守卫后该测试确实失败。
+- `tests/settings-integration.spec.ts` 新增 1 项端到端：写入 SOLO 槽位后，CN 槽位所服务的目录与勾选**不被替换也不被交集**。
+- `tests/web-status.spec.ts` 新增 2 项：文档携带的 `edition` 与路由给出的槽位一致；路由未提供时回退到已登录账号自身的客户端（而非默认 `cn`）。
 
 - **按客户端选择模型目录，不再强行合并两个源**：Trae 有两个**互不包含**的模型目录，用户的 Trae IDE 和另一个 Trae 客户端各显示其中一个：
   - **Wire 目录**（`get_detail_param`）：27 个具名模型，倍率是**折后现价**——`Seed-2.1-Pro · x0.08`（限时 1 折）、`Seed-Evolving · x0.08`；但没有 `Kimi-K2.8-Preview`、`GLM-5.3-Flash`。

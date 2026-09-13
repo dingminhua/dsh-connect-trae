@@ -77,6 +77,10 @@ describe('traeWebUsage', () => {
       rawChat: { state: 'protocol-gated', status: 400, checkedAtMs: 123 },
       enabledModelIds: ['DeepSeek-V4-Flash'],
     })
+    // The document names the slot the card must read and write. Here the route
+    // did not supply `editionSlot`, so it must fall back to the signed-in
+    // account's own client rather than defaulting to `cn`.
+    expect(result.edition).toBe('solo')
     expect(result.credits).toEqual({
       total: 7500,
       consumed: 5879.63,
@@ -113,5 +117,19 @@ describe('traeWebUsage', () => {
     expect(result.status).toBe('signed-in')
     if (result.status !== 'signed-in') return
     expect(result.creditsError).toContain('network down')
+  })
+})
+
+describe('the usage document names the per-edition slot', () => {
+  it('reports the slot the Host served the directory from', async () => {
+    // The card saves into the slot named here, so it must match the directory
+    // the document carries. Reporting the wrong one would write a client's
+    // selection into the other client's slot.
+    const deps = makeRoute()
+    deps.editionSlot = () => 'solo'
+    const result = await traeWebUsage(deps)
+    expect(result.status).toBe('signed-in')
+    if (result.status !== 'signed-in') return
+    expect(result.edition).toBe('solo')
   })
 })

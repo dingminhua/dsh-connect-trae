@@ -87,6 +87,7 @@ export function TraeUsageCard({ t, settingsScope }: TraeUsageCardProps) {
   const [draftImageIds, setDraftImageIds] = useState<Set<string> | undefined>(undefined)
   const [draftContextBudgets, setDraftContextBudgets] = useState<Record<string, number> | undefined>(undefined)
   const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | undefined>(undefined)
   const [switchingAccount, setSwitchingAccount] = useState(false)
   const mounted = useRef(true)
 
@@ -216,13 +217,32 @@ export function TraeUsageCard({ t, settingsScope }: TraeUsageCardProps) {
   }
 
   const settingsValue = settingsScope?.getSnapshot().value
-  const savedContextBudgets = typeof settingsValue === 'object' && settingsValue !== null && typeof (settingsValue as { contextBudgets?: unknown }).contextBudgets === 'object' && (settingsValue as { contextBudgets?: unknown }).contextBudgets !== null
-    ? (settingsValue as { contextBudgets: Record<string, number> }).contextBudgets
+  // Per-edition slots. `status.edition` names the slot the Host built this
+  // document from (the signed-in account's own client), so the card reads and
+  // writes that same slot. The two clients expose different rosters, and a
+  // shared slot would intersect one client's selection with the other's
+  // directory — silently dropping every model the other side does not list.
+  const configuredEditions = typeof settingsValue === 'object' && settingsValue !== null
+    ? (settingsValue as { editions?: Record<string, unknown> }).editions
+    : undefined
+  const configuredSlot = status.status === 'signed-in' && typeof configuredEditions === 'object' && configuredEditions !== null
+    ? configuredEditions[status.edition]
+    : undefined
+  const slotValue = typeof configuredSlot === 'object' && configuredSlot !== null
+    ? configuredSlot as { contextBudgets?: unknown; imageModelIds?: unknown }
+    : undefined
+  // Before the first save after upgrading there is no explicit slot; the Host
+  // reads the legacy flat fields as the `cn` slot, so mirror that here.
+  const legacyValue = status.status === 'signed-in' && status.edition === 'cn'
+    ? settingsValue as { contextBudgets?: unknown; imageModelIds?: unknown } | undefined
+    : undefined
+  const savedContextBudgetsSource = slotValue?.contextBudgets ?? legacyValue?.contextBudgets
+  const savedContextBudgets = typeof savedContextBudgetsSource === 'object' && savedContextBudgetsSource !== null
+    ? savedContextBudgetsSource as Record<string, number>
     : {}
+  const savedImageSource = slotValue?.imageModelIds ?? legacyValue?.imageModelIds
   const savedImageIds = new Set(
-    typeof settingsValue === 'object' && settingsValue !== null && Array.isArray((settingsValue as { imageModelIds?: unknown }).imageModelIds)
-      ? (settingsValue as { imageModelIds: unknown[] }).imageModelIds.filter((id): id is string => typeof id === 'string')
-      : [],
+    Array.isArray(savedImageSource) ? savedImageSource.filter((id): id is string => typeof id === 'string') : [],
   )
   void settingsRevision
   // The card renders the raw directory the Host is actually serving
@@ -269,17 +289,30 @@ export function TraeUsageCard({ t, settingsScope }: TraeUsageCardProps) {
 
   const saveModels = async (): Promise<void> => {
     if (settingsScope === undefined) return
+    if (status.status !== 'signed-in') return
     setSaving(true)
+    setSaveError(undefined)
     try {
-      // Save the raw directory plus the pure selection and budgets. The Host
-      // derives the runtime catalog from these on save/restart, so re-opening
-      // the card re-reads Trae's current catalog instead of a stale snapshot.
-      await settingsScope.set('lastCatalog', visibleModels.map(model => ({ ...model, input: ['text'] })))
-      await settingsScope.set('enabledModelIds', [...activeEnabledIds])
-      await settingsScope.set('imageModelIds', [...activeImageIds].filter(id => activeEnabledIds.has(id)))
-      await settingsScope.set('contextBudgets', activeContextBudgets)
+      // Save this client's raw directory plus the pure selection and budgets.
+      // The Host derives the runtime catalog from the slot keyed by the
+      // signed-in account's client, so a save under one client never overwrites
+      // the other client's directory or picks, and re-opening the card re-reads
+      // Trae's current catalog instead of a stale snapshot.
+      const existing = typeof configuredEditions === 'object' && configuredEditions !== null ? configuredEditions : {}
+      await settingsScope.set('editions', {
+        ...existing,
+        [status.edition]: {
+          lastCatalog: visibleModels.map(model => ({ ...model, input: ['text'] })),
+          enabledModelIds: [...activeEnabledIds],
+          imageModelIds: [...activeImageIds].filter(id => activeEnabledIds.has(id)),
+          contextBudgets: activeContextBudgets,
+        },
+      })
       discardModels()
       await refreshUsage()
+    } catch (error: unknown) {
+      // Drafts stay dirty on failure so the button remains pressable for a retry.
+      if (mounted.current) setSaveError(error instanceof Error ? error.message : t('row.requestFailed'))
     } finally {
       if (mounted.current) setSaving(false)
     }
@@ -377,6 +410,8 @@ export function TraeUsageCard({ t, settingsScope }: TraeUsageCardProps) {
                     )}
                     {status.creditsError === undefined ? null
                       : <p className="dsm-trae-usage-error">{t('row.creditsError', { message: status.creditsError })}</p>}
+                    {saveError === undefined ? null
+                      : <p className="dsm-trae-usage-error">{t('row.creditsError', { message: saveError })}</p>}
                     <section className="dsm-trae-models" aria-label={t('row.modelsTitle')}>
                       <div className="dsm-trae-models-head">
                         <div>

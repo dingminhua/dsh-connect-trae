@@ -17,7 +17,7 @@ import type { TraeModelInfo } from './catalog.ts'
 import type { TraeUsageClient } from './usage.ts'
 import type { TraeRawDiagnostic } from './raw-diagnostic.ts'
 import { TRAE_ACCOUNTS_REFRESH_PATH, TRAE_MODELS_REFRESH_PATH, TRAE_USAGE_PATH } from './status-paths.ts'
-import type { TraeWebCredits, TraeWebUsage } from './status-paths.ts'
+import type { TraeWebCredits, TraeWebEditionSlot, TraeWebUsage } from './status-paths.ts'
 
 export { TRAE_USAGE_PATH } from './status-paths.ts'
 export type { TraeWebUsage } from './status-paths.ts'
@@ -26,6 +26,13 @@ export type { TraeWebUsage } from './status-paths.ts'
 export interface TraeUsageRouteOptions {
   store: TraeCredentialStore
   client: TraeUsageClient
+  /**
+   * Which client's model slot this document addresses. The two Trae clients
+   * expose different rosters, so the card reads and writes the slot belonging
+   * to the signed-in account; showing one client's directory on the other
+   * account is exactly the mismatch this field exists to prevent.
+   */
+  editionSlot?(): TraeWebEditionSlot
   /** The last-refreshed Trae raw directory (one entry per upstream model) for card display. */
   displayModels(): readonly TraeModelInfo[]
   /** The user's model selection stored as model id (= Trae name). */
@@ -108,6 +115,9 @@ export async function traeWebUsage(deps: TraeUsageRouteOptions): Promise<TraeWeb
     accountId: accounts.find(item => item.selected)?.id ?? '',
     accountName: credential.accountName ?? credential.userId,
     tokenExpiresAtMs: credential.expiresAtMs,
+    // The account's own client decides the slot: the card must read and save
+    // into the same per-edition slot the Host served this document from.
+    edition: deps.editionSlot?.() ?? (credential.edition === 'solo' ? 'solo' : 'cn'),
     accounts,
     models: deps.displayModels().map(model => ({ ...model, ...model.input === undefined ? {} : { input: [...model.input] } })),
     enabledModelIds: [...deps.enabledModelIds()],

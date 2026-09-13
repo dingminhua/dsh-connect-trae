@@ -67,6 +67,13 @@ export interface TraeWebAccount {
   selected: boolean
 }
 
+/**
+ * Which client's per-edition model slot the document addresses. The card uses
+ * it to read and write the matching slot, so switching accounts never mixes one
+ * client's selection with the other client's roster.
+ */
+export type TraeWebEditionSlot = 'cn' | 'solo'
+
 /** The JSON document the plugin card renders. */
 export type TraeWebUsage =
   | { status: 'signed-out'; accounts: readonly TraeWebAccount[]; message?: string }
@@ -75,6 +82,8 @@ export type TraeWebUsage =
     accountId: string
     accountName: string
     tokenExpiresAtMs: number
+    /** Which per-edition slot `models` / `enabledModelIds` describe. */
+    edition: TraeWebEditionSlot
     accounts: readonly TraeWebAccount[]
     models: readonly TraeWebModel[]
     enabledModelIds: readonly string[]
