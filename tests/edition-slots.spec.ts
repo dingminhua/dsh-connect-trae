@@ -6,14 +6,30 @@ const CN_MODEL: TraeModelInfo = { id: 'glm-4.7', name: 'GLM-4.7', input: ['text'
 const SOLO_MODEL: TraeModelInfo = { id: 'kimi-k2.8-preview', name: 'Kimi-K2.8-Preview', input: ['text'], creditMultiplier: 0.98 }
 
 describe('traeEditionSlotOf', () => {
-  it('maps each directory mode onto the client that owns it', () => {
-    expect(traeEditionSlotOf('wire')).toBe('cn')
-    expect(traeEditionSlotOf('remote')).toBe('solo')
-    // `merge` is the unverified sg editions; it shares the cn slot rather than
-    // inventing a third one.
-    expect(traeEditionSlotOf('merge')).toBe('cn')
-    expect(traeEditionSlotOf(traeModelSourceMode('cn'))).toBe('cn')
-    expect(traeEditionSlotOf(traeModelSourceMode('solo'))).toBe('solo')
+  it('keys the slot on the CLIENT, not on the directory it is served from', () => {
+    expect(traeEditionSlotOf('cn')).toBe('cn')
+    expect(traeEditionSlotOf('solo')).toBe('solo')
+    // The unverified sg editions share the cn slot rather than inventing a
+    // third one.
+    expect(traeEditionSlotOf('sg')).toBe('cn')
+    expect(traeEditionSlotOf('solo-sg')).toBe('solo')
+    expect(traeEditionSlotOf('auto')).toBe('cn')
+    expect(traeEditionSlotOf(undefined)).toBe('cn')
+  })
+})
+
+describe('traeModelSourceMode', () => {
+  it('maps each client onto the directory that client actually shows', () => {
+    // Established by the rate each client renders for `Seed-2.1-Pro`, the one
+    // model the two sources price differently: Trae CN shows 0.80, which the
+    // Remote directory reports, while TraeWork CN shows the post-discount 0.08
+    // that only `get_detail_param` carries.
+    expect(traeModelSourceMode('cn')).toBe('remote')
+    expect(traeModelSourceMode('solo')).toBe('wire')
+    expect(traeModelSourceMode('auto')).toBe('remote')
+    // Unverified contracts keep the widest previous behaviour.
+    expect(traeModelSourceMode('sg')).toBe('merge')
+    expect(traeModelSourceMode('solo-sg')).toBe('merge')
   })
 })
 

@@ -243,9 +243,13 @@ describe('selectTraeModelSource', () => {
   })
 
   it('maps each edition onto the directory that client shows', () => {
-    expect(traeModelSourceMode('cn')).toBe('wire')
-    expect(traeModelSourceMode('solo')).toBe('remote')
-    expect(traeModelSourceMode('auto')).toBe('wire')
+    // The mapping is established by the rate each client renders for
+    // `Seed-2.1-Pro` — the one model the two sources price differently.
+    // Trae CN shows 0.80 (the Remote directory's figure); TraeWork CN shows the
+    // post-discount 0.08 that only `get_detail_param` carries.
+    expect(traeModelSourceMode('cn')).toBe('remote')
+    expect(traeModelSourceMode('solo')).toBe('wire')
+    expect(traeModelSourceMode('auto')).toBe('remote')
     // Unverified contracts keep the widest previous behaviour.
     expect(traeModelSourceMode('sg')).toBe('merge')
     expect(traeModelSourceMode('solo-sg')).toBe('merge')

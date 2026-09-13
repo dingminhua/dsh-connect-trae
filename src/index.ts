@@ -78,20 +78,29 @@ export const TRAE_SETTINGS_NS = 'trae'
  *
  * The setting already means "which Trae client am I reading", so it is also
  * the natural selector for the directory that client shows. Trae's two clients
- * display two different lists (see `TraeModelSourceMode`), and each is served
- * as-is rather than merged: the point is to reproduce what the selected client
- * shows, not to synthesise a third list that matches neither menu.
- *  - `cn`  — the Trae IDE, whose picker follows `get_detail_param` (wire).
- *  - `solo` — the client driven by the Remote `/models` directory.
- *  - `auto` — resolves credentials IDE-first, so it follows the IDE too.
+ * display two different lists, and each is served as-is rather than merged: the
+ * point is to reproduce what the selected client shows, not to synthesise a
+ * third list that matches neither menu.
+ *
+ * The mapping is established by the credit multiplier each client renders for
+ * `Seed-2.1-Pro`, which is the one model the two sources price differently:
+ *  - `cn`   — the Trae CN client shows `Seed-Evolving · 0.80x` and
+ *    `Seed-2.1-Pro · 0.80x`, and lists `Kimi-K2.8-Preview`/`GLM-5.3-Flash`/
+ *    `Qwen3.8-Max`. The Remote `/models` directory reports exactly those
+ *    figures, so `cn` follows Remote.
+ *  - `solo` — the TraeWork CN client shows `Seed-2.1-Pro · 0.08x` (the
+ *    post-discount rate only `get_detail_param` carries) and lists
+ *    `GLM-4.6`/`GLM-4.7`/`Kimi-K2-0905`/`Qwen3.5`/`Qwen3-Coder`, which Remote
+ *    omits entirely. So `solo` follows the wire directory.
+ *  - `auto` — resolves credentials cn-first, so it follows the Trae CN client.
  *  - `sg` / `solo-sg` — neither client's contract is verified here, so these
  *    keep the previous wire-first merge rather than guessing a mapping.
  */
 export function traeModelSourceMode(edition: Config['edition']): TraeModelSourceMode {
   switch (edition) {
-    case 'cn': return 'wire'
-    case 'solo': return 'remote'
-    case 'auto': return 'wire'
+    case 'cn': return 'remote'
+    case 'solo': return 'wire'
+    case 'auto': return 'remote'
     default: return 'merge'
   }
 }
@@ -183,8 +192,16 @@ export const Config: z<Config> = z.object({
  * `merge` (the unverified `sg` / `solo-sg` editions) has no client of its own,
  * so it shares the `cn` slot rather than inventing a third one.
  */
-export function traeEditionSlotOf(mode: TraeModelSourceMode): TraeEditionSlot {
-  return mode === 'remote' ? 'solo' : 'cn'
+/**
+ * The slot a client edition owns.
+ *
+ * Slots are keyed by CLIENT, not by which directory that client happens to be
+ * served from — the two clients' directories come from opposite sources (Trae
+ * CN follows Remote, TraeWork CN follows the wire), so deriving the slot from
+ * the source mode would file one client's picks under the other client's slot.
+ */
+export function traeEditionSlotOf(edition: Config['edition']): TraeEditionSlot {
+  return edition === 'solo' || edition === 'solo-sg' ? 'solo' : 'cn'
 }
 
 /**
@@ -216,7 +233,7 @@ export function apply(ctx: Context, config: Config): void {
   // directory, the enabled set, image opt-ins, context budgets — is read from
   // and written to that client's own slot, so switching accounts never
   // intersects one client's picks with the other client's roster.
-  let slot: TraeEditionSlot = traeEditionSlotOf(traeModelSourceMode(config.edition))
+  let slot: TraeEditionSlot = traeEditionSlotOf(config.edition)
   const stateOf = (value: Config): TraeEditionState => traeEditionState(value, slot)
   const enabledSet = (value: Config): ReadonlySet<string> => new Set(stateOf(value).enabledModelIds ?? [])
   const imageSet = (value: Config): ReadonlySet<string> => new Set(stateOf(value).imageModelIds ?? [])
@@ -397,7 +414,7 @@ export function apply(ctx: Context, config: Config): void {
   const slotOfCredential = async (): Promise<TraeEditionSlot> => {
     try {
       const credential = await store.resolve()
-      slot = credential.edition === 'solo' ? 'solo' : 'cn'
+      slot = traeEditionSlotOf(credential.edition)
     } catch {
       // Unsigned/unresolvable credential: keep the slot derived from `edition`
       // so the catalog still reflects the client the user last had selected.
@@ -518,7 +535,7 @@ export function apply(ctx: Context, config: Config): void {
       // `slotOfCredential` reads the new credential, which is async, so the
       // synchronous rebuild uses the slot implied by the setting and is then
       // corrected once the credential resolves.
-      rebuild(traeEditionSlotOf(traeModelSourceMode(next.edition)))
+      rebuild(traeEditionSlotOf(next.edition))
       void slotOfCredential().then(active => {
         const switched = active !== slot
         rebuild(active)

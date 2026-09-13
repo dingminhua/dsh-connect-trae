@@ -32,11 +32,14 @@ describe('Trae provider registration', () => {
     })
     expect(ctx.settings.describe().some(entry => entry.ns === Trae.TRAE_SETTINGS_NS)).toBe(true)
     const models = await ctx.llm.listModels('trae')
-    expect(models.map(model => model.id)).toContain('DeepSeek-V4-Flash')
-    expect(models.map(model => model.id)).toContain('DeepSeek-V4-Pro')
+    // `auto` resolves a CN credential first, and the Trae CN client follows the
+    // Remote directory — which lists `DeepSeek-V4-Pro 正式版` (id
+    // `DeepSeek-V4-Pro-Official`) rather than the bare wire-only ids.
+    expect(models.map(model => model.id)).toContain('DeepSeek-V4-Pro-Official')
+    expect(models.map(model => model.id)).toContain('glm-5.2')
     expect(models.find(model => model.id === 'glm-5.2')?.inputModalities).toEqual(['text'])
     expect(models.find(model => model.id === 'kimi-k3')?.inputModalities).toEqual(['text'])
-    expect(models.find(model => model.id === 'DeepSeek-V4-Pro')?.inputModalities).toEqual(['text'])
+    expect(models.find(model => model.id === 'DeepSeek-V4-Pro-Official')?.inputModalities).toEqual(['text'])
   })
 
   it('applies the explicit image opt-in to the live adapter catalog', async () => {
@@ -47,11 +50,11 @@ describe('Trae provider registration', () => {
     await ctx.plugin(Trae, { edition: 'auto' })
     await expect.poll(() => ctx.llm.listProviders().map(provider => provider.id)).toContain('trae')
 
-    await ctx.settings.update(Trae.TRAE_SETTINGS_NS, { imageModelIds: ['DeepSeek-V4-Pro'] })
+    await ctx.settings.update(Trae.TRAE_SETTINGS_NS, { imageModelIds: ['DeepSeek-V4-Pro-Official'] })
 
     const models = await ctx.llm.listModels('trae')
-    expect(models.find(model => model.id === 'DeepSeek-V4-Pro')?.inputModalities).toEqual(['text', 'image'])
-    expect(models.find(model => model.id === 'DeepSeek-V4-Flash')?.inputModalities).toEqual(['text'])
+    expect(models.find(model => model.id === 'DeepSeek-V4-Pro-Official')?.inputModalities).toEqual(['text', 'image'])
+    expect(models.find(model => model.id === 'DeepSeek-V4-Flash-Official')?.inputModalities).toEqual(['text'])
   })
 
   it('never widens the user selection when the directory is refreshed', async () => {
@@ -66,7 +69,7 @@ describe('Trae provider registration', () => {
     await ctx.plugin(Trae, { edition: 'auto' })
     await expect.poll(() => ctx.llm.listProviders().map(provider => provider.id)).toContain('trae')
 
-    const chosen = ['DeepSeek-V4-Flash', 'DeepSeek-V4-Pro']
+    const chosen = ['DeepSeek-V4-Flash-Official', 'DeepSeek-V4-Pro-Official']
     await ctx.settings.update(Trae.TRAE_SETTINGS_NS, { enabledModelIds: chosen })
     const served = (await ctx.llm.listModels('trae')).map(model => model.id)
     expect([...served].sort()).toEqual([...chosen].sort())
@@ -124,20 +127,31 @@ describe('built-in fallback is a safety net, not a filter target', () => {
     // fallback list used to be run through the live-wire filter, so a *partial*
     // live catalog (a subset of ids) deleted every fallback model it did not
     // mention, leaving the plugin serving almost nothing on real installs.
-    const ctx = new Context()
-    context = ctx
-    await ctx.plugin(LlmRuntime)
-    await ctx.plugin(MemorySettings)
-    await ctx.plugin(Trae, { edition: 'auto' })
-    await expect.poll(() => ctx.llm.listProviders().map(provider => provider.id)).toContain('trae')
+    //
+    // The network is forced offline so discovery genuinely yields nothing —
+    // otherwise this machine's live directory would be served and the fallback
+    // path would never run.
+    const realFetch = globalThis.fetch
+    globalThis.fetch = (async () => { throw new Error('offline') }) as typeof fetch
+    try {
+      const ctx = new Context()
+      context = ctx
+      await ctx.plugin(LlmRuntime)
+      await ctx.plugin(MemorySettings)
+      await ctx.plugin(Trae, { edition: 'auto' })
+      await expect.poll(() => ctx.llm.listProviders().map(provider => provider.id)).toContain('trae')
+      await new Promise(resolve => setTimeout(resolve, 2000))
 
-    const ids = (await ctx.llm.listModels('trae')).map(model => model.id)
-    // Every fallback id must be one the TraeCode forwarding path accepts, so
-    // the safety net can never hand the user an uncallable default.
-    for (const fallback of FALLBACK_TRAE_MODELS.map(model => model.id)) {
-      expect(ids).toContain(fallback)
+      const ids = (await ctx.llm.listModels('trae')).map(model => model.id)
+      // Every fallback id must be one the TraeCode forwarding path accepts, so
+      // the safety net can never hand the user an uncallable default.
+      for (const fallback of FALLBACK_TRAE_MODELS.map(model => model.id)) {
+        expect(ids).toContain(fallback)
+      }
+    } finally {
+      globalThis.fetch = realFetch
     }
-  })
+  }, 30_000)
 })
 
 describe('startup discovery installs the live catalog', () => {
@@ -255,7 +269,7 @@ describe('the saved snapshot is a fallback, never a source of truth', () => {
       // The stale rate must be gone, and a model the snapshot never listed —
       // because Trae added it after the save — must now be served.
       expect(served.some(model => model.name.includes('9.99'))).toBe(false)
-      expect(served.map(model => model.id)).toContain('glm-4.7')
+      expect(served.map(model => model.id)).toContain('glm-5.2')
       expect(served.find(model => model.id === 'glm-5.2')?.name).toMatch(/^GLM-5\.2 · x\d+\.\d\d$/)
     } finally {
       net.restore()
@@ -327,10 +341,10 @@ describe('per-client model slots stay isolated end to end', () => {
     await ctx.plugin(Trae, {
       edition: 'cn',
       lastCatalog: [
-        { id: 'glm-4.7', name: 'GLM-4.7', input: ['text'], creditMultiplier: 0.38 },
-        { id: 'DeepSeek-V4-Pro', name: 'DeepSeek-V4-Pro', input: ['text'], creditMultiplier: 0.72 },
+        { id: 'glm-5.2', name: 'GLM-5.2', input: ['text'], creditMultiplier: 0.78 },
+        { id: 'DeepSeek-V4-Pro-Official', name: 'DeepSeek-V4-Pro 正式版', input: ['text'], creditMultiplier: 0.72 },
       ],
-      enabledModelIds: ['glm-4.7'],
+      enabledModelIds: ['glm-5.2'],
     })
     await expect.poll(() => ctx.llm.listProviders().map(provider => provider.id)).toContain('trae')
     await new Promise(resolve => setTimeout(resolve, 3000))
@@ -351,7 +365,7 @@ describe('per-client model slots stay isolated end to end', () => {
     const served = (await ctx.llm.listModels('trae')).map(model => model.id)
     // The CN selection still resolves against the CN directory; the solo write
     // neither replaced it nor intersected it.
-    expect(served).toEqual(['glm-4.7'])
+    expect(served).toEqual(['glm-5.2'])
     expect(served).not.toContain('kimi-k2.8-preview')
   }, 60_000)
 })
@@ -370,12 +384,12 @@ describe('the user selection governs every advertised list', () => {
     await ctx.plugin(MemorySettings)
     await ctx.plugin(Trae, {
       edition: 'cn',
-      enabledModelIds: ['glm-5.2', 'glm-4.7'],
+      enabledModelIds: ['glm-5.2', 'DeepSeek-V4-Pro-Official'],
     })
     await expect.poll(() => ctx.llm.listProviders().map(provider => provider.id)).toContain('trae')
     await new Promise(resolve => setTimeout(resolve, 3000))
 
     const served = (await ctx.llm.listModels('trae')).map(model => model.id).sort()
-    expect(served).toEqual(['glm-4.7', 'glm-5.2'])
+    expect(served).toEqual(['DeepSeek-V4-Pro-Official', 'glm-5.2'])
   }, 60_000)
 })

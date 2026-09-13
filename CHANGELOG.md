@@ -29,6 +29,17 @@
 
   修复后实测（`edition=cn`）：`Seed-2.1-Pro`/`Seed-2.1-Turbo`/`Seed-Code` → **256000**（此前 100000）、`Kimi-K3`/`Qwen3.7-Plus` → 200000、`GLM-5.2` 等 → 116000；6 个模型正确暴露 1M 的 Max 窗口，而 `Seed-2.1-Pro` **不**暴露 Max——与 IDE 的「无 Max 选项」一致。
 
+### Fixes
+
+- **修复客户端→目录映射整个反了（CN 列表不对的根因）**：此前认定 `cn`→wire（21 个）、`solo`→remote（15 个）。经用户在 Trae CN 客户端截图逐条核对，**实际映射相反**：
+  - **Trae CN** 显示 `Seed-Evolving · 0.80x`、`Seed-2.1-Pro · 0.80x`，并列出 `Kimi-K2.8-Preview`/`GLM-5.3-Flash`/`Qwen3.8-Flash`/`Qwen3.8-Max` —— 与 **Remote** 目录逐条一致（含顺序）。
+  - **TraeWork CN** 显示 `Seed-2.1-Pro · 0.08x`（只有 `get_detail_param` 携带的折后价），并列出 `GLM-4.6`/`GLM-4.7`/`Kimi-K2-0905`/`Qwen3.5`/`Qwen3-Coder` —— 这些 Remote 完全不列，故它跟随 **wire**。
+  - 判据是该客户端渲染的 `Seed-2.1-Pro` 倍率：这是两个源唯一定价不同的模型（Remote 0.80 vs wire 0.08），足以唯一确定归属。
+  - 现 `traeModelSourceMode`：`cn`→remote、`solo`→wire、`auto`→remote（凭据解析 cn 优先）、`sg`/`solo-sg`→merge（未验证，保持合并）。
+- **槽位改为按「客户端」而非「目录来源」划分**：`traeEditionSlotOf` 此前收的是 `TraeModelSourceMode`，而两个客户端的目录来自相反来源，于是会把一个客户端的选择记到另一个客户端的槽位下。现直接按 edition 判定（`cn`/`sg`/`auto` → `cn` 槽，`solo`/`solo-sg` → `solo` 槽）。
+
+  修复后实测：`cn` → 15 个模型（`Seed-2.1-Pro · x0.80`、含 Evolving/K2.8-Preview/GLM-5.3/Qwen3.8，无 GLM-4.7）；`solo` → 21 个（`Seed-2.1-Pro · x0.08`、含 GLM-4.6/4.7/K2-0905/Qwen3.5/Coder，无 Evolving）。
+
 ### Changes
 
 - **槽位随所选账号收敛**：账号是权威——选中 SOLO 账号即服务 SOLO 目录与该客户端的存档；`edition` 设置退化为「凭据无法解析时的兜底」。切换账号时先收敛槽位再重算目录，避免用上一个客户端的目录去交集新客户端的勾选。
