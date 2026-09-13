@@ -252,3 +252,50 @@ describe('selectTraeModelSource', () => {
     expect(traeModelSourceMode(undefined)).toBe('merge')
   })
 })
+
+describe('selectTraeModelSource context windows', () => {
+  // DSH rejects a served model whose context window is absent: `PiAiAdapter`
+  // always emits `context: { contextWindow: resolvedModel.contextWindow }`, so
+  // an undefined value fails `INVALID_MODEL_CONTEXT` — "adapter returned
+  // invalid context metadata for provider ...". Every selected row must
+  // therefore carry the window its own source advertised.
+  const WIRE = [{ id: 'Doubao-Seed-2.1-Pro', name: 'Seed-2.1-Pro', contextWindow: 100_000, maxTokens: 16_000, creditMultiplier: 0.08 }]
+  const REMOTE: TraeDiscoveredModel[] = [
+    { id: 'Doubao-Seed-2.1-Pro', name: 'Seed-2.1-Pro', multimodal: true, contextWindow: 116_000, maxContextWindow: 256_000, creditMultiplier: 0.8, reasoningSupported: false },
+    { id: 'kimi-k2.8-preview', name: 'Kimi-K2.8-Preview', multimodal: false, contextWindow: 168_000, creditMultiplier: 0.98, reasoningSupported: false },
+  ]
+
+  it('keeps the wire row own window when only the wire source is fetched', () => {
+    // The wire branch used to read context windows from the Remote row alone,
+    // which worked only while Remote was always fetched. A wire-only call then
+    // produced rows with no window at all, and the whole provider failed to
+    // load on a real host.
+    const rows = selectTraeModelSource([], WIRE, 'wire')
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.contextWindow).toBe(100_000)
+    expect(Number.isInteger(rows[0]?.contextWindow)).toBe(true)
+  })
+
+  it('prefers the wire window over the remote one and falls back when absent', () => {
+    const rows = selectTraeModelSource(REMOTE, WIRE, 'merge')
+    // Wire row supplies its own window for the shared model.
+    expect(rows.find(model => model.id === 'Doubao-Seed-2.1-Pro')?.contextWindow).toBe(100_000)
+    // A wire row that carries no window still gets the Remote value.
+    const merged = mergeTraeModelSources(REMOTE, [{ id: 'glm-5.2', name: 'GLM-5.2' }])
+    expect(merged[0]?.contextWindow).toBeUndefined()
+    // And every remote-mode row keeps its own.
+    for (const model of selectTraeModelSource(REMOTE, [], 'remote')) {
+      expect(Number.isInteger(model.contextWindow)).toBe(true)
+    }
+  })
+
+  it('never emits a row with a non-positive or fractional window', () => {
+    for (const mode of ['wire', 'remote', 'merge'] as const) {
+      for (const model of selectTraeModelSource(REMOTE, WIRE, mode)) {
+        if (model.contextWindow === undefined) continue
+        expect(Number.isInteger(model.contextWindow)).toBe(true)
+        expect(model.contextWindow).toBeGreaterThan(0)
+      }
+    }
+  })
+})

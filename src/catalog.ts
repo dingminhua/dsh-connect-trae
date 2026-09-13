@@ -185,10 +185,19 @@ export function mergeTraeModelSources(
     // own `consumption_rate` can disagree — it reports `0.8` for a model the IDE
     // shows as `0.08x` under a 限时 1 折 promotion.
     const creditMultiplier = wireModel.creditMultiplier ?? model?.creditMultiplier
+    // Context windows follow the same rule as the rate: prefer the wire row's
+    // own value, fall back to the Remote row's. Reading them from Remote alone
+    // worked only while Remote was fetched on every call; a wire-only call then
+    // produced rows with no `contextWindow`, and DSH rejects those outright —
+    // `PiAiAdapter` always emits
+    // `context: { contextWindow: resolvedModel.contextWindow }`, so an absent
+    // value becomes `undefined` and trips `INVALID_MODEL_CONTEXT`
+    // ("adapter returned invalid context metadata for provider ...").
+    const contextWindow = wireModel.contextWindow ?? model?.contextWindow
     result.push({
       id: wireModel.id,
       name: model?.name ?? wireModel.name,
-      ...model?.contextWindow === undefined ? {} : { contextWindow: model.contextWindow },
+      ...contextWindow === undefined ? {} : { contextWindow },
       ...model?.maxContextWindow === undefined ? {} : { maxContextWindow: model.maxContextWindow },
       ...creditMultiplier === undefined ? {} : { creditMultiplier },
       input: ['text'],
