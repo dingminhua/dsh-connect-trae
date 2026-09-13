@@ -212,9 +212,17 @@ export function apply(ctx: Context, config: Config): void {
     const raw = pickRaw(value)
     return raw === undefined ? FALLBACK_TRAE_MODELS : dropDeadModels(sanitizeCatalog(raw))
   }
+  // The credential store deliberately reads BOTH CN installations (`auto`),
+  // even when `edition` pins the model directory to one of them. `edition`
+  // narrows `candidates()` to a single Trae install, so passing it here would
+  // hide the other client's account from the picker — and, because a saved
+  // `accountId` that the narrowed read no longer returns resolves to
+  // `undefined`, report "no signed-in account" for a credential that is
+  // perfectly valid. Account selection and directory selection are separate
+  // concerns: the account says *who pays*, `edition` says *which menu to show*.
   const store = new TraeCredentialStore({
     ...config.authFile === undefined ? {} : { storagePath: config.authFile },
-    edition: config.edition ?? 'auto',
+    edition: config.authFile === undefined ? 'auto' : config.edition ?? 'auto',
     ...config.accountId === undefined ? {} : { accountId: config.accountId },
     refresh: credential => refreshTraeCredential(credential),
   })
@@ -355,7 +363,7 @@ export function apply(ctx: Context, config: Config): void {
     setSource(source) { current = source },
     onChange() {
       const next = current()
-      store.setSource(next.authFile, next.edition ?? 'auto', next.accountId)
+      store.setSource(next.authFile, next.authFile === undefined ? 'auto' : next.edition ?? 'auto', next.accountId)
       // `configuredModels` re-reads the live directory when this run discovered
       // one, so changing the account/edition selection or the context budgets
       // rebuilds the catalog from current Trae data instead of from the

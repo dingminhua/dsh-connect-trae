@@ -159,21 +159,15 @@ export function TraeUsageCard({ t, settingsScope }: TraeUsageCardProps) {
     if (settingsScope === undefined) return
     setSwitchingAccount(true)
     try {
+      // Only the account changes. `edition` must NOT be written here: it
+      // narrows which Trae installations the store reads at all
+      // (`TraeCredentialStore.candidates`), so pinning it to the picked
+      // account's edition hides every other client's account from the list and
+      // — with an `accountId` that the narrowed read no longer returns —
+      // leaves `resolve()` reporting "no signed-in account" for a credential
+      // that is perfectly valid. Which model directory to serve is the user's
+      // separate choice, made through the `edition` setting.
       await settingsScope.set('accountId', accountId)
-      // Picking an account also picks that client's model directory: the two
-      // Trae clients show different lists, and `edition` is what selects which
-      // one the plugin mirrors. Without this the picker would change the token
-      // but keep serving the other client's menu.
-      const edition = status.status !== 'error'
-        ? status.accounts.find(account => account.id === accountId)?.edition
-        : undefined
-      const configured = settingsScope.getSnapshot().value
-      const currentEdition = typeof configured === 'object' && configured !== null
-        ? (configured as { edition?: unknown }).edition
-        : undefined
-      if ((edition === 'cn' || edition === 'solo') && edition !== currentEdition) {
-        await settingsScope.set('edition', edition)
-      }
       await refreshUsage()
     } finally {
       if (mounted.current) setSwitchingAccount(false)

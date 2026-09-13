@@ -280,3 +280,32 @@ describe('the saved snapshot is a fallback, never a source of truth', () => {
     }
   }, 30_000)
 })
+
+describe('account selection is independent of the model directory', () => {
+  // `edition` does double duty upstream: it names a model directory (wire vs
+  // Remote) AND, in `TraeCredentialStore.candidates()`, narrows which Trae
+  // installations are read at all. Coupling the account picker to it meant
+  // choosing the SOLO account pinned `edition=solo`, which hid the CN
+  // installation — and a saved `accountId` the narrowed read no longer returns
+  // resolves to `undefined`, so a perfectly valid token reported "no signed-in
+  // account". The plugin must therefore keep the store on `auto`.
+  it('reads both CN installations even when edition pins one directory', async () => {
+    const ctx = new Context()
+    context = ctx
+    await ctx.plugin(LlmRuntime)
+    await ctx.plugin(MemorySettings)
+
+    for (const edition of ['auto', 'cn', 'solo'] as const) {
+      const scoped = new Context()
+      await scoped.plugin(LlmRuntime)
+      await scoped.plugin(MemorySettings)
+      await scoped.plugin(Trae, { edition })
+      await expect.poll(() => scoped.llm.listProviders().map(provider => provider.id)).toContain('trae')
+      // Whatever directory the edition selects, the plugin must still serve a
+      // non-empty catalog rather than failing to resolve a credential.
+      await new Promise(resolve => setTimeout(resolve, 2500))
+      expect((await scoped.llm.listModels('trae')).length).toBeGreaterThan(0)
+      await scoped.fiber.dispose()
+    }
+  }, 60_000)
+})

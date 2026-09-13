@@ -11,6 +11,13 @@
 - **`edition` 设置现在决定服务哪一份目录**（`traeModelSourceMode`）：`cn` → Wire（Trae IDE 的菜单）、`solo` → Remote（另一个客户端的菜单）、`auto` → Wire（凭据解析 IDE 优先）、`sg` / `solo-sg` → 保持原有合并行为（这两个客户端的契约未经验证，不做猜测）。新增 `selectTraeModelSource()`；只抓取被选中的那一个源，未选中的源即使超时也不影响服务。
 - **卡片账号选择器同时切换 edition**：选账号即选该客户端的模型目录。此前选择器只写 `accountId`，换账号后仍服务另一个客户端的菜单——这正是「切了账号刷新出来还是老样子」的原因（三个账号的目录本身是同一份，差异全在客户端）。
 
+### Fixes
+
+- **修复「solo 的 token 不读取了，只读取 cn」**：上面那条把账号选择与 `edition` 绑在一起是错的。`edition` 在 `TraeCredentialStore.candidates()` 里还会**收窄读取哪些 Trae 安装**——一旦写成 `edition: cn`，solo 安装整个不再被读取，账号列表里直接看不到它；更糟的是若 `accountId` 仍指向被收窄掉的那个账号，`current()` 返回 `undefined`，于是一份**完全有效的 token 被报成「未登录」**（实测该 token 有效期到 2026-09-26 却解析失败）。现在两件事彻底解耦：
+  - **Credential store 恒以 `auto` 读取 CN 两个安装**（`cn` + `solo`），与 `edition` 无关；`edition` 只决定服务哪一份模型目录。分工是「账号说谁付费，`edition` 说显示哪个菜单」。
+  - 卡片账号选择器恢复为**只写 `accountId`**，不再回写 `edition`。
+  - 显式指定 `authFile` 时仍按该路径读取（此时本就没有第二个安装可读）。
+
 ### Notes
 
 - 说明为什么不做并集：用户要的是「插件显示哪个客户端，就和那个客户端一致」，而不是合成第三份两个菜单都没有的清单。`merge` 模式保留给未验证的 edition，也仍是 `selectTraeModelSource` 的显式选项。
@@ -19,6 +26,7 @@
 ### Tests
 
 - `tests/catalog.spec.ts` 新增 4 项：`wire` / `remote` / `merge` 三种模式的模型集合与倍率归属（含「remote 模式保留 0.80、不被 Wire 的 0.08 覆盖」和「两目录互不包含」），以及 `edition` → 模式映射。
+- `tests/settings-integration.spec.ts` 新增 1 项：`edition` 固定为 `cn` / `solo` / `auto` 时插件都必须仍能解析凭据并服务非空目录——锁定「账号选择与模型目录互不耦合」。
 
 ## 1.4.4 (2026-09-13)
 
