@@ -279,8 +279,23 @@ export function apply(ctx: Context, config: Config): void {
   const derive = (value: Config, raw: readonly TraeModelInfo[]): readonly TraeModelInfo[] => {
     const state = stateOf(value)
     const selectedImages = imageSet(value)
-    const derived = deriveCatalog(applyImageSelection(sanitizeCatalog(dropDeadModels(raw)), selectedImages), enabledSet(value), state.contextBudgets ?? {})
-    return derived.length > 0 ? derived : fallbackModels(value)
+    const directory = applyImageSelection(sanitizeCatalog(dropDeadModels(raw)), selectedImages)
+    const enabled = enabledSet(value)
+    const derived = deriveCatalog(directory, enabled, state.contextBudgets ?? {})
+    if (derived.length > 0) return derived
+    // A NON-EMPTY selection that matches nothing in the current directory is a
+    // stale selection, not a deliberate "serve nothing". This happens on upgrade
+    // whenever the served directory changes under a saved selection — e.g. this
+    // plugin's own v1.6.0 fix, which moved Trae CN from the wire directory (21
+    // ids) to the Remote directory (15 ids): every wire-only id the user had
+    // picked disappears at once. Intersecting to empty and then falling back to
+    // the five built-ins silently replaced the user's list with models they had
+    // not chosen. Serving the directory Trae actually advertises is the honest
+    // answer; the card then shows the real menu with their picks re-mappable.
+    // An EMPTY selection still means "never configured", which `deriveCatalog`
+    // already resolves to the whole directory.
+    if (enabled.size > 0) return directory.length > 0 ? directory : fallbackModels(value)
+    return fallbackModels(value)
   }
   // Precedence for the raw directory: live discovery, then the saved snapshot.
   //
@@ -426,7 +441,13 @@ export function apply(ctx: Context, config: Config): void {
     // show one each; the selected account's edition picks which one supplies the
     // served model set and rates (see `TraeModelSourceMode`).
     const active = await slotOfCredential()
-    const mode: TraeModelSourceMode = active === 'solo' ? 'remote' : traeModelSourceMode(current().edition)
+    // The slot IS the client, and the client owns the directory: a solo slot
+    // means the TraeWork CN client, whose menu follows the wire directory.
+    // Routing this through `traeModelSourceMode(edition)` instead hard-coded
+    // `remote` for every solo run — the setting was read but its result
+    // discarded, so `solo -> wire` never took effect and a solo account always
+    // served the CN (Remote) menu.
+    const mode: TraeModelSourceMode = traeModelSourceMode(active)
     // Both directories are fetched even though only one supplies the model set.
     // The Remote directory is the only source of the Max context window, and it
     // carries `context_window_tokens` for rows where `get_detail_param` omits

@@ -393,3 +393,29 @@ describe('the user selection governs every advertised list', () => {
     expect(served).toEqual(['DeepSeek-V4-Pro-Official', 'glm-5.2'])
   }, 60_000)
 })
+
+describe('the resolved client, not the setting alone, picks the directory', () => {
+  // Regression guard: `discoverModels` derived the directory from a hard-coded
+  // `active === 'solo' ? 'remote' : traeModelSourceMode(edition)`, so a solo
+  // credential always got the Remote directory and the setting was read but
+  // discarded. `traeModelSourceMode('solo') === 'wire'` was unreachable, making
+  // the whole solo path dead code.
+  it('a solo account serves the wire directory its client shows', async () => {
+    const ctx = new Context()
+    context = ctx
+    await ctx.plugin(LlmRuntime)
+    await ctx.plugin(MemorySettings)
+    // A real solo account, so `slotOfCredential` resolves the solo slot.
+    await ctx.plugin(Trae, { edition: 'solo', accountId: 'cbec9cff4f4bed9b7f35685e' })
+    await expect.poll(() => ctx.llm.listProviders().map(provider => provider.id)).toContain('trae')
+    await new Promise(resolve => setTimeout(resolve, 3000))
+
+    const ids = (await ctx.llm.listModels('trae')).map(model => model.id)
+    // Wire-only ids prove the wire directory was served...
+    expect(ids).toContain('glm-4.7')
+    expect(ids.some(id => id === 'kimi-k2-0905' || id === 'qwen3-coder')).toBe(true)
+    // ...and Remote-only ids prove it was not.
+    expect(ids).not.toContain('Doubao-Seed-Evolving')
+    expect(ids).not.toContain('kimi-k2.8-preview')
+  }, 60_000)
+})
