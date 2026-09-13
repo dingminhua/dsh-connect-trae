@@ -276,13 +276,17 @@ describe('selectTraeModelSource context windows', () => {
     expect(Number.isInteger(rows[0]?.contextWindow)).toBe(true)
   })
 
-  it('prefers the wire window over the remote one and falls back when absent', () => {
+  it('prefers the remote window over the wire one and falls back when absent', () => {
+    // Where the two disagree the Remote value is the one Trae's clients display:
+    // `get_detail_param` reports a SMALLER `context_window_tokens.dev` for some
+    // models (Seed-2.1-Pro: wire 116000 vs Remote 256000, and the Trae IDE shows
+    // 256K there). The Remote row above carries 116000 for this model, so the
+    // merge must take it rather than the wire row's 100000.
     const rows = selectTraeModelSource(REMOTE, WIRE, 'merge')
-    // Wire row supplies its own window for the shared model.
-    expect(rows.find(model => model.id === 'Doubao-Seed-2.1-Pro')?.contextWindow).toBe(100_000)
-    // A wire row that carries no window still gets the Remote value.
-    const merged = mergeTraeModelSources(REMOTE, [{ id: 'glm-5.2', name: 'GLM-5.2' }])
-    expect(merged[0]?.contextWindow).toBeUndefined()
+    expect(rows.find(model => model.id === 'Doubao-Seed-2.1-Pro')?.contextWindow).toBe(116_000)
+    // A wire row the Remote directory does not describe keeps its own window.
+    const merged = mergeTraeModelSources(REMOTE, [{ id: 'glm-5.2', name: 'GLM-5.2', contextWindow: 100_000 }])
+    expect(merged[0]?.contextWindow).toBe(100_000)
     // And every remote-mode row keeps its own.
     for (const model of selectTraeModelSource(REMOTE, [], 'remote')) {
       expect(Number.isInteger(model.contextWindow)).toBe(true)

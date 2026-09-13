@@ -209,10 +209,17 @@ export class TraeSoloUpstreamClient {
       // made every row's windows nil. The wire `config_name` (what `llm_utils_chat`
       // accepts) is `config_name` itself — NOT `model_name` (a `__dev`/`__max`
       // variant that only names the underlying checkpoint).
+      // `context_window_tokens.dev` is the context window Trae's own clients
+      // display. `prompt_max_tokens` is the cap on a single request's prompt and
+      // is materially SMALLER where both exist (`Seed-2.1-Pro`: 100000 vs `dev`
+      // 256000), so reading it as the window under-reported every model — the
+      // Trae IDE shows 256K for that model, which `dev` matches and the prompt
+      // cap does not. The prompt cap stays as a fallback for rows carrying no
+      // `dev`, so a window is still advertised when only it is present.
       const contextTokens = typeof config['context_window_tokens'] === 'object' && config['context_window_tokens'] !== null ? config['context_window_tokens'] as Record<string, unknown> : {}
       const promptMaxTokens = finitePositive(detail['prompt_max_tokens'])
       const devTokens = finitePositive(contextTokens['dev'])
-      const contextWindow = promptMaxTokens ?? devTokens
+      const contextWindow = devTokens ?? promptMaxTokens
       const maxTokens = finitePositive(detail['max_tokens'])
       const reasoning = parseReasoningCapability({ ...config, ...detail })
       const creditMultiplier = wireCreditMultiplier(config)

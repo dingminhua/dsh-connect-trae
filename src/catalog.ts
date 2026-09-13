@@ -118,7 +118,15 @@ export function selectTraeModelSource(
   wire: readonly TraeWireModel[],
   mode: TraeModelSourceMode,
 ): TraeModelInfo[] {
-  if (mode === 'wire') return mergeTraeModelSources([], wire)
+  // `wire` mode supplies the MODEL SET and the RATES; Remote is still consulted
+  // for metadata the wire rows do not carry. Passing no Remote at all dropped
+  // every context window: `get_detail_param` advertises
+  // `context_window_tokens.dev`/`max` inconsistently and never the Max window,
+  // while the Remote directory carries both. Merging Remote in this direction
+  // cannot add or remove a model (the wire list is enumerated) and cannot
+  // override a rate (the wire rate wins in `mergeTraeModelSources`), so the
+  // served set and prices stay exactly this client's.
+  if (mode === 'wire') return mergeTraeModelSources(remote, wire)
   if (mode === 'remote') return discoveredCatalog(remote)
   return mergeTraeModelSources(remote, wire)
 }
@@ -185,15 +193,17 @@ export function mergeTraeModelSources(
     // own `consumption_rate` can disagree — it reports `0.8` for a model the IDE
     // shows as `0.08x` under a 限时 1 折 promotion.
     const creditMultiplier = wireModel.creditMultiplier ?? model?.creditMultiplier
-    // Context windows follow the same rule as the rate: prefer the wire row's
-    // own value, fall back to the Remote row's. Reading them from Remote alone
-    // worked only while Remote was fetched on every call; a wire-only call then
-    // produced rows with no `contextWindow`, and DSH rejects those outright —
-    // `PiAiAdapter` always emits
-    // `context: { contextWindow: resolvedModel.contextWindow }`, so an absent
-    // value becomes `undefined` and trips `INVALID_MODEL_CONTEXT`
-    // ("adapter returned invalid context metadata for provider ...").
-    const contextWindow = wireModel.contextWindow ?? model?.contextWindow
+    // Context windows come from the Remote row first. It is the directory Trae's
+    // own clients display, and where the two disagree the wire value is the
+    // understated one: `Seed-2.1-Pro` / `Seed-2.1-Turbo` report `context_window_tokens.dev
+    // = 116000` in `get_detail_param` while the IDE and the Remote directory both
+    // show 256000. (The wire's own `max` window is also absent, so the Max toggle
+    // can only come from Remote.) The wire value stays as a fallback so a row the
+    // Remote directory does not describe still advertises a window — DSH rejects a
+    // served model whose window is missing, because `PiAiAdapter` always emits
+    // `context: { contextWindow: resolvedModel.contextWindow }` and an undefined
+    // value trips `INVALID_MODEL_CONTEXT`.
+    const contextWindow = model?.contextWindow ?? wireModel.contextWindow
     result.push({
       id: wireModel.id,
       name: model?.name ?? wireModel.name,

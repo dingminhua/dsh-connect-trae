@@ -20,6 +20,15 @@
   两处现均与其它路径一致，改为 `deriveCatalog(目录, enabledSet(current()), budgets)` 再发布。实测勾选 `glm-5.2` + `glm-4.7` 两个 → 服务与广告均恰为这 2 个（修复前为 21 个 / 15 个）。
   参考实现 `dsh-connect-workbuddy` 的 discovery 回调同样先 `deriveCatalog(discovered, new Set(state.enabledModelIds ?? []), ...)` 再返回；这两处正是与其偏离之处。
 
+### Fixes
+
+- **修复上下文窗口被系统性低估（100K / 116K 而非真实的 200K / 256K）**：两处各自独立地把窗口算小了。
+  - **`prompt_max_tokens` 被当成上下文窗口**：`get_detail_param` 同时给出 `context_window_tokens.dev`（真实窗口）与 `model_detail_list[].prompt_max_tokens`（**单次请求 prompt 的上限**），而 `solo.ts` 取的是 `promptMaxTokens ?? devTokens`——后者恒小于前者。实测 `Seed-2.1-Pro`：`dev=256000` 而 `prompt_max_tokens=100000`，Trae IDE 显示 **256K**，插件却显示 100K。现改为 **`devTokens ?? promptMaxTokens`**（`dev` 缺失时才退回 prompt 上限）。
+  - **`wire` 模式不再单独抓取，导致 Max 窗口恒为 `undefined`**：`get_detail_param` 从不提供 `context_window_tokens.max`，Max 窗口只存在于 Remote 目录（实测 `max_mode:true, max:1000000`）。1.4.5 的「按源选择」让 `wire` 模式只抓 wire，Max 窗口因此全部丢失。现在**两个目录始终都抓**（各自失败降级为 `[]`，互不影响），但**服务哪些行、用哪个倍率仍只由 `mode` 决定**：`selectTraeModelSource` 不会让 Remote 增删或改价任何一行。
+  - **窗口取值改为 Remote 优先**：两个源对 `Seed-2.1-Pro` / `Seed-2.1-Turbo` 给出的 `dev` 相差 2.5 倍（wire 116000 vs Remote 256000）。经用户在 Trae IDE 侧确认显示 **256K 且无 Max 选项**，与 Remote 完全一致，故以 Remote 为准、wire 兜底。
+
+  修复后实测（`edition=cn`）：`Seed-2.1-Pro`/`Seed-2.1-Turbo`/`Seed-Code` → **256000**（此前 100000）、`Kimi-K3`/`Qwen3.7-Plus` → 200000、`GLM-5.2` 等 → 116000；6 个模型正确暴露 1M 的 Max 窗口，而 `Seed-2.1-Pro` **不**暴露 Max——与 IDE 的「无 Max 选项」一致。
+
 ### Changes
 
 - **槽位随所选账号收敛**：账号是权威——选中 SOLO 账号即服务 SOLO 目录与该客户端的存档；`edition` 设置退化为「凭据无法解析时的兜底」。切换账号时先收敛槽位再重算目录，避免用上一个客户端的目录去交集新客户端的勾选。
@@ -32,6 +41,8 @@
 - `tests/web-status.spec.ts` 新增 2 项：文档携带的 `edition` 与路由给出的槽位一致；路由未提供时回退到已登录账号自身的客户端（而非默认 `cn`）。
 - `tests/catalog.spec.ts` 新增 3 项锁定上下文窗口：**仅抓 wire 源时仍保留 wire 行自己的窗口**（退回旧写法后该测试确实失败）、wire 优先且 Remote 兜底、所选行不得出现非正整数窗口。
 - `tests/settings-integration.spec.ts` 新增 1 项：勾选 2 个模型时，服务列表与 discovery 广告列表都**恰为这 2 个**（修复前分别为 21 / 15）。
+- `tests/solo.spec.ts`：窗口断言由 `prompt_max_tokens` 改为 `context_window_tokens.dev`，并新增「`dev` 缺失时退回 prompt 上限」一项。
+- `tests/catalog.spec.ts`：窗口优先级断言改为 **Remote 优先、wire 兜底**（含「Remote 未描述的 wire 行保留自己的窗口」）。
 
 - **按客户端选择模型目录，不再强行合并两个源**：Trae 有两个**互不包含**的模型目录，用户的 Trae IDE 和另一个 Trae 客户端各显示其中一个：
   - **Wire 目录**（`get_detail_param`）：27 个具名模型，倍率是**折后现价**——`Seed-2.1-Pro · x0.08`（限时 1 折）、`Seed-Evolving · x0.08`；但没有 `Kimi-K2.8-Preview`、`GLM-5.3-Flash`。

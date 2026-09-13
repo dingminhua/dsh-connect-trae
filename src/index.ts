@@ -6,7 +6,8 @@ import type {} from '@deepseek-ai/dsh-attachment'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import { createTraeAdapter, TRAE_PROVIDER } from './adapter.ts'
 import { TraeCredentialStore } from './auth.ts'
-import { applyImageSelection, deriveCatalog, discoveredCatalog, FALLBACK_TRAE_MODELS, mergeTraeModelSources, sanitizeCatalog, selectTraeModelSource, TraeCatalog, traeInputModalities, traeModelDisplayName, type TraeModelInfo, type TraeModelSourceMode } from './catalog.ts'
+import { applyImageSelection, deriveCatalog, discoveredCatalog, FALLBACK_TRAE_MODELS, mergeTraeModelSources, sanitizeCatalog, selectTraeModelSource, TraeCatalog, traeInputModalities, traeModelDisplayName, type TraeModelInfo, type TraeModelSourceMode, type TraeWireModel } from './catalog.ts'
+import type { TraeDiscoveredModel } from './model-metadata.ts'
 import { refreshTraeCredential } from './refresh.ts'
 import { pickTraeStorageIdentity, readTraeIdentity } from './identity.ts'
 import { traeStorageCandidates } from './paths.ts'
@@ -405,15 +406,22 @@ export function apply(ctx: Context, config: Config): void {
   }
   const discoverModels = async (signal?: AbortSignal): Promise<readonly TraeModelInfo[]> => {
     // Trae exposes two different model directories and the user's two clients
-    // show one each; the selected account's edition picks which one this run
-    // mirrors (see `TraeModelSourceMode`). Only the selected directory is
-    // fetched, so a failure or timeout of the unused one cannot block the
-    // served catalog.
+    // show one each; the selected account's edition picks which one supplies the
+    // served model set and rates (see `TraeModelSourceMode`).
     const active = await slotOfCredential()
     const mode: TraeModelSourceMode = active === 'solo' ? 'remote' : traeModelSourceMode(current().edition)
+    // Both directories are fetched even though only one supplies the model set.
+    // The Remote directory is the only source of the Max context window, and it
+    // carries `context_window_tokens` for rows where `get_detail_param` omits
+    // it, so skipping it starved the served rows of metadata DSH requires
+    // (`contextWindow` must be a positive integer or the provider fails to
+    // load). Which rows and which rates are served is still decided solely by
+    // `mode`: `selectTraeModelSource` never lets Remote add, remove or re-price
+    // a row. Each fetch degrades on its own, so one failing source cannot
+    // discard the other's rows.
     const [remote, wire] = await Promise.all([
-      mode === 'wire' ? Promise.resolve([]) : remoteCatalog.fetchModels(signal),
-      mode === 'remote' ? Promise.resolve([]) : solo.fetchModels(signal),
+      remoteCatalog.fetchModels(signal).catch(() => [] as TraeDiscoveredModel[]),
+      mode === 'remote' ? Promise.resolve([]) : solo.fetchModels(signal).catch(() => [] as TraeWireModel[]),
     ])
     const merged = selectTraeModelSource(remote, wire, mode)
     // Record every callable display key (id and name) so stale saved catalogs

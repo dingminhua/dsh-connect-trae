@@ -91,17 +91,34 @@ describe('Trae SOLO protocol', () => {
 
   it('parses model discovery from the real get_detail_param field names', async () => {
     // Verified 2026-08-30: get_detail_param uses `model_detail_list[].prompt_max_tokens`
-    // (context) and `max_tokens` (max output). There are no `max_input_tokens` /
+    // and `max_tokens` (max output). There are no `max_input_tokens` /
     // `max_output_tokens` / `reasoning_effort_options` fields; reading those made
     // every row's context/maxTokens/reasoning undefined.
+    //
+    // The context window is `context_window_tokens.dev`, NOT `prompt_max_tokens`:
+    // the latter caps one request's prompt and is smaller where both exist
+    // (`Seed-2.1-Pro` carries dev 256000 beside prompt_max_tokens 100000, and the
+    // Trae IDE shows 256K). Reading the prompt cap under-reported every model.
     const fetchImpl = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => new Response(JSON.stringify({ config_info_list: [{
       config_name: 'glm-5.2', display_config: { display_name: 'GLM-5.2' },
       context_window_tokens: { dev: 232768 },
       model_detail_list: [{ model_name: 'glm-5.2__dev', prompt_max_tokens: 168000, max_tokens: 32000 }],
     }] }), { status: 200, headers: { 'content-type': 'application/json' } }))
     const client = new TraeSoloUpstreamClient({ credential: async () => credential, identity: async () => identity, fetchImpl })
-    await expect(client.fetchModels()).resolves.toEqual([{ id: 'glm-5.2', name: 'GLM-5.2', contextWindow: 168000, maxTokens: 32000 }])
+    await expect(client.fetchModels()).resolves.toEqual([{ id: 'glm-5.2', name: 'GLM-5.2', contextWindow: 232768, maxTokens: 32000 }])
     expect(fetchImpl.mock.calls[0]?.[0]).toBe('https://host/api/ide/v1/get_detail_param')
+  })
+
+  it('falls back to prompt_max_tokens when a row carries no context_window_tokens.dev', async () => {
+    // Some rows omit `dev`; the prompt cap is then the only window-like figure,
+    // and advertising it beats advertising none — DSH rejects a served model
+    // whose context window is missing.
+    const fetchImpl = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => new Response(JSON.stringify({ config_info_list: [{
+      config_name: 'glm-5.2', display_config: { display_name: 'GLM-5.2' },
+      model_detail_list: [{ model_name: 'glm-5.2__dev', prompt_max_tokens: 168000, max_tokens: 32000 }],
+    }] }), { status: 200, headers: { 'content-type': 'application/json' } }))
+    const client = new TraeSoloUpstreamClient({ credential: async () => credential, identity: async () => identity, fetchImpl })
+    await expect(client.fetchModels()).resolves.toEqual([{ id: 'glm-5.2', name: 'GLM-5.2', contextWindow: 168000, maxTokens: 32000 }])
   })
 
   it('parses SOLO output, usage and reasoning tokens', () => {
