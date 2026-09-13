@@ -22,9 +22,12 @@ describe('TraeSoloRemoteCatalogClient', () => {
       reasoningSupported: true,
       reasoning: { supported: ['low', 'high', 'xhigh'], defaultEffort: 'high' },
     }])
-    // TraeCode only: the TraeWork functions this used to request
-    // (`solo_agent_remote,solo_work_remote`) answer the TraeWork catalog.
-    expect(fetchImpl.mock.calls[0]?.[0]).toBe('https://solo.trae.cn/api/remote/v1/models?functions=chat_v3')
+    // Both product lines are requested: `chat_v3` alone omits the TraeWork-only
+    // models (Kimi-K2.7-Code, Kimi-K2.6) that the product's own menu shows.
+    const requested = String(fetchImpl.mock.calls[0]?.[0] ?? '')
+    expect(requested).toContain('functions=')
+    expect(requested).toContain('chat_v3')
+    expect(decodeURIComponent(requested)).toContain('solo_work_lite')
   })
 
   it('fails clearly when the catalog response contains no usable models', async () => {
@@ -36,5 +39,39 @@ describe('TraeSoloRemoteCatalogClient', () => {
   it('does not expose a chat or session API', () => {
     const client = new TraeSoloRemoteCatalogClient({ credential: async () => credential })
     expect('chat' in client).toBe(false)
+  })
+})
+
+describe('the Remote directory covers both product lines', () => {
+  // `chat_v3` (TraeCode) and the `solo_*` groups (TraeWork) are NOT subsets of
+  // each other: only chat_v3 carries Kimi-K2.8-Preview / GLM-5.3-Flash /
+  // Qwen3.8-Flash, and only the solo_* groups carry Kimi-K2.7-Code / Kimi-K2.6 /
+  // Seed-Code. Requesting a single group dropped the other product's models,
+  // which is why the served list lacked rows the product's own menu shows.
+  it('requests every product function and merges their groups', async () => {
+    const seen: string[] = []
+    const fetchImpl = vi.fn(async (url: string | URL | Request) => {
+      seen.push(String(url))
+      return new Response(JSON.stringify({ code: 0, data: { list: [
+        { function: 'chat_v3', models: [
+          { name: 'kimi-k2.8-preview', display_name: 'Kimi-K2.8-Preview', context_window_tokens: { dev: 200000, max: 0 }, max_mode: false },
+          { name: 'glm-5.2', display_name: 'GLM-5.2', context_window_tokens: { dev: 116000, max: 1000000 }, max_mode: true },
+        ] },
+        { function: 'solo_work_lite', models: [
+          { name: 'kimi-k2.6', display_name: 'Kimi-K2.6', context_window_tokens: { dev: 200000, max: 0 }, max_mode: false },
+          { name: 'glm-5.2', display_name: 'GLM-5.2', context_window_tokens: { dev: 116000, max: 1000000 }, max_mode: true },
+        ] },
+      ] } }), { status: 200, headers: { 'content-type': 'application/json' } })
+    })
+    const client = new TraeSoloRemoteCatalogClient({ credential: async () => credential, fetchImpl })
+    const models = await client.fetchModels()
+    // The requested URL must name both products' functions.
+    const url = seen[0] ?? ''
+    expect(url).toContain('chat_v3')
+    expect(url).toContain('solo_work_lite')
+    // Both groups' rows are present, and the shared row is not duplicated.
+    expect(models.map(model => model.id).sort()).toEqual(['glm-5.2', 'kimi-k2.6', 'kimi-k2.8-preview'])
+    // The Max window from the chat_v3 group survives the merge.
+    expect(models.find(model => model.id === 'glm-5.2')?.maxContextWindow).toBe(1_000_000)
   })
 })

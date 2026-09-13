@@ -161,23 +161,56 @@ describe('startup discovery installs the live catalog', () => {
     // saved `lastCatalog`) that is the built-in fallback list, so every
     // discovered model was discarded at boot and the plugin served only the 5
     // hard-coded defaults.
-    const ctx = new Context()
-    context = ctx
-    await ctx.plugin(LlmRuntime)
-    await ctx.plugin(MemorySettings)
-    await ctx.plugin(Trae, { edition: 'auto' })
-    await expect.poll(() => ctx.llm.listProviders().map(provider => provider.id)).toContain('trae')
-    await new Promise(resolve => setTimeout(resolve, 3000))
+    //
+    // The previous version of this test asserted
+    // `FALLBACK.some(id) || id.length > 0`, which is true for every non-empty
+    // id — a tautology. Fetch is now stubbed with a directory whose id is
+    // deliberately NOT a fallback id, so serving it proves the discovered
+    // catalog was installed.
+    //
+    // Honest limitation: re-introducing the literal clobber no longer fails
+    // this test, because the clobber is now unreachable — `configuredModels`
+    // reads the live directory first (`pickRaw` -> `liveCatalog`), so calling
+    // it here returns the discovered rows rather than the fallback list. The
+    // assertion below therefore guards the OUTCOME (discovered data is served)
+    // rather than that one line; the line was removed because it became dead,
+    // not because this test caught it.
+    const DISCOVERED_ONLY = 'zz-synthetic-discovery-only-model'
+    const realFetch = globalThis.fetch
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = String(input)
+      if (url.includes('/models') && url.includes('trae')) {
+        return new Response(JSON.stringify({ code: 0, data: { list: [{ function: 'chat_v3', models: [
+          { name: DISCOVERED_ONLY, display_name: 'Synthetic Discovery Model', context_window_tokens: { dev: 200000, max: 0 }, max_mode: false },
+        ] }] } }), { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      if (url.includes('get_detail_param')) {
+        return new Response(JSON.stringify({ config_info_list: [{
+          config_name: DISCOVERED_ONLY, display_config: { display_name: 'Synthetic Discovery Model' },
+          context_window_tokens: { dev: 200000 },
+          model_detail_list: [{ model_name: 'x', prompt_max_tokens: 100000, max_tokens: 16000 }],
+        }] }), { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } })
+    }) as typeof fetch
+    try {
+      const ctx = new Context()
+      context = ctx
+      await ctx.plugin(LlmRuntime)
+      await ctx.plugin(MemorySettings)
+      await ctx.plugin(Trae, { edition: 'auto' })
+      await expect.poll(() => ctx.llm.listProviders().map(provider => provider.id)).toContain('trae')
+      await new Promise(resolve => setTimeout(resolve, 3000))
 
-    const ids = (await ctx.llm.listModels('trae')).map(model => model.id)
-    // Without credentials discovery cannot land, so the fallback set is the
-    // correct answer here — but it must never be a *subset* produced by the
-    // clobber, and every id must still be callable.
-    for (const id of ids) {
-      expect(FALLBACK_TRAE_MODELS.some(model => model.id === id) || id.length > 0).toBe(true)
+      const ids = (await ctx.llm.listModels('trae')).map(model => model.id)
+      // The discovered catalog is served...
+      expect(ids).toContain(DISCOVERED_ONLY)
+      // ...and was not replaced by the settings-derived fallback list.
+      expect(ids).not.toEqual(FALLBACK_TRAE_MODELS.map(model => model.id))
+    } finally {
+      globalThis.fetch = realFetch
     }
-    expect(ids.length).toBeGreaterThan(0)
-  })
+  }, 30_000)
 })
 
 describe('the saved snapshot is a fallback, never a source of truth', () => {
@@ -382,6 +415,16 @@ describe('the user selection governs every advertised list', () => {
     context = ctx
     await ctx.plugin(LlmRuntime)
     await ctx.plugin(MemorySettings)
+    // Capture the discovery callback the plugin registers. It is a SEPARATE
+    // path from the served catalog and is what model management reads, so the
+    // test must invoke it rather than infer it from `listModels`.
+    const llm = ctx.llm as unknown as {
+      registerModelDiscovery: (ns: string, cb: (request: { provider: string }, signal?: AbortSignal) => Promise<{ id: string }[]>) => () => void
+    }
+    const realRegister = llm.registerModelDiscovery.bind(llm)
+    let captured: ((request: { provider: string }, signal?: AbortSignal) => Promise<{ id: string }[]>) | undefined
+    llm.registerModelDiscovery = (ns, cb) => { captured = cb; return realRegister(ns, cb) }
+
     await ctx.plugin(Trae, {
       edition: 'cn',
       enabledModelIds: ['glm-5.2', 'DeepSeek-V4-Pro-Official'],
@@ -391,6 +434,12 @@ describe('the user selection governs every advertised list', () => {
 
     const served = (await ctx.llm.listModels('trae')).map(model => model.id).sort()
     expect(served).toEqual(['DeepSeek-V4-Pro-Official', 'glm-5.2'])
+
+    // The advertised list must be the same selected subset — publishing the raw
+    // directory here is the bug this guards.
+    expect(captured).toBeDefined()
+    const advertised = (await captured!({ provider: 'trae' })).map(model => model.id).sort()
+    expect(advertised).toEqual(['DeepSeek-V4-Pro-Official', 'glm-5.2'])
   }, 60_000)
 })
 

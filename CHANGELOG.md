@@ -31,6 +31,17 @@
 
 ### Fixes
 
+- **Remote 目录改为合并两个产品线的分组**：`solo-remote.ts` 此前只请求并只取 `chat_v3` 一组，丢掉了 TraeWork 组独有的 `Kimi-K2.7-Code` / `Kimi-K2.6` / `Seed-Code`。实测 Remote 接口按 `function` 返回 **6 个分组**，且两组**互不包含**：`chat_v3`（TraeCode）独有 `Kimi-K2.8-Preview`/`GLM-5.3-Flash`/`Qwen3.8-Flash`，`solo_*`（TraeWork）独有 `Kimi-K2.7-Code`/`Kimi-K2.6`/`Seed-Code`。现一次性请求全部产品线 function 并合并去重，实测对用户 TraeWork CN 截图菜单的覆盖由 14/16 提升到 **16/16**。
+
+### Tests
+
+- **修复 4 项「假通过」回归测试**（独立审计以「重新注入被测 bug」的变异实验证明其无效）：
+  - `does not let the settings-derived list overwrite a discovered catalog`：原断言含 `|| id.length > 0` 恒真。现改为 stub fetch 返回一个**故意不属于内置回退表**的模型 id，只有真正装载了发现结果才能通过。
+  - `serves and advertises exactly the checked models`：原测试只断言 served 一半，**从未触碰 `registerModelDiscovery` 回调**（变异实验证明：把回调改回「返回未过滤目录」仍通过）。现捕获注册的回调并直接调用它，断言其返回值恰为勾选集合；重新注入该 bug 后**确实失败**（17 个 vs 预期 2 个）。
+  - 另两项（`never widens the user selection`、`reads both CN installations`）经证实无法在 host 侧守护其声称的行为（前者守护的是浏览器端代码，后者只断言非空而回退表保证非空），已在注释中标注其局限。
+
+### Fixes
+
 - **修复客户端→目录映射整个反了（CN 列表不对的根因）**：此前认定 `cn`→wire（21 个）、`solo`→remote（15 个）。经用户在 Trae CN 客户端截图逐条核对，**实际映射相反**：
   - **Trae CN** 显示 `Seed-Evolving · 0.80x`、`Seed-2.1-Pro · 0.80x`，并列出 `Kimi-K2.8-Preview`/`GLM-5.3-Flash`/`Qwen3.8-Flash`/`Qwen3.8-Max` —— 与 **Remote** 目录逐条一致（含顺序）。
   - **TraeWork CN** 显示 `Seed-2.1-Pro · 0.08x`（只有 `get_detail_param` 携带的折后价），并列出 `GLM-4.6`/`GLM-4.7`/`Kimi-K2-0905`/`Qwen3.5`/`Qwen3-Coder` —— 这些 Remote 完全不列，故它跟随 **wire**。

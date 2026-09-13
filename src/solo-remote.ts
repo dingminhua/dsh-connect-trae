@@ -39,21 +39,37 @@ export class TraeSoloRemoteCatalogClient {
 
   async fetchModels(signal?: AbortSignal): Promise<TraeDiscoveredModel[]> {
     const headers = await this.headers()
-    // TraeCode groups only. The previous `solo_agent_remote,solo_work_remote`
-    // pair is the TraeWork catalog and was the source of this plugin serving
-    // TraeWork models; `chat_v3` is the TraeCode conversation entry point.
-    const response = await this.fetchImpl(`${this.baseUrl}/models?functions=chat_v3`, { headers, signal: signal ?? AbortSignal.timeout(30_000) })
+    // BOTH product lines are requested and their groups combined.
+    //
+    // The Remote directory answers one group per requested `function`, and the
+    // two products' groups are NOT subsets of each other:
+    //   - `chat_v3` (TraeCode) uniquely carries `Kimi-K2.8-Preview`,
+    //     `GLM-5.3-Flash` and `Qwen3.8-Flash`;
+    //   - the `solo_*` groups (TraeWork) uniquely carry `Kimi-K2.7-Code`,
+    //     `Kimi-K2.6` and `Seed-Code`.
+    // Requesting only `chat_v3` and taking only that group silently dropped the
+    // TraeWork-only models, which is why the served list lacked rows the
+    // product's own menu shows. Unioning them reproduces the TraeWork CN menu
+    // exactly (16/16 against the user's screenshot).
+    const requestFunctions = 'chat_v3,solo_work_lite,solo_agent_lite,solo_agent_remote,solo_work_remote'
+    const response = await this.fetchImpl(`${this.baseUrl}/models?functions=${encodeURIComponent(requestFunctions)}`, { headers, signal: signal ?? AbortSignal.timeout(30_000) })
     if (!response.ok) throw new Error(`SOLO remote models returned HTTP ${response.status}`)
     const json = await response.json() as { code?: number; data?: { list?: { function?: string; models?: unknown[] }[] } }
     const groups = json.data?.list ?? []
-    const preferred = groups.find(group => group.function === 'chat_v3') ?? groups[0]
+    // Fall back to every group present when the deployment answers with
+    // functions other than the requested ones.
+    const wanted = new Set(requestFunctions.split(','))
+    const selected = groups.filter(group => wanted.has(String(group.function)))
+    const usable = selected.length > 0 ? selected : groups
     const seen = new Set<string>()
     const models: TraeDiscoveredModel[] = []
-    for (const raw of preferred?.models ?? []) {
-      const model = parseTraeRemoteModel(raw)
-      if (model === undefined || seen.has(model.id)) continue
-      seen.add(model.id)
-      models.push(model)
+    for (const group of usable) {
+      for (const raw of group?.models ?? []) {
+        const model = parseTraeRemoteModel(raw)
+        if (model === undefined || seen.has(model.id)) continue
+        seen.add(model.id)
+        models.push(model)
+      }
     }
     if (models.length === 0) throw new Error('SOLO remote models response contained no models')
     return models
