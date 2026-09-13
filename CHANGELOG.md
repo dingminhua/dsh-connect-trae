@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.4.5 (2026-09-13)
+
+### Changes
+
+- **按客户端选择模型目录，不再强行合并两个源**：Trae 有两个**互不包含**的模型目录，用户的 Trae IDE 和另一个 Trae 客户端各显示其中一个：
+  - **Wire 目录**（`get_detail_param`）：27 个具名模型，倍率是**折后现价**——`Seed-2.1-Pro · x0.08`（限时 1 折）、`Seed-Evolving · x0.08`；但没有 `Kimi-K2.8-Preview`、`GLM-5.3-Flash`。
+  - **Remote 目录**（`solo.trae.cn/api/remote/v1/models`）：15 个模型，含 `Kimi-K2.8-Preview`(0.98)、`GLM-5.3-Flash`(0.06)、`Seed-Evolving`；但 `Seed-2.1-Pro` 报**未打折的 `x0.80`**，且缺少 `GLM-5.1`、`GLM-4.6/4.7`、`K2`、`Qwen3.5`、`Qwen3-Coder` 等 12 个。
+  此前插件**无条件合并**两者并一律以 Wire 为准，结果是「哪个客户端都不像」：Remote 独有的 6 个模型永远不出现，而它们的倍率也拿不到（Remote 对折扣不可靠）。
+- **`edition` 设置现在决定服务哪一份目录**（`traeModelSourceMode`）：`cn` → Wire（Trae IDE 的菜单）、`solo` → Remote（另一个客户端的菜单）、`auto` → Wire（凭据解析 IDE 优先）、`sg` / `solo-sg` → 保持原有合并行为（这两个客户端的契约未经验证，不做猜测）。新增 `selectTraeModelSource()`；只抓取被选中的那一个源，未选中的源即使超时也不影响服务。
+- **卡片账号选择器同时切换 edition**：选账号即选该客户端的模型目录。此前选择器只写 `accountId`，换账号后仍服务另一个客户端的菜单——这正是「切了账号刷新出来还是老样子」的原因（三个账号的目录本身是同一份，差异全在客户端）。
+
+### Notes
+
+- 说明为什么不做并集：用户要的是「插件显示哪个客户端，就和那个客户端一致」，而不是合成第三份两个菜单都没有的清单。`merge` 模式保留给未验证的 edition，也仍是 `selectTraeModelSource` 的显式选项。
+- `Remote` 源的倍率**不被 Wire 覆盖**（`remote` 模式下不调用 `mergeTraeModelSources`）：选这一份目录就是要复现该客户端显示的 `0.80`，替换成 `0.08` 反而与该客户端不一致。
+
+### Tests
+
+- `tests/catalog.spec.ts` 新增 4 项：`wire` / `remote` / `merge` 三种模式的模型集合与倍率归属（含「remote 模式保留 0.80、不被 Wire 的 0.08 覆盖」和「两目录互不包含」），以及 `edition` → 模式映射。
+
 ## 1.4.4 (2026-09-13)
 
 ### Fixes

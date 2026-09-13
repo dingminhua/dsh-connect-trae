@@ -87,6 +87,43 @@ function displayKey(name: string): string {
 }
 
 /**
+ * Which of Trae's two model directories a run serves.
+ *
+ * The two are genuinely different lists, and the user's two Trae clients show
+ * them side by side: the IDE's picker follows `get_detail_param` (`wire`) — 27
+ * models with the current limited-time rates, e.g. `Seed-2.1-Pro · x0.08` —
+ * while the other client follows the Remote `/models` directory (`remote`) —
+ * 15 models including `Doubao-Seed-Evolving`, `Kimi-K2.8-Preview` and
+ * `GLM-5.3-Flash`, but quoting `Seed-2.1-Pro` at its **undiscounted** `0.80`.
+ *
+ * Neither list is a subset of the other, so this plugin serves whichever
+ * directory the selected client actually shows instead of inventing a union:
+ *  - `wire`  — the `get_detail_param` directory (the Trae IDE / `chat_v3`).
+ *  - `remote` — the Remote `/models` directory (the other client).
+ *  - `merge` — both, wire-first; the historical behaviour, kept for callers
+ *    that want the widest reachable set regardless of any client's menu.
+ */
+export type TraeModelSourceMode = 'wire' | 'remote' | 'merge'
+
+/**
+ * Select one source's rows without merging.
+ *
+ * `remote` rows are converted to catalog rows with their own rates and are
+ * deliberately NOT enriched from `wire`: the whole point of choosing this
+ * directory is to reproduce what the Remote-driven client shows, including its
+ * undiscounted figures.
+ */
+export function selectTraeModelSource(
+  remote: readonly TraeDiscoveredModel[],
+  wire: readonly TraeWireModel[],
+  mode: TraeModelSourceMode,
+): TraeModelInfo[] {
+  if (mode === 'wire') return mergeTraeModelSources([], wire)
+  if (mode === 'remote') return discoveredCatalog(remote)
+  return mergeTraeModelSources(remote, wire)
+}
+
+/**
  * Merge the two Trae model sources into one authoritative catalog.
  *
  * `wire` (from `get_detail_param`) is the authority: it is the exact set of

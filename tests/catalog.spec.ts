@@ -8,10 +8,12 @@ import {
   FALLBACK_TRAE_MODELS,
   mergeTraeModelSources,
   sanitizeCatalog,
+  selectTraeModelSource,
   TraeCatalog,
   traeInputModalities,
   traeModelDisplayName,
 } from '../src/catalog.ts'
+import { traeModelSourceMode } from '../src/index.ts'
 
 const RAW = discoveredCatalog([{
   id: 'qwen3.8-max', name: 'Qwen3.8-Max', multimodal: true,
@@ -195,5 +197,58 @@ describe('mergeTraeModelSources', () => {
     const wire = [{ id: 'glm-5.2', name: 'GLM-5.2' }]
     const merged = mergeTraeModelSources(remote, wire)
     expect(merged.map(model => model.id)).toEqual(['glm-5.2'])
+  })
+})
+
+describe('selectTraeModelSource', () => {
+  // The two directories as a live TraeCode account returns them: `wire` is the
+  // IDE picker (27 named rows), `remote` is the other client's menu (15 rows).
+  // Neither is a subset of the other, and they disagree on discounted rates.
+  const REMOTE_DIR: TraeDiscoveredModel[] = [
+    { id: 'Doubao-Seed-Evolving', name: 'Seed-Evolving', multimodal: true, creditMultiplier: 0.8, reasoningSupported: false },
+    { id: 'Doubao-Seed-2.1-Pro', name: 'Seed-2.1-Pro', multimodal: true, creditMultiplier: 0.8, reasoningSupported: false },
+    { id: 'kimi-k2.8-preview', name: 'Kimi-K2.8-Preview', multimodal: false, creditMultiplier: 0.98, reasoningSupported: false },
+    { id: 'glm-5.2', name: 'GLM-5.2', multimodal: false, creditMultiplier: 0.78, reasoningSupported: false },
+  ]
+  const WIRE_DIR = [
+    // The wire row carries the post-discount rate the IDE renders.
+    { id: 'Doubao-Seed-2.1-Pro', name: 'Seed-2.1-Pro', creditMultiplier: 0.08 },
+    { id: 'glm-5.2', name: 'GLM-5.2', creditMultiplier: 0.78 },
+    { id: 'glm-4.7', name: 'GLM-4.7', creditMultiplier: 0.38 },
+  ]
+
+  it('serves the wire directory alone, at its own discounted rates', () => {
+    const rows = selectTraeModelSource([], WIRE_DIR, 'wire')
+    expect(rows.map(model => model.id)).toEqual(['Doubao-Seed-2.1-Pro', 'glm-5.2', 'glm-4.7'])
+    expect(rows[0]?.creditMultiplier).toBe(0.08)
+    // Neither Remote-only model leaks in: the two menus genuinely differ.
+    expect(rows.some(model => model.id === 'Doubao-Seed-Evolving')).toBe(false)
+    expect(rows.some(model => model.id === 'kimi-k2.8-preview')).toBe(false)
+  })
+
+  it('serves the remote directory alone, keeping its own undiscounted rates', () => {
+    const rows = selectTraeModelSource(REMOTE_DIR, [], 'remote')
+    expect(rows.map(model => model.id)).toEqual(['Doubao-Seed-Evolving', 'Doubao-Seed-2.1-Pro', 'kimi-k2.8-preview', 'glm-5.2'])
+    // The Remote client really does quote 0.80 here; that is the point of
+    // selecting this directory, so the wire rate must NOT be substituted in.
+    expect(rows.find(model => model.id === 'Doubao-Seed-2.1-Pro')?.creditMultiplier).toBe(0.8)
+    expect(rows.some(model => model.id === 'glm-4.7')).toBe(false)
+  })
+
+  it('merges only when explicitly asked, wire-first on rates', () => {
+    const rows = selectTraeModelSource(REMOTE_DIR, WIRE_DIR, 'merge')
+    // Wire enumerates the catalog, so its rows come first and Remote enriches.
+    expect(rows.map(model => model.id)).toEqual(['Doubao-Seed-2.1-Pro', 'glm-5.2', 'glm-4.7'])
+    expect(rows[0]?.creditMultiplier).toBe(0.08)
+  })
+
+  it('maps each edition onto the directory that client shows', () => {
+    expect(traeModelSourceMode('cn')).toBe('wire')
+    expect(traeModelSourceMode('solo')).toBe('remote')
+    expect(traeModelSourceMode('auto')).toBe('wire')
+    // Unverified contracts keep the widest previous behaviour.
+    expect(traeModelSourceMode('sg')).toBe('merge')
+    expect(traeModelSourceMode('solo-sg')).toBe('merge')
+    expect(traeModelSourceMode(undefined)).toBe('merge')
   })
 })

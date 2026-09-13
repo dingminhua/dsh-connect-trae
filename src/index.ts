@@ -6,7 +6,7 @@ import type {} from '@deepseek-ai/dsh-attachment'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import { createTraeAdapter, TRAE_PROVIDER } from './adapter.ts'
 import { TraeCredentialStore } from './auth.ts'
-import { applyImageSelection, deriveCatalog, discoveredCatalog, FALLBACK_TRAE_MODELS, mergeTraeModelSources, sanitizeCatalog, TraeCatalog, traeInputModalities, traeModelDisplayName, type TraeModelInfo } from './catalog.ts'
+import { applyImageSelection, deriveCatalog, discoveredCatalog, FALLBACK_TRAE_MODELS, mergeTraeModelSources, sanitizeCatalog, selectTraeModelSource, TraeCatalog, traeInputModalities, traeModelDisplayName, type TraeModelInfo, type TraeModelSourceMode } from './catalog.ts'
 import { refreshTraeCredential } from './refresh.ts'
 import { pickTraeStorageIdentity, readTraeIdentity } from './identity.ts'
 import { traeStorageCandidates } from './paths.ts'
@@ -24,7 +24,7 @@ import { registerTraeUsageRoute } from './web-status.ts'
 
 export { createTraeAdapter, TRAE_PROVIDER, TRAE_STREAM_IDLE_TIMEOUT_MS } from './adapter.ts'
 export { normalizeTraeCredential, traeOwnAuthPath, TraeCredentialStore, type TraeCredential } from './auth.ts'
-export { applyContextBudgets, applyImageSelection, deriveCatalog, discoveredCatalog, FALLBACK_TRAE_MODELS, mergeTraeModelSources, sanitizeCatalog, TraeCatalog, traeInputModalities, traeModelDisplayName, type TraeContextBudget, type TraeInputModality, type TraeModelInfo, type TraeWireModel } from './catalog.ts'
+export { applyContextBudgets, applyImageSelection, deriveCatalog, discoveredCatalog, FALLBACK_TRAE_MODELS, mergeTraeModelSources, sanitizeCatalog, selectTraeModelSource, TraeCatalog, traeInputModalities, traeModelDisplayName, type TraeContextBudget, type TraeInputModality, type TraeModelInfo, type TraeModelSourceMode, type TraeWireModel } from './catalog.ts'
 export { decryptTraeStorageValue, parseTraeAuthValue, parseTraeStorageDocument } from './decrypt.ts'
 export { identityHeaders, pickTraeStorageIdentity, readTraeIdentity, type TraeIdentity } from './identity.ts'
 export { parseObservedModelConfig, type TraeObservedModelConfig } from './model-config.ts'
@@ -71,6 +71,29 @@ export const inject = ['llm']
  * so no branding is needed for either host generation.
  */
 export const TRAE_SETTINGS_NS = 'trae'
+
+/**
+ * Map the `edition` setting onto the model directory to serve.
+ *
+ * The setting already means "which Trae client am I reading", so it is also
+ * the natural selector for the directory that client shows. Trae's two clients
+ * display two different lists (see `TraeModelSourceMode`), and each is served
+ * as-is rather than merged: the point is to reproduce what the selected client
+ * shows, not to synthesise a third list that matches neither menu.
+ *  - `cn`  — the Trae IDE, whose picker follows `get_detail_param` (wire).
+ *  - `solo` — the client driven by the Remote `/models` directory.
+ *  - `auto` — resolves credentials IDE-first, so it follows the IDE too.
+ *  - `sg` / `solo-sg` — neither client's contract is verified here, so these
+ *    keep the previous wire-first merge rather than guessing a mapping.
+ */
+export function traeModelSourceMode(edition: Config['edition']): TraeModelSourceMode {
+  switch (edition) {
+    case 'cn': return 'wire'
+    case 'solo': return 'remote'
+    case 'auto': return 'wire'
+    default: return 'merge'
+  }
+}
 
 export interface Config {
   authFile?: string
@@ -271,15 +294,16 @@ export function apply(ctx: Context, config: Config): void {
   let current = () => config
   let invalidateAdapter = (): void => {}
   const discoverModels = async (signal?: AbortSignal): Promise<readonly TraeModelInfo[]> => {
-    // The Remote /models directory is the model skeleton (display id, name,
-    // context, credit, reasoning). get_detail_param only supplies the real
-    // llm_utils_chat config_name for models whose display id differs from the
-    // wire id (e.g. Seed-Code); it does not define the catalog itself.
+    // Trae exposes two different model directories and the user's two clients
+    // show one each; `edition` picks which one this run mirrors (see
+    // `TraeModelSourceMode`). Only the selected directory is fetched, so a
+    // failure or timeout of the unused one cannot block the served catalog.
+    const mode = traeModelSourceMode(current().edition)
     const [remote, wire] = await Promise.all([
-      remoteCatalog.fetchModels(signal),
-      solo.fetchModels(signal),
+      mode === 'wire' ? Promise.resolve([]) : remoteCatalog.fetchModels(signal),
+      mode === 'remote' ? Promise.resolve([]) : solo.fetchModels(signal),
     ])
-    const merged = mergeTraeModelSources(remote, wire)
+    const merged = selectTraeModelSource(remote, wire, mode)
     // Record every callable display key (id and name) so stale saved catalogs
     // are filtered against the live wire map and dead config_names cannot be
     // resurrected from an old `lastCatalog` / `models` / `enabledModelIds`.

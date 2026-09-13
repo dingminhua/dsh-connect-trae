@@ -160,6 +160,20 @@ export function TraeUsageCard({ t, settingsScope }: TraeUsageCardProps) {
     setSwitchingAccount(true)
     try {
       await settingsScope.set('accountId', accountId)
+      // Picking an account also picks that client's model directory: the two
+      // Trae clients show different lists, and `edition` is what selects which
+      // one the plugin mirrors. Without this the picker would change the token
+      // but keep serving the other client's menu.
+      const edition = status.status !== 'error'
+        ? status.accounts.find(account => account.id === accountId)?.edition
+        : undefined
+      const configured = settingsScope.getSnapshot().value
+      const currentEdition = typeof configured === 'object' && configured !== null
+        ? (configured as { edition?: unknown }).edition
+        : undefined
+      if ((edition === 'cn' || edition === 'solo') && edition !== currentEdition) {
+        await settingsScope.set('edition', edition)
+      }
       await refreshUsage()
     } finally {
       if (mounted.current) setSwitchingAccount(false)
