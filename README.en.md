@@ -29,6 +29,7 @@ A [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness) bund
 ## Features
 
 - **Dual parallel providers** — the CN side registers as the `trae` provider (e.g. `DeepSeek-V4-Flash`, `DeepSeek-V4-Pro`), the international side as `trae-global` (the Gemini/GPT/MiniMax roster), and **both rosters appear in the DSH model picker simultaneously**: different sessions can each pick a side without interfering.
+- **Either side can be switched off** — each tab carries its own checkbox (both checked by default): unchecking **withdraws that provider from the DSH model picker entirely** (not merely hiding the tab) and stops all of its requests; checking it again restores it with the account, directory, picks, and context budgets intact. If you never use the international side, just uncheck it.
 - **Tabbed settings card** — the card's top carries a "Domestic / Global" tab bar; each tab holds its own account picker, usage overview, and model management. Account, directory, selection, and unsaved drafts are fully isolated per tab — switching accounts or refreshing models on one tab never touches the other side's runtime catalog or sessions.
 - **Multiplier in the model name** — model names show the credit multiplier in Trae's own menu format (e.g. `GLM-5.2 · x0.79`), updated with each directory refresh.
 - **DSH local tool loop** — gets pending structured `tool_calls` from Trae `llm_utils_chat`, lets DSH execute its own local tools, then returns tool results to the model.
