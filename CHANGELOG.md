@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.0.5 (2026-09-22)
+
+### Fixes
+
+- **修复「缓存统计一直是 0」**（issue #10：用户反馈「我测试了一下一直0缓存」，并猜测是接口原因或 Trae 本身不缓存）：
+  - **根因在插件自己这一层**：Trae 上游**确实有前缀缓存、也确实在报**（实测逐字节相同的长 prompt 连发，第二次起 `cache_read_input_tokens` 从 0 升到 5248、9216），但插件解码 `token_usage` 事件时**只搬了 4 个计数器**（`prompt_tokens` / `completion_tokens` / `total_tokens` / `reasoning_tokens`），`cache_read_input_tokens` 与 `cache_creation_input_tokens` 被直接丢弃；`TraeStreamEvent.usage` 在**类型层就无法表达**这两个值，转发层自然也无从搬运。
+  - **不是「放行」就够，必须做字段名映射**：`dsh-llm-pi-ai` 只在 `usage.cacheRead > 0` 时写入 `cacheReadTokens`，而 pi-ai 的 `parseChunkUsage` 只识别 `prompt_tokens_details.cached_tokens` / `prompt_cache_hit_tokens` / `cached_tokens` 三种拼写——Trae 的原生字段名不在其中，原样透传依然读不到。现在映射为规范的 `prompt_tokens_details.cached_tokens` / `.cache_write_tokens`。
+  - **先确认了语义再动手**：pi-ai 会做 `input = prompt_tokens - cacheRead - cacheWrite`，该减法仅在「`prompt_tokens` 包含缓存量」（OpenAI 口径）时成立。实测同一份 prompt 的 `prompt_tokens` 恒为 9224 而 `cache_read` 从 5248 涨到 9216，若为 Anthropic 的排除口径则同一输入的实际规模会在 14472 → 18440 之间跳变，不可能——据此确认 Trae 用包含口径。端到端复核账目守恒：`8 + 9216 + 0 = 9224`，与 `prompt_tokens` 完全相等，无重复扣减。
+  - **`src/raw-chat.ts` 存在同一类缺口**（Raw Chat 通道将来启用时会踩同一个坑）：`RawChatDelta.usage` 补上缓存字段，并同时接受 OpenAI 嵌套拼写与 DeepSeek/Kimi 的顶层拼写。两个通道均保证「上游没报缓存时 wire 形状不变」，不产生空 `prompt_tokens_details`。
+  - 新增 4 个回归测试，其中 bridge 用例直接以真机捕获的 `token_usage` 事件原文作为输入。
+  - 取证与复现脚本：`docs/ISSUE10_DIAGNOSIS.md`、`scripts/probe-cache-convention.mjs`。
+  - **说明**：修复只保证「上游报了缓存就如实上报」。新会话/新前缀的第一轮必然 `cache_read=0`（冷启动），第二轮起才有值；实测 Trae 当前只报读不报写（`cache_creation_input_tokens` 恒为 0）。
+
 ## 2.0.4 (2026-09-16)
 
 ### Fixes
