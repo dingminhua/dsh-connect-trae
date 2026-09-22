@@ -1,6 +1,10 @@
 # 发布流程（Release Flow）
 
 > 本文档是 `dsh-connect-trae` 的**唯一权威发布流程**。发布前请通读一遍。
+>
+> 🤖 **由 AI 助手代跑发布时，请先读 [`docs/RELEASE_EXPERIENCE.md`](docs/RELEASE_EXPERIENCE.md) 第 6 节**
+> （「给 AI 助手发布时的备忘」）：记录了沙箱如何伪装成环境故障、为什么**不能用 tarball 能否下载**
+> 判断发布成败（2.0.5 曾因此差点误报失败）、npm 日志会被自己后续命令冲掉等实操坑。
 
 ## 前置条件
 
