@@ -29,4 +29,24 @@ describe('SseDecoder', () => {
     decoder.push('event: done\ndata: {"finish_reason":"stop"}')
     expect(decoder.finish()).toEqual([{ event: 'done', data: '{"finish_reason":"stop"}' }])
   })
+
+  it('keeps Trae cache accounting on token_usage events', () => {
+    // Real captured event (docs/ISSUE10_DIAGNOSIS.md): cache fields are a
+    // subset of prompt_tokens and must survive decoding.
+    expect(decodeTraeEvent({
+      event: 'token_usage',
+      data: '{"prompt_tokens":9224,"completion_tokens":173,"total_tokens":9397,"cache_creation_input_tokens":0,"cache_read_input_tokens":9216,"reasoning_tokens":171}',
+    })).toEqual({
+      type: 'usage',
+      inputTokens: 9224,
+      outputTokens: 173,
+      totalTokens: 9397,
+      reasoningTokens: 171,
+      cacheReadTokens: 9216,
+      cacheWriteTokens: 0,
+    })
+    // A token_usage event without cache fields gains no cache keys.
+    expect(decodeTraeEvent({ event: 'token_usage', data: '{"prompt_tokens":2,"completion_tokens":3}' }))
+      .toEqual({ type: 'usage', inputTokens: 2, outputTokens: 3 })
+  })
 })

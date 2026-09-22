@@ -79,7 +79,16 @@ export type RawChatDelta =
   | { type: 'text'; text: string }
   | { type: 'reasoning'; text: string }
   | { type: 'tool-call'; index: number; id?: string; name?: string; arguments?: string }
-  | { type: 'usage'; inputTokens?: number; outputTokens?: number; totalTokens?: number }
+  | {
+    type: 'usage'
+    inputTokens?: number
+    outputTokens?: number
+    totalTokens?: number
+    /** Cache-read tokens (`prompt_tokens_details.cached_tokens` / `cached_tokens`). */
+    cacheReadTokens?: number
+    /** Cache-write tokens (`prompt_tokens_details.cache_write_tokens`). */
+    cacheWriteTokens?: number
+  }
   | { type: 'done'; finishReason: string }
   | { type: 'unknown'; value: unknown }
 
@@ -114,11 +123,20 @@ export function decodeRawChatChunk(value: unknown): RawChatDelta[] {
   }
   if (typeof record['usage'] === 'object' && record['usage'] !== null) {
     const usage = record['usage'] as Record<string, unknown>
+    const details = typeof usage['prompt_tokens_details'] === 'object' && usage['prompt_tokens_details'] !== null
+      ? usage['prompt_tokens_details'] as Record<string, unknown>
+      : {}
+    // Accept both the canonical OpenAI nesting and the top-level spellings that
+    // providers such as DeepSeek/Kimi use, mirroring pi-ai's own resolution.
+    const cacheRead = details['cached_tokens'] ?? usage['prompt_cache_hit_tokens'] ?? usage['cached_tokens']
+    const cacheWrite = details['cache_write_tokens']
     result.push({
       type: 'usage',
       ...typeof usage['prompt_tokens'] === 'number' ? { inputTokens: usage['prompt_tokens'] } : {},
       ...typeof usage['completion_tokens'] === 'number' ? { outputTokens: usage['completion_tokens'] } : {},
       ...typeof usage['total_tokens'] === 'number' ? { totalTokens: usage['total_tokens'] } : {},
+      ...typeof cacheRead === 'number' ? { cacheReadTokens: cacheRead } : {},
+      ...typeof cacheWrite === 'number' ? { cacheWriteTokens: cacheWrite } : {},
     })
   }
   return result.length === 0 ? [{ type: 'unknown', value }] : result

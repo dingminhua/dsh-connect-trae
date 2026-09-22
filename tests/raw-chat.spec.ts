@@ -47,4 +47,17 @@ describe('Trae raw-chat evidence model', () => {
     expect(decodeRawChatChunk('[DONE]')).toEqual([{ type: 'done', finishReason: 'stop' }])
     expect(decodeRawChatChunk({ strange: true })).toEqual([{ type: 'unknown', value: { strange: true } }])
   })
+
+  it('decodes cache accounting from both nesting conventions', () => {
+    // Canonical OpenAI nesting, as pi-ai reads it.
+    expect(decodeRawChatChunk({
+      usage: { prompt_tokens: 9224, completion_tokens: 173, total_tokens: 9397, prompt_tokens_details: { cached_tokens: 9216, cache_write_tokens: 8 } },
+    })).toEqual([
+      { type: 'usage', inputTokens: 9224, outputTokens: 173, totalTokens: 9397, cacheReadTokens: 9216, cacheWriteTokens: 8 },
+    ])
+    // DeepSeek/Kimi top-level spelling.
+    expect(decodeRawChatChunk({ usage: { prompt_tokens: 100, prompt_cache_hit_tokens: 64 } })).toEqual([
+      { type: 'usage', inputTokens: 100, cacheReadTokens: 64 },
+    ])
+  })
 })

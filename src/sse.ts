@@ -76,7 +76,24 @@ export type TraeStreamEvent =
   | { type: 'queue'; position?: number }
   | { type: 'progress'; notice: unknown }
   | { type: 'delta'; text: string; reasoning?: string; toolCalls?: unknown }
-  | { type: 'usage'; inputTokens?: number; outputTokens?: number; totalTokens?: number; reasoningTokens?: number }
+  | {
+    type: 'usage'
+    inputTokens?: number
+    outputTokens?: number
+    totalTokens?: number
+    reasoningTokens?: number
+    /**
+     * Trae's prompt-cache accounting (`cache_read_input_tokens` /
+     * `cache_creation_input_tokens` on the `token_usage` event). Verified
+     * 2026-09-22 (docs/ISSUE10_DIAGNOSIS.md): a byte-identical 9224-token
+     * prompt reports `prompt_tokens: 9224` while `cache_read_input_tokens`
+     * rises to 9216, so these are a *subset* of `prompt_tokens` — the OpenAI
+     * convention, not Anthropic's exclusive one. Forwarding them as
+     * `cached_tokens` is therefore arithmetically correct.
+     */
+    cacheReadTokens?: number
+    cacheWriteTokens?: number
+  }
   | { type: 'done'; finishReason: string }
   | { type: 'unknown'; event?: string; data: unknown }
 
@@ -96,6 +113,8 @@ export function decodeTraeEvent(event: SseEvent): TraeStreamEvent {
       ...typeof record['completion_tokens'] === 'number' ? { outputTokens: record['completion_tokens'] } : {},
       ...typeof record['total_tokens'] === 'number' ? { totalTokens: record['total_tokens'] } : {},
       ...typeof record['reasoning_tokens'] === 'number' ? { reasoningTokens: record['reasoning_tokens'] } : {},
+      ...typeof record['cache_read_input_tokens'] === 'number' ? { cacheReadTokens: record['cache_read_input_tokens'] } : {},
+      ...typeof record['cache_creation_input_tokens'] === 'number' ? { cacheWriteTokens: record['cache_creation_input_tokens'] } : {},
     }
   }
   if (event.event === 'done' || typeof record['finish_reason'] === 'string' && record['response'] === undefined) {

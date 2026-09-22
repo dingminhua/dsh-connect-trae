@@ -185,4 +185,44 @@ describe('TraeSoloBridge', () => {
     const result = await new TraeSoloBridge(upstream).chatStream('{}')
     expect(result).toEqual({ ok: false, status: 402, kind: 'hard_credit', message: 'quota' })
   })
+
+  // Issue #10: Trae reports prompt-cache accounting on its `token_usage` event;
+  // dropping it made every session show "0 cache" while Trae was in fact
+  // serving a warm prefix cache. The payload below is a real captured event.
+  it('forwards Trae cache tokens as OpenAI prompt_tokens_details', async () => {
+    const upstream: TraeUpstreamClient = {
+      async chatStream() {
+        return { ok: true, response: traeStream([
+          'event: token_usage\ndata: {"name":"","prompt_tokens":9224,"completion_tokens":173,"total_tokens":9397,"cache_creation_input_tokens":0,"cache_read_input_tokens":9216,"reasoning_tokens":171}\n\n',
+          'event: output\ndata: {"response":"OK"}\n\n',
+          'event: done\ndata: {"finish_reason":"stop"}\n\n',
+        ]) }
+      },
+    }
+    const result = await new TraeSoloBridge(upstream).chatStream(JSON.stringify({ model: 'glm-5.2', messages: [{ role: 'user', content: 'hi' }] }))
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const text = await result.response.text()
+    const usageChunk = text.split('\n\n').find(line => line.includes('"usage"'))
+    const usage = (JSON.parse(usageChunk!.replace(/^data: /, '')) as { usage: Record<string, unknown> }).usage
+    expect(usage['prompt_tokens']).toBe(9224)
+    expect(usage['prompt_tokens_details']).toEqual({ cached_tokens: 9216, cache_write_tokens: 0 })
+  })
+
+  it('omits prompt_tokens_details when Trae reports no cache fields', async () => {
+    const upstream: TraeUpstreamClient = {
+      async chatStream() {
+        return { ok: true, response: traeStream([
+          'event: token_usage\ndata: {"prompt_tokens":10,"completion_tokens":2,"total_tokens":12}\n\n',
+          'event: done\ndata: {"finish_reason":"stop"}\n\n',
+        ]) }
+      },
+    }
+    const result = await new TraeSoloBridge(upstream).chatStream(JSON.stringify({ model: 'glm-5.2', messages: [{ role: 'user', content: 'hi' }] }))
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const text = await result.response.text()
+    expect(text).toContain('"prompt_tokens":10')
+    expect(text).not.toContain('prompt_tokens_details')
+  })
 })

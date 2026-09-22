@@ -48,7 +48,10 @@ export function bridgeTraeSoloStream(response: Response, model: string): Respons
   let emittedFinishReason = false
   let upstreamEnded = false
   let upstreamError: Error | undefined
-  let usage: Record<string, number> | undefined
+  // OpenAI-shaped usage object. It is mostly flat counters, but
+  // `prompt_tokens_details` nests the cache breakdown, so the value type is
+  // widened beyond `number` rather than narrowing the cache fields away.
+  let usage: Record<string, number | Record<string, number>> | undefined
 
   const chunk = (delta: Record<string, unknown>, finishReason: string | null = null): Uint8Array => encoder.encode(`data: ${JSON.stringify({
     id,
@@ -88,10 +91,27 @@ export function bridgeTraeSoloStream(response: Response, model: string): Respons
           }
           if (Object.keys(delta).length > 0) controller.enqueue(chunk(delta))
         } else if (decoded.type === 'usage') {
+          // Trae reports cache accounting as `cache_read_input_tokens` /
+          // `cache_creation_input_tokens`, a subset of `prompt_tokens` (OpenAI
+          // convention, verified in docs/ISSUE10_DIAGNOSIS.md). Both are
+          // forwarded under the canonical OpenAI spelling, which is what
+          // pi-ai's parseChunkUsage reads (`prompt_tokens_details.cached_tokens`
+          // / `.cache_write_tokens`); dropping them made every session report
+          // "0 cache" even when Trae was serving a warm prefix cache.
+          const cacheRead = decoded.cacheReadTokens
+          const cacheWrite = decoded.cacheWriteTokens
+          const details = {
+            ...cacheRead === undefined ? {} : { cached_tokens: cacheRead },
+            ...cacheWrite === undefined ? {} : { cache_write_tokens: cacheWrite },
+          }
           usage = {
             ...decoded.inputTokens === undefined ? {} : { prompt_tokens: decoded.inputTokens },
             ...decoded.outputTokens === undefined ? {} : { completion_tokens: decoded.outputTokens },
             ...decoded.totalTokens === undefined ? {} : { total_tokens: decoded.totalTokens },
+            // Omit the details object entirely when Trae sent neither field, so
+            // a provider that never reports cache keeps its previous wire shape
+            // instead of gaining `prompt_tokens_details: {}`.
+            ...Object.keys(details).length === 0 ? {} : { prompt_tokens_details: details },
           }
         } else if (decoded.type === 'done') {
           upstreamEnded = true
