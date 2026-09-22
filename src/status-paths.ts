@@ -123,6 +123,70 @@ export function nextRegionSlots<Slot extends object>(
   return { ...base, [region]: slot }
 }
 
+/**
+ * Narrow a settings value to the `regions` map. Accepts EITHER the whole
+ * settings section (`{ regions: {...}, ... }`) or the `regions` map itself, and
+ * unwraps the former. This tolerance is deliberate: passing the whole section
+ * where the map was expected was a real shipped bug — the lookup then read
+ * `section['cn']` (absent), so the card's checkbox reported `true` forever and
+ * clicking it appeared to do nothing even though the write succeeded.
+ */
+function regionsMapOf(value: unknown): Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return {}
+  const record = value as Record<string, unknown>
+  const nested = record['regions']
+  if (typeof nested === 'object' && nested !== null && !Array.isArray(nested)) {
+    return nested as Record<string, unknown>
+  }
+  return record
+}
+
+/** One region's stored slot as a plain object; any other shape reads as empty. */
+function regionSlotOf(value: unknown, region: TraeRegion): Record<string, unknown> {
+  const slot = regionsMapOf(value)[region]
+  return typeof slot === 'object' && slot !== null && !Array.isArray(slot)
+    ? slot as Record<string, unknown>
+    : {}
+}
+
+/**
+ * Whether one region's provider is switched on. Opt-out semantics: only an
+ * explicit `false` disables it, so a config written before this switch existed
+ * (and the pre-region-split flat fields, which never carry `enabled`) keep both
+ * providers running exactly as before. The Host reads the same rule through
+ * `regionStateOf`, so card and Host can never disagree about a region's state.
+ *
+ * `value` may be the whole settings section or the `regions` map (see
+ * {@link regionsMapOf}).
+ */
+export function regionEnabledOf(value: unknown, region: TraeRegion): boolean {
+  return regionSlotOf(value, region)['enabled'] !== false
+}
+
+/**
+ * Build the next `regions` settings value for a provider on/off toggle. ONLY
+ * the target region's `enabled` flag changes: every other field of that slot
+ * (its directory, selection, image opt-ins, context budgets) and every other
+ * region's slot are carried over verbatim, so switching a provider off never
+ * discards the user's model picks and switching it back on restores them.
+ *
+ * This is deliberately separate from {@link nextRegionSlots}: that helper
+ * writes a whole slot from a signed-in tab's draft, while this one must work
+ * for a region that is signed OUT — which is precisely the region a user wants
+ * to switch off (no international install, no international account).
+ *
+ * `value` may be the whole settings section or the `regions` map; the RETURN
+ * value is always the `regions` map, i.e. exactly what `settingsScope.set(
+ * 'regions', ...)` needs.
+ */
+export function nextRegionEnabled(
+  value: unknown,
+  region: TraeRegion,
+  enabled: boolean,
+): Record<string, unknown> {
+  return nextRegionSlots(regionsMapOf(value), region, { ...regionSlotOf(value, region), enabled })
+}
+
 /** Subscription status of an international (ai) account, rendered instead of the CN credit packs. */
 export interface TraeWebPayStatus {
   isDollarUsageBilling: boolean
@@ -139,7 +203,7 @@ export interface TraeWebPayStatus {
 
 /** The JSON document the plugin card renders. */
 export type TraeWebUsage =
-  | { status: 'signed-out'; accounts: readonly TraeWebAccount[]; message?: string; searched?: readonly TraeWebSearchPath[] }
+  | { status: 'signed-out'; accounts: readonly TraeWebAccount[]; message?: string; searched?: readonly TraeWebSearchPath[]; enabled?: boolean }
   | {
     status: 'signed-in'
     accountId: string
@@ -147,6 +211,8 @@ export type TraeWebUsage =
     tokenExpiresAtMs: number
     /** Which per-region model directory and selection this account owns. */
     region: TraeRegion
+    /** Whether this region's provider is currently offered to DSH. */
+    enabled?: boolean
     accounts: readonly TraeWebAccount[]
     models: readonly TraeWebModel[]
     enabledModelIds: readonly string[]

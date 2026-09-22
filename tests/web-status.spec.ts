@@ -32,6 +32,7 @@ function makeRoute(options: { fetchImpl?: typeof fetch } = {}): TraeUsageRouteOp
       { id: 'DeepSeek-V4-Flash', name: 'DeepSeek-V4-Flash', contextWindow: 168_000, maxTokens: 32_000 },
     ],
     enabledModelIds: (_region: TraeRegion) => ['DeepSeek-V4-Flash'],
+    regionEnabled: () => true,
     rawDiagnostic: () => ({ state: 'protocol-gated', status: 400, checkedAtMs: 123 }),
   }
 }
@@ -45,7 +46,7 @@ describe('traeWebUsage', () => {
       async diagnose() { return { tried: [], failures: [] } },
     }) as unknown as ReturnType<TraeUsageRouteOptions['store']>
     const result = await traeWebUsage(deps, 'cn')
-    expect(result).toEqual({ status: 'signed-out', accounts: [], searched: [] })
+    expect(result).toEqual({ status: 'signed-out', accounts: [], enabled: true, searched: [] })
   })
 
   it('explains which paths were probed when a machine has no recognizable sign-in', async () => {
@@ -150,6 +151,41 @@ describe('traeWebUsage', () => {
     if (result.status !== 'signed-in') return
     expect(result.creditsError).toContain('network down')
   })
+
+  /**
+   * Issue #11: the card renders the on/off checkbox from the Host's committed
+   * answer rather than local state, so the switch cannot drift from what the
+   * Host actually registered. It must be reported on BOTH branches — a
+   * signed-OUT region is precisely the one a user wants to switch off.
+   */
+  it('reports the region on/off switch on signed-in and signed-out documents', async () => {
+    const on = await traeWebUsage(makeRoute(), 'cn')
+    if (on.status !== 'signed-in') throw new Error('expected signed-in')
+    expect(on.enabled).toBe(true)
+
+    const off = await traeWebUsage({ ...makeRoute(), regionEnabled: () => false }, 'cn')
+    if (off.status !== 'signed-in') throw new Error('expected signed-in')
+    expect(off.enabled).toBe(false)
+
+    const signedOut = makeRoute()
+    signedOut.regionEnabled = () => false
+    signedOut.store = () => ({
+      async accounts() { return [] },
+      async status() { return { state: 'signed-out' } },
+      async diagnose() { return { tried: [], failures: [] } },
+    }) as unknown as ReturnType<TraeUsageRouteOptions['store']>
+    const result = await traeWebUsage(signedOut, 'ai')
+    expect(result).toMatchObject({ status: 'signed-out', enabled: false })
+  })
+
+  it('asks the switch for the requested region only', async () => {
+    const asked: TraeRegion[] = []
+    const deps = makeRoute()
+    deps.regionEnabled = region => { asked.push(region); return region === 'cn' }
+    await traeWebUsage(deps, 'cn')
+    await traeWebUsage(deps, 'ai')
+    expect(asked).toEqual(['cn', 'ai'])
+  })
 })
 
 describe('traeWebUsage region routing', () => {
@@ -181,6 +217,7 @@ describe('traeWebUsage region routing', () => {
           : []
       },
       enabledModelIds: region => region === 'ai' ? ['gemini-3.1-pro'] : [],
+      regionEnabled: () => true,
     }
   }
 

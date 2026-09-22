@@ -115,6 +115,117 @@ describe('Trae provider registration', () => {
   })
 })
 
+describe('per-region provider switch (issue #11)', () => {
+  /**
+   * The USER-visible claim of this feature: a switched-off provider must not be
+   * selectable any more. The model picker builds its provider groups from
+   * `ctx.llm.listProviders()` (mirroring `packages/api/session-controller/src/
+   * catalog.ts`), so this walks the same two calls the picker makes and asserts
+   * the group is gone — not merely that the id is missing from a list.
+   */
+  async function pickerGroups(ctx: Context): Promise<string[]> {
+    const groups: string[] = []
+    for (const provider of ctx.llm.listProviders()) {
+      const models = await ctx.llm.listModels(provider.id)
+      if (models.length > 0) groups.push(provider.id)
+    }
+    return groups
+  }
+
+  it('withdraws a switched-off region from the model picker and the provider directory', async () => {
+    const ctx = new Context()
+    context = ctx
+    await ctx.plugin(LlmRuntime)
+    await ctx.plugin(MemorySettings)
+    const restore = await isolatedPlugin(ctx)
+    try {
+      await expect.poll(() => ctx.llm.listProviders().map(provider => provider.id)).toContain('trae-global')
+      expect(ctx.llm.listConfigurableProviders().map(entry => entry.provider)).toContain('trae-global')
+      // Both providers are selectable to begin with.
+      expect(await pickerGroups(ctx)).toEqual(expect.arrayContaining(['trae', 'trae-global']))
+
+      // The user switches the international side off.
+      await ctx.settings.update(Trae.TRAE_SETTINGS_NS, { regions: { ai: { enabled: false } } })
+
+      // The ROUTE is gone: this is what actually removes its models from the
+      // model picker. Hiding the card tab alone would leave them selectable.
+      await expect.poll(() => ctx.llm.listProviders().map(provider => provider.id)).not.toContain('trae-global')
+      // And the provider has no group in the picker catalog any more.
+      expect(await pickerGroups(ctx)).not.toContain('trae-global')
+      // And the provider row is gone from the settings directory too.
+      expect(ctx.llm.listConfigurableProviders().map(entry => entry.provider)).not.toContain('trae-global')
+      // A disabled region must not take its enabled sibling with it.
+      expect(await pickerGroups(ctx)).toContain('trae')
+      expect(ctx.llm.listConfigurableProviders().map(entry => entry.provider)).toContain('trae')
+
+      // Switching it back on restores the route AND its picker group.
+      await ctx.settings.update(Trae.TRAE_SETTINGS_NS, { regions: { ai: { enabled: true } } })
+      await expect.poll(() => ctx.llm.listProviders().map(provider => provider.id)).toContain('trae-global')
+      expect(await pickerGroups(ctx)).toContain('trae-global')
+      expect(ctx.llm.listConfigurableProviders().map(entry => entry.provider)).toContain('trae-global')
+    } finally { await restore() }
+  })
+
+  it('disables a region at startup without leaving the other side broken', async () => {
+    // The saved state must be honoured before the plugin ever serves a request:
+    // a region disabled while the harness was down must not register its route
+    // on the next start, and the enabled sibling must still be fully wired.
+    const ctx = new Context()
+    context = ctx
+    await ctx.plugin(LlmRuntime)
+    await ctx.plugin(MemorySettings)
+    // The switch is already `false` in the plugin's configuration before it ever
+    // loads — exactly the state left behind by a previous session.
+    const restore = await isolatedPlugin(ctx, { regions: { ai: { enabled: false } } })
+    try {
+      await expect.poll(() => ctx.llm.listProviders().map(provider => provider.id)).toContain('trae')
+      // Give the (no-op) ai registration path the same window the cn side got.
+      await new Promise(resolve => setTimeout(resolve, 50))
+      expect(ctx.llm.listProviders().map(provider => provider.id)).not.toContain('trae-global')
+      expect(ctx.llm.listConfigurableProviders().map(entry => entry.provider)).toEqual(['trae'])
+      // The enabled side still serves models.
+      expect((await ctx.llm.listModels('trae')).length).toBeGreaterThan(0)
+    } finally { await restore() }
+  })
+
+  it('allows switching BOTH regions off, leaving a recoverable empty plugin', async () => {
+    // "I don't use either side" is a legitimate state (it just parks the
+    // plugin). It must not throw, and both routes must come back on request —
+    // the card always renders both tabs, so there is no way to get locked out.
+    const ctx = new Context()
+    context = ctx
+    await ctx.plugin(LlmRuntime)
+    await ctx.plugin(MemorySettings)
+    const restore = await isolatedPlugin(ctx)
+    try {
+      await expect.poll(() => ctx.llm.listProviders().map(provider => provider.id)).toContain('trae')
+
+      await ctx.settings.update(Trae.TRAE_SETTINGS_NS, { regions: { cn: { enabled: false }, ai: { enabled: false } } })
+      await expect.poll(() => ctx.llm.listProviders().length).toBe(0)
+      expect(ctx.llm.listConfigurableProviders()).toEqual([])
+
+      await ctx.settings.update(Trae.TRAE_SETTINGS_NS, { regions: { cn: { enabled: true }, ai: { enabled: true } } })
+      await expect.poll(() => ctx.llm.listProviders().map(provider => provider.id)).toContain('trae')
+      await expect.poll(() => ctx.llm.listProviders().map(provider => provider.id)).toContain('trae-global')
+      expect(ctx.llm.listConfigurableProviders().map(entry => entry.provider)).toEqual(['trae', 'trae-global'])
+    } finally { await restore() }
+  })
+
+  it('serves both providers when the config predates the switch', async () => {    // Opt-out semantics: a config with no `enabled` key at all keeps the old
+    // behaviour, so upgrading the plugin never silently removes a provider.
+    const ctx = new Context()
+    context = ctx
+    await ctx.plugin(LlmRuntime)
+    await ctx.plugin(MemorySettings)
+    const restore = await isolatedPlugin(ctx, { regions: { cn: { lastCatalog: [], enabledModelIds: [], imageModelIds: [], contextBudgets: {} } } })
+    try {
+      await expect.poll(() => ctx.llm.listProviders().map(provider => provider.id)).toContain('trae')
+      await expect.poll(() => ctx.llm.listProviders().map(provider => provider.id)).toContain('trae-global')
+      expect(ctx.llm.listConfigurableProviders().map(entry => entry.provider)).toEqual(['trae', 'trae-global'])
+    } finally { await restore() }
+  })
+})
+
 describe('built-in fallback is a safety net, not a filter target', () => {
   it('serves every built-in fallback model when discovery yields nothing', async () => {
     // A machine with no Trae credentials (or a startup discovery failure) must

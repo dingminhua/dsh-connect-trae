@@ -11,7 +11,9 @@ import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client'
 import { IconChevronDownOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
 import {
+  nextRegionEnabled,
   nextRegionSlots,
+  regionEnabledOf,
   TRAE_ACCOUNTS_REFRESH_PATH,
   TRAE_MODELS_REFRESH_PATH,
   TRAE_REGIONS,
@@ -115,6 +117,8 @@ export function TraeUsageCard({ t, settingsScope }: TraeUsageCardProps) {
   const [drafts, setDrafts] = useState<Partial<Record<TraeRegion, TraeDraft>>>({})
   const [saving, setSaving] = useState(false)
   const [switchingAccount, setSwitchingAccount] = useState(false)
+  /** Region whose on/off checkbox write is in flight, so its box can't race. */
+  const [togglingRegion, setTogglingRegion] = useState<TraeRegion | undefined>(undefined)
   const mounted = useRef(true)
 
   useEffect(() => {
@@ -123,6 +127,24 @@ export function TraeUsageCard({ t, settingsScope }: TraeUsageCardProps) {
   }, [])
 
   useEffect(() => settingsScope?.subscribe(() => { setSettingsRevision(value => value + 1) }), [settingsScope])
+
+  void settingsRevision
+  /**
+   * Whether one region's provider is switched on, read off the SAME committed
+   * settings document the Host reads (`regionEnabledOf` mirrors the Host's
+   * `regionStateOf` opt-out rule: only an explicit `false` disables). Reading
+   * the stored value rather than echoing local state means a rejected write,
+   * another window's change, or a restart all converge on the truth.
+   *
+   * The whole settings section is passed deliberately: `regionEnabledOf`
+   * accepts either it or the bare `regions` map, because passing the section
+   * where the map was expected was a shipped bug (the lookup read
+   * `section['cn']`, found nothing, and reported `true` forever — the checkbox
+   * stayed checked and clicking it appeared dead while the write succeeded).
+   */
+  const regionOn = (item: TraeRegion): boolean =>
+    regionEnabledOf(settingsScope?.getSnapshot().value, item)
+  const activeRegionOn = regionOn(activeRegion)
 
   const refreshUsage = useCallback(async (
     region: TraeRegion,
@@ -153,23 +175,23 @@ export function TraeUsageCard({ t, settingsScope }: TraeUsageCardProps) {
   }, [t])
 
   useEffect(() => {
-    if (!open) return
+    if (!open || !activeRegionOn) return
     const controller = new AbortController()
     void refreshUsage(activeRegion, controller.signal)
     return () => { controller.abort() }
-  }, [open, activeRegion, refreshUsage])
+  }, [open, activeRegion, activeRegionOn, refreshUsage])
 
   const status: TraeWebUsage = statusByRegion[activeRegion] ?? { status: 'signed-out', accounts: [] }
 
   useEffect(() => {
-    if (!open || status.status !== 'signed-in') return
+    if (!open || !activeRegionOn || status.status !== 'signed-in') return
     const controller = new AbortController()
     const timer = window.setInterval(() => { void refreshUsage(activeRegion, controller.signal) }, POLL_INTERVAL_MS)
     return () => {
       window.clearInterval(timer)
       controller.abort()
     }
-  }, [open, activeRegion, refreshUsage, status.status])
+  }, [open, activeRegion, activeRegionOn, refreshUsage, status.status])
 
   const rescanAccounts = async (): Promise<void> => {
     setBusy(true)
@@ -199,6 +221,25 @@ export function TraeUsageCard({ t, settingsScope }: TraeUsageCardProps) {
       await refreshUsage(activeRegion)
     } finally {
       if (mounted.current) setSwitchingAccount(false)
+    }
+  }
+
+  /**
+   * Switch one region's provider off or on (issue #11). The write carries the
+   * region's whole slot through untouched — only `enabled` changes — so the
+   * user's directory, model picks, image opt-ins and budgets survive a
+   * round trip. The Host withdraws or restores the provider route on the next
+   * `onChange`, which is what actually removes it from DSH's model picker.
+   */
+  const toggleRegion = async (item: TraeRegion, enabled: boolean): Promise<void> => {
+    if (settingsScope === undefined || settingsScope.getSnapshot().writable !== true) return
+    setTogglingRegion(item)
+    try {
+      // `nextRegionEnabled` unwraps the settings section itself and returns the
+      // bare `regions` map, which is exactly what this field write needs.
+      await settingsScope.set('regions', nextRegionEnabled(settingsScope.getSnapshot().value, item, enabled))
+    } finally {
+      if (mounted.current) setTogglingRegion(undefined)
     }
   }
 
@@ -338,7 +379,11 @@ export function TraeUsageCard({ t, settingsScope }: TraeUsageCardProps) {
       // targets the slot keyed by the active tab's region: the other region's
       // picks are never touched.
       if (status.status !== 'signed-in') return
+      // Carry the region's on/off flag through: this write replaces the whole
+      // slot, and dropping `enabled` would silently re-enable a provider the
+      // user switched off just by saving its model list.
       await settingsScope.set('regions', nextRegionSlots(configuredRegions, activeRegion, {
+        enabled: regionOn(activeRegion),
         lastCatalog: visibleModels.map(model => ({ ...model, input: ['text'] })),
         enabledModelIds: [...activeEnabledIds],
         imageModelIds: [...activeImageIds].filter(id => activeEnabledIds.has(id)),
@@ -385,24 +430,44 @@ export function TraeUsageCard({ t, settingsScope }: TraeUsageCardProps) {
               <div className="dsm-trae-tabs" role="tablist" aria-label={title}>
                 {TRAE_REGIONS.map(item => {
                   const regionStatus = statusByRegion[item]
+                  const on = regionOn(item)
                   return (
-                    <button
-                      key={item}
-                      type="button"
-                      role="tab"
-                      aria-selected={item === activeRegion}
-                      className={`dsm-trae-tab${item === activeRegion ? ' dsm-trae-tab-active' : ''}`}
-                      onClick={() => { setActiveRegion(item) }}
-                    >
-                      {regionStatus === undefined
-                        ? null
-                        : <span aria-hidden="true" className="dsm-trae-tab-dot" style={dotStyle(regionStatus.status)} />}
-                      {item === 'cn' ? t('row.tabCn') : t('row.tabAi')}
-                    </button>
+                    // The switch lives beside the tab, never inside it: a
+                    // checkbox nested in a <button role="tab"> is invalid HTML
+                    // and its click would be swallowed by the tab handler
+                    // (switching tabs instead of toggling the provider). The
+                    // presentational wrapper keeps the tablist/tab relationship
+                    // intact for assistive technology.
+                    <div className="dsm-trae-tab-cell" role="presentation" key={item}>
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={item === activeRegion}
+                        className={`dsm-trae-tab${item === activeRegion ? ' dsm-trae-tab-active' : ''}${on ? '' : ' dsm-trae-tab-off'}`}
+                        onClick={() => { setActiveRegion(item) }}
+                      >
+                        {regionStatus === undefined
+                          ? null
+                          : <span aria-hidden="true" className="dsm-trae-tab-dot" style={dotStyle(regionStatus.status)} />}
+                        {item === 'cn' ? t('row.tabCn') : t('row.tabAi')}
+                      </button>
+                      <label className="dsm-trae-tab-switch" title={t('row.tabSwitchHint')}>
+                        <input
+                          type="checkbox"
+                          checked={on}
+                          disabled={settingsScope?.getSnapshot().writable !== true || togglingRegion !== undefined}
+                          aria-label={t('row.tabSwitchAria', { region: item === 'cn' ? t('row.tabCn') : t('row.tabAi') })}
+                          onChange={event => { void toggleRegion(item, event.currentTarget.checked) }}
+                        />
+                      </label>
+                    </div>
                   )
                 })}
               </div>
               <p className="dsm-trae-tab-hint">{t('row.tabHint')}</p>
+              {regionOn(activeRegion)
+                ? null
+                : <p className="dsm-trae-tab-off-notice" role="status">{t('row.tabOffNotice')}</p>}
               <div className="dsm-trae-usage-account">
                 <div className="dsm-trae-usage-account-copy" role="status">
                   <div className="dsm-trae-usage-status">

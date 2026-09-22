@@ -43,6 +43,12 @@ export interface TraeUsageRouteOptions {
   displayModels(region: TraeRegion): readonly TraeModelInfo[]
   /** The user's model selection in the requested region, stored as model id (= Trae name). */
   enabledModelIds(region: TraeRegion): readonly string[]
+  /**
+   * Whether the requested region's provider is currently offered to DSH. The
+   * card renders this as the tab's on/off checkbox, so the switch reflects the
+   * committed settings value rather than a local guess.
+   */
+  regionEnabled(region: TraeRegion): boolean
   /** Re-read one region's live directory from the upstream. */
   discoverModels?(region: TraeRegion, signal?: AbortSignal): Promise<readonly TraeModelInfo[]>
   /** Raw-Chat capability state of the requested region. */
@@ -108,6 +114,7 @@ function toCredits(snapshot: { summary: { totalAmount: number; consumedAmount: n
  */
 export async function traeWebUsage(deps: TraeUsageRouteOptions, region: TraeRegion): Promise<TraeWebUsage> {
   const store = deps.store(region)
+  const enabled = deps.regionEnabled(region)
   const accounts = await store.accounts()
   const authStatus = await store.status()
   if (authStatus.state !== 'signed-in') {
@@ -119,6 +126,7 @@ export async function traeWebUsage(deps: TraeUsageRouteOptions, region: TraeRegi
     return {
       status: 'signed-out',
       accounts,
+      enabled,
       searched: failures.map(failure => ({
         path: failure.path,
         edition: failure.edition,
@@ -135,7 +143,7 @@ export async function traeWebUsage(deps: TraeUsageRouteOptions, region: TraeRegi
     // Account selection must remain available even when the selected token is
     // expired or its refresh request fails. Report that as account-level status
     // instead of converting the entire route into HTTP 500.
-    return { status: 'signed-out', accounts, message: safeMessage(error) }
+    return { status: 'signed-out', accounts, enabled, message: safeMessage(error) }
   }
   // Only user-facing identity and expiry cross to the browser. Token material
   // and stable user IDs stay on the Host. The requested region drives which
@@ -146,6 +154,7 @@ export async function traeWebUsage(deps: TraeUsageRouteOptions, region: TraeRegi
     accountName: credential.accountName ?? credential.userId,
     tokenExpiresAtMs: credential.expiresAtMs,
     region,
+    enabled,
     accounts,
     models: deps.displayModels(region).map(model => ({ ...model, ...model.input === undefined ? {} : { input: [...model.input] } })),
     enabledModelIds: [...deps.enabledModelIds(region)],

@@ -2,6 +2,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import * as dshSettings from '@deepseek-ai/dsh-settings'
 import type { SettingsSectionHooks } from '@deepseek-ai/dsh-settings'
+import type { AdapterRegistrationHandle, DirectoryRegistrationHandle } from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-attachment'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import {
@@ -93,6 +94,9 @@ export { TRAE_PAY_BASE, TraeUsageClient, type TraeActivityRule, type TraeCheckin
 export { registerTraeUsageRoute, traeWebUsage, type TraeUsageRouteOptions } from './web-status.ts'
 export {
   regionOfTraeStatusUrl,
+  regionEnabledOf,
+  nextRegionEnabled,
+  nextRegionSlots,
   TRAE_REGION_PARAM,
   TRAE_REGIONS,
   TRAE_USAGE_PATH,
@@ -119,6 +123,15 @@ export const TRAE_SETTINGS_NS = 'trae'
 
 /** One region's saved model state: its own directory and the user's selection within it. */
 export interface TraeRegionState {
+  /**
+   * Whether this region's provider is switched on. Opt-out: only an explicit
+   * `false` disables it, so a config predating this switch keeps both providers
+   * running. A disabled region is fully withdrawn from the harness — its
+   * adapter route and its configurable-provider entry both hold zero routes, so
+   * it disappears from DSH's model picker instead of lingering as an
+   * unselectable row (see `syncRegionRegistration`).
+   */
+  enabled?: boolean
   /** The last-refreshed raw directory for this region; what the card displays. */
   lastCatalog?: TraeModelInfo[]
   /** The user's selection in this region, as model ids (= Trae name). */
@@ -187,6 +200,18 @@ export function regionStateOf(config: Config, region: TraeRegion): TraeRegionSta
   }
 }
 
+/**
+ * Whether one region's provider is switched on (issue #11). Opt-out semantics:
+ * only an explicit `false` disables it, so every config written before this
+ * switch existed — including the pre-region-split flat fields, which never
+ * carry `enabled` — keeps both providers running exactly as before. The card
+ * reads the same rule through `regionEnabledOf`, so the two halves can never
+ * disagree about a region's state.
+ */
+export function regionEnabled(config: Config, region: TraeRegion): boolean {
+  return regionStateOf(config, region).enabled !== false
+}
+
 const modelConfig = z.object({
   id: z.string().required(),
   name: z.string().required(),
@@ -203,6 +228,7 @@ const modelConfig = z.object({
 })
 
 const regionStateConfig = z.object({
+  enabled: z.boolean().default(true).description('Whether this region\'s provider is offered to DSH (opt-out; false withdraws it entirely)'),
   lastCatalog: z.array(modelConfig).default([]),
   enabledModelIds: z.array(z.string()).default([]),
   imageModelIds: z.array(z.string()).default([]),
@@ -561,9 +587,54 @@ export function apply(ctx: Context, config: Config): void {
     client: region => stacks[region].usageClient,
     displayModels: region => displayModels(current(), region),
     enabledModelIds: region => regionStateOf(current(), region).enabledModelIds ?? [],
+    regionEnabled: region => regionEnabled(current(), region),
     discoverModels: (region, signal) => stacks[region].discoverModels(signal),
     rawDiagnostic: region => stacks[region].rawDiagnostic(),
   }))
+
+  /**
+   * Live registration handles per region, filled once the shim is listening.
+   * A disabled region holds ZERO routes while staying registered: DSH allows
+   * `replace([])` for exactly this case ("a settings section that emptied holds
+   * zero routes while staying registered"), which is what makes the on/off
+   * switch reversible without a restart. Withdrawing the adapter route is what
+   * actually removes the region's models from DSH's model picker — hiding the
+   * card tab alone would leave every model selectable.
+   */
+  const registration: Record<TraeRegion, {
+    adapter?: AdapterRegistrationHandle
+    directory?: DirectoryRegistrationHandle
+  }> = { cn: {}, ai: {} }
+
+  /**
+   * Publish each region's on/off state to the harness (issue #11). Both swaps
+   * are single synchronous sections, so no request can observe a half-applied
+   * state, and `replace` announces itself through `llm/adapters-updated`, which
+   * is what makes third-party consumers (e.g. a vision router deriving
+   * `<provider>-vision` variants) drop the region too. No-op until the shim has
+   * registered; `applySelection` runs again on every card write, so a toggle
+   * lands immediately.
+   */
+  const syncRegionRegistration = (value: Config): void => {
+    for (const region of REGION_KEYS) {
+      // Each region owns its OWN adapter registration, so a per-region replace
+      // is exactly that region's complete route set.
+      registration[region].adapter?.replace(regionEnabled(value, region) ? [TRAE_PROVIDERS[region]] : [])
+    }
+    // The directory is ONE registration holding BOTH entries: `replace` sets
+    // the complete entry set, so it is called once with the full enabled list.
+    // Replacing per region would make the last region win and silently drop the
+    // other's entry — a disabled region would take its enabled sibling with it.
+    registration.cn.directory?.replace(REGION_KEYS
+      .filter(region => regionEnabled(value, region))
+      .map(region => ({
+        provider: TRAE_PROVIDERS[region],
+        displayName: TRAE_PROVIDER_DISPLAY_NAMES[region],
+        settingsNs: TRAE_SETTINGS_NS,
+        settingsPath: [],
+        declared: false,
+      })))
+  }
 
   /** Push the current config into every region's store selection and catalog. */
   const applySelection = (value: Config): void => {
@@ -573,6 +644,7 @@ export function apply(ctx: Context, config: Config): void {
       stack.catalog.set(configuredModels(value, region))
       stack.invalidateAdapter()
     }
+    syncRegionRegistration(value)
   }
 
   const sectionHooks: SettingsSectionHooks<Config> = {
@@ -630,9 +702,6 @@ export function apply(ctx: Context, config: Config): void {
 
   void Promise.all(REGION_KEYS.map(region => stacks[region].shim.ready)).then(async () => {
     if (stopped) return
-    let releaseAdapterCn: (() => void) | undefined
-    let releaseAdapterAi: (() => void) | undefined
-    let releaseDirectory: (() => void) | undefined
     try {
       for (const region of REGION_KEYS) {
         const stack = stacks[region]
@@ -644,12 +713,21 @@ export function apply(ctx: Context, config: Config): void {
           resolveAttachments: () => ctx.get('attachments'),
         })
         stack.invalidateAdapter = () => { trae.invalidate() }
-        if (region === 'cn') releaseAdapterCn = ctx.llm.registerAdapter([TRAE_PROVIDER], trae.adapter)
-        else releaseAdapterAi = ctx.llm.registerAdapter([TRAE_AI_PROVIDER], trae.adapter)
+        // Always register the route first: an empty INITIAL registration is
+        // invalid (`INVALID_ADAPTER`), while `replace([])` on a live one is
+        // explicitly legal. `syncRegionRegistration` below then withdraws the
+        // route for a region the user has switched off, in the same synchronous
+        // section, so nothing observes the transient route.
+        registration[region].adapter = region === 'cn'
+          ? ctx.llm.registerAdapter([TRAE_PROVIDER], trae.adapter)
+          : ctx.llm.registerAdapter([TRAE_AI_PROVIDER], trae.adapter)
       }
       ctx.llm.registerModelDiscovery(TRAE_SETTINGS_NS, async (request, signal) => {
         const region = regionOfTraeProvider(request.provider ?? '')
         if (region === undefined) return []
+        // A switched-off region advertises nothing: its route is withdrawn, so
+        // this is defence in depth against a stale model-picker refresh.
+        if (!regionEnabled(current(), region)) return []
         // Discovery must advertise the same image capability as the live
         // adapter catalog. The upstream flag is deliberately ignored; only the
         // user's explicit `imageModelIds` selection is authoritative.
@@ -673,31 +751,35 @@ export function apply(ctx: Context, config: Config): void {
           inputModalities: traeInputModalities(model),
         }))
       })
-      releaseDirectory = ctx.llm.registerConfigurableProviders(REGION_KEYS.map(region => ({
+      registration.cn.directory = ctx.llm.registerConfigurableProviders(REGION_KEYS.map(region => ({
         provider: TRAE_PROVIDERS[region],
         displayName: TRAE_PROVIDER_DISPLAY_NAMES[region],
         settingsNs: TRAE_SETTINGS_NS,
         settingsPath: [],
         declared: false,
       })))
+      // Converge both regions on the saved state: a region switched off while
+      // the harness was down is withdrawn here, before the startup seed below.
+      syncRegionRegistration(current())
     } finally {
-      if (releaseAdapterCn === undefined || releaseAdapterAi === undefined || releaseDirectory === undefined) {
-        // Registration threw; release whichever half landed.
-        releaseAdapterCn?.()
-        releaseAdapterAi?.()
-        releaseDirectory?.()
+      if (registration.cn.adapter === undefined || registration.ai.adapter === undefined || registration.cn.directory === undefined) {
+        // Registration threw; release whichever half landed. A partially
+        // registered plugin must not leave a route behind with no owner.
+        registration.cn.adapter?.()
+        registration.ai.adapter?.()
+        registration.cn.directory?.()
       }
     }
     try {
       ctx.effect(() => () => {
-        releaseAdapterCn?.()
-        releaseAdapterAi?.()
-        releaseDirectory?.()
+        registration.cn.adapter?.()
+        registration.ai.adapter?.()
+        registration.cn.directory?.()
       })
     } catch {
-      releaseAdapterCn?.()
-      releaseAdapterAi?.()
-      releaseDirectory?.()
+      registration.cn.adapter?.()
+      registration.ai.adapter?.()
+      registration.cn.directory?.()
     }
 
     // Startup seed per region (workbuddy semantics): resolve the wire-id map
@@ -711,7 +793,12 @@ export function apply(ctx: Context, config: Config): void {
     // NOT seeded here: it belongs to the user's explicit save. A discovery
     // failure (no credentials, upstream down) degrades to the configured
     // state — the saved directory, else the region's fallback.
+    //
+    // A switched-off region is skipped entirely: its route is withdrawn, so the
+    // request would be pure waste — and skipping it is also what keeps a
+    // disabled region from contributing an error to the log on every start.
     for (const region of REGION_KEYS) {
+      if (!regionEnabled(current(), region)) continue
       void (async () => {
         const stack = stacks[region]
         try {
