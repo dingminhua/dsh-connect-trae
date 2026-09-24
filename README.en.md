@@ -4,7 +4,7 @@
 
 <h1 align="center">dsh-connect-trae</h1>
 
-<p align="center"><b>Connect locally signed-in Trae models to DeepSeek Harness with local DSH tools and a read-only credits overview.</b></p>
+<p align="center"><b>Connect locally signed-in Trae models to DeepSeek Harness with local DSH tools, a credits overview, and daily check-in claiming.</b></p>
 
 <p align="center">
   <a href="README.md">中文</a> ·
@@ -24,7 +24,9 @@
   <a href="https://dshfind.com/plugins/dingminhua/dsh-connect-trae"><img src="https://dshfind.com/api/badge/dingminhua/dsh-connect-trae" alt="dshfind plugin"></a>
 </p>
 
-A [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness) bundle plugin that connects locally signed-in Trae models (**both CN and international installs**) to the DSH model picker. Trae generates structured tool calls while DSH executes its own local tools, with a read-only usage overview (Work/general credits on CN, subscription status on international) and model-management panel. **The CN and international sides are two parallel providers (`trae` / `trae-global`) that can be used at the same time**; the settings card separates them with tabs for convenient management.
+A [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness) bundle plugin that connects locally signed-in Trae models (**both CN and international installs**) to the DSH model picker. Trae generates structured tool calls while DSH executes its own local tools, with a usage overview (Work/general credits on CN, subscription status on international), daily check-in claiming, and a model-management panel. **The CN and international sides are two parallel providers (`trae` / `trae-global`) that can be used at the same time**; the settings card separates them with tabs for convenient management.
+
+> Apart from the daily check-in claim, every query this plugin makes is read-only and consumes nothing; the claim only happens when you click the button.
 
 ## Features
 
@@ -37,6 +39,7 @@ A [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness) bund
 - **Region-isolated directories and selections** — CN and international each keep their own model directory, enabled picks, image opt-ins, and context budgets, and each provider reads only its own slot.
 - **Account switching** — refreshes the token list and lets users select an account without storing tokens in DSH settings.
 - **Read-only usage and model management** — Work/general credits on CN accounts, subscription/trial status on international ones; enable Trae models freely. Read-only queries consume nothing.
+- **Daily check-in claiming** — a one-click claim on the CN card (the button shows the daily reward, and reads "Claimed today" and disables itself once done). This is the plugin's **only** operation that changes account state, and it runs only when you click. The international side has no check-in activity, so no button is shown there.
 - **Secure loopback shim** — one random port + in-process random secret per region; the real Trae token is never handed to pi-ai.
 
 ## How it works
@@ -54,7 +57,7 @@ DSH PiAiAdapter (one stack per provider)
 
 The CN and international sides each own a complete runtime stack — credential store, model catalog, wire map, upstream clients, loopback shim, adapter — with visibility filtered by the credential's own region claim, so **both regions' accounts can be signed in and used by different sessions at the same time**.
 
-Usage overview hits the read-only `https://api.trae.cn/trae/api/v2/pay/*` and `/trae/api/v2/ug/*` endpoints (international accounts read their own gateway's subscription status). Refreshed tokens are kept per region in `$DSH_HOME/.trae-auth.cn.json` and `$DSH_HOME/.trae-auth.ai.json` (two simultaneously signed-in accounts never overwrite each other; the legacy single file `.trae-auth.json` is still read as a migration source).
+Usage overview hits the read-only `https://api.trae.cn/trae/api/v2/pay/*` and `/trae/api/v2/ug/*` endpoints (international accounts read their own gateway's subscription status); the daily check-in claim is the one write among them, going to `POST /trae/api/v2/ug/checkin_credits/claim` with this installation's device id (`x-device-id`, the same identity the chat path sends). Refreshed tokens are kept per region in `$DSH_HOME/.trae-auth.cn.json` and `$DSH_HOME/.trae-auth.ai.json` (two simultaneously signed-in accounts never overwrite each other; the legacy single file `.trae-auth.json` is still read as a migration source).
 
 > See `docs/IMPLEMENTATION_PLAN.md`, `docs/SOLO_ROUTE_DECISION.md`, `docs/USAGE_API_RESEARCH.md`.
 

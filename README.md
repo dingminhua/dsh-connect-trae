@@ -4,7 +4,7 @@
 
 <h1 align="center">dsh-connect-trae</h1>
 
-<p align="center"><b>把本机登录的 Trae 模型接入 DeepSeek Harness，并提供只读的用量/积分概览。</b></p>
+<p align="center"><b>把本机登录的 Trae 模型接入 DeepSeek Harness，并提供用量/积分概览与每日签到领取。</b></p>
 
 <p align="center">
   <a href="README.en.md">English</a> ·
@@ -24,7 +24,9 @@
   <a href="https://dshfind.com/plugins/dingminhua/dsh-connect-trae"><img src="https://dshfind.com/api/badge/dingminhua/dsh-connect-trae" alt="dshfind plugin"></a>
 </p>
 
-一个独立的 [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness) bundle 插件。它把本机已登录的 Trae 账号（**国内版与国际版均支持**）接到 DSH 的模型选择器：模型负责生成结构化工具调用，`bash` / `read` / `write` / `edit` 等工具由 DSH 本地执行；同时提供**只读**的用量概览（国内版 Work/通用积分、国际版订阅状态）与模型管理界面。**国内版与国际版是两个并行的供应商（`trae` / `trae-global`），可同时使用**；插件设置卡片以 tab 区分两者，方便统一管理。
+一个独立的 [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness) bundle 插件。它把本机已登录的 Trae 账号（**国内版与国际版均支持**）接到 DSH 的模型选择器：模型负责生成结构化工具调用，`bash` / `read` / `write` / `edit` 等工具由 DSH 本地执行；同时提供用量概览（国内版 Work/通用积分、国际版订阅状态）、每日签到领取与模型管理界面。**国内版与国际版是两个并行的供应商（`trae` / `trae-global`），可同时使用**；插件设置卡片以 tab 区分两者，方便统一管理。
+
+> 除每日签到领取外，插件的所有查询都是只读的、不消耗额度；签到领取也只在你点击按钮时才发生。
 
 ## 功能特性
 
@@ -37,6 +39,7 @@
 - **目录与勾选按区域隔离** —— 国内版与国际版各一套模型目录、勾选、图片开关与上下文预算，两个供应商各自读各自的槽位。
 - **多账号切换** —— 支持重新读取 Token 列表并选择账号；Token 不写入 DSH 设置。
 - **只读用量与模型管理** —— 国内版查看 Work 积分与通用积分，国际版查看订阅/试用状态；刷新/启用 Trae 模型；只读查询不消耗额度。
+- **每日签到领取** —— 国内版卡片上一键领取当日签到积分（按钮显示每日奖励，已领取则显示「今日已领取」并禁用）；这是插件里**唯一会改变账号状态**的操作，由你主动点击触发。国际版没有签到活动，因此不显示该按钮。
 - **安全 loopback shim** —— 每区域一个随机端口 + 进程内随机 secret，真实 Trae token 不交给 pi-ai。
 
 ## 工作原理
@@ -54,7 +57,7 @@ DSH PiAiAdapter（每个 provider 一套）
 
 国内版与国际版各持一套完整的运行时栈——凭据 store、模型 catalog、wire 映射、上游客户端、回环 shim、adapter——按凭证自带的区域声明隔离可见账号，所以**两个区域的账号可以同时在线、同时被不同会话使用**。
 
-用量概览走 `https://api.trae.cn/trae/api/v2/pay/*` 与 `/trae/api/v2/ug/*` 只读接口（国际账号走其自有网关的订阅状态端点）。刷新得到的 token 按区域存放在 `$DSH_HOME/.trae-auth.cn.json` 与 `$DSH_HOME/.trae-auth.ai.json`（两个账号同时在线互不覆盖；旧的单文件 `.trae-auth.json` 作为迁移来源保留读取）。
+用量概览走 `https://api.trae.cn/trae/api/v2/pay/*` 与 `/trae/api/v2/ug/*` 只读接口（国际账号走其自有网关的订阅状态端点）；每日签到领取是其中唯一的写操作，走 `POST /trae/api/v2/ug/checkin_credits/claim`，需要携带本机安装的设备号（`x-device-id`，与聊天通道同源）。刷新得到的 token 按区域存放在 `$DSH_HOME/.trae-auth.cn.json` 与 `$DSH_HOME/.trae-auth.ai.json`（两个账号同时在线互不覆盖；旧的单文件 `.trae-auth.json` 作为迁移来源保留读取）。
 
 > 详见 `docs/IMPLEMENTATION_PLAN.md`、`docs/SOLO_ROUTE_DECISION.md`、`docs/USAGE_API_RESEARCH.md`。
 
