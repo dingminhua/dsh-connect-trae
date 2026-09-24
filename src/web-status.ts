@@ -20,10 +20,11 @@ import type { TraeRegion } from './region.ts'
 import {
   regionOfTraeStatusUrl,
   TRAE_ACCOUNTS_REFRESH_PATH,
+  TRAE_CHECKIN_PATH,
   TRAE_MODELS_REFRESH_PATH,
   TRAE_USAGE_PATH,
 } from './status-paths.ts'
-import type { TraeWebCredits, TraeWebUsage } from './status-paths.ts'
+import type { TraeWebCheckin, TraeWebCredits, TraeWebUsage } from './status-paths.ts'
 
 export { TRAE_USAGE_PATH } from './status-paths.ts'
 export type { TraeWebUsage } from './status-paths.ts'
@@ -105,6 +106,23 @@ function toCredits(snapshot: { summary: { totalAmount: number; consumedAmount: n
   }
 }
 
+/** Map the check-in answer to the card's compact document. */
+function toCheckin(status: {
+  checkedIn: boolean
+  credits: number
+  enabled: boolean
+  didCheckedIn: boolean
+  extraCredits?: number
+}): TraeWebCheckin {
+  return {
+    checkedIn: status.checkedIn,
+    didCheckedIn: status.didCheckedIn,
+    credits: status.credits,
+    enabled: status.enabled,
+    ...status.extraCredits === undefined ? {} : { extraCredits: status.extraCredits },
+  }
+}
+
 /**
  * Assemble one region's card document. `region` is the tab the card is on; the
  * region-scoped store already answers with only that region's accounts, so the
@@ -172,11 +190,23 @@ export async function traeWebUsage(deps: TraeUsageRouteOptions, region: TraeRegi
       return { status: 'signed-in', ...account, payStatusError: safeMessage(error) }
     }
   }
-  try {
-    const snapshot = await client.snapshot()
-    return { status: 'signed-in', ...account, credits: toCredits(snapshot) }
-  } catch (error: unknown) {
-    return { status: 'signed-in', ...account, creditsError: safeMessage(error) }
+  // Credits and check-in are independent reads, so they settle independently:
+  // a broken check-in endpoint still leaves the credit panel usable, and vice
+  // versa. Each failure degrades to its own error field rather than taking the
+  // whole document down.
+  const [snapshotResult, checkinResult] = await Promise.allSettled([
+    client.snapshot(),
+    client.checkinStatus(),
+  ])
+  return {
+    status: 'signed-in',
+    ...account,
+    ...snapshotResult.status === 'fulfilled'
+      ? { credits: toCredits(snapshotResult.value) }
+      : { creditsError: safeMessage(snapshotResult.reason) },
+    ...checkinResult.status === 'fulfilled'
+      ? { checkin: toCheckin(checkinResult.value) }
+      : { checkinError: safeMessage(checkinResult.reason) },
   }
 }
 
@@ -249,7 +279,57 @@ export function registerTraeUsageRoute(ctx: Context, deps: TraeUsageRouteOptions
         }
       },
     })
+    /**
+     * Daily check-in claim — the ONLY route in this plugin that mutates
+     * upstream account state, so it is guarded more tightly than its siblings:
+     * POST only, loopback origin only, and the status read runs FIRST so an
+     * already-claimed day never reaches the upstream claim at all. The upstream
+     * is idempotent per Beijing day anyway (verified 2026-09-24: a repeat claim
+     * answers `code: 0` with the entitlement total unchanged), but relying on
+     * that for correctness would put the guard in someone else's hands.
+     */
+    const disposeCheckin = ctx.webServer.register({
+      kind: 'exact',
+      path: TRAE_CHECKIN_PATH,
+      handler: async (req: IncomingMessage, res: ServerResponse) => {
+        if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
+        if (!loopbackOrigin(req)) return json(res, 403, { error: 'origin-not-trusted' })
+        const region = requestRegion(req, res)
+        if (region === undefined) return
+        if (region !== 'cn') {
+          // The `/trae/api/v2/ug/*` family does not exist on the ai gateways
+          // (404, probed 2026-09-24); answering 404 here states that plainly
+          // instead of surfacing an upstream HTML 404 as a network fault.
+          return json(res, 404, { error: 'check-in is not available for the international region' })
+        }
+        try {
+          const client = deps.client(region)
+          const current = await client.checkinStatus()
+          if (!current.enabled) {
+            return json(res, 409, { error: 'check-in is not enabled for this account' })
+          }
+          // `didCheckedIn` as well as `checkedIn`: the app treats a day already
+          // claimed (even one whose status read reports `checked_in: false`) as
+          // done, and claiming again can only waste a request.
+          if (current.checkedIn || current.didCheckedIn) {
+            return json(res, 200, { claimed: false, alreadyCheckedIn: true, checkin: toCheckin(current) })
+          }
+          const claim = await client.claimCheckin()
+          const checkin = await client.checkinStatus()
+          json(res, 200, {
+            claimed: claim.claimed,
+            alreadyCheckedIn: false,
+            code: claim.code,
+            message: claim.message,
+            checkin: toCheckin(checkin),
+          })
+        } catch (error: unknown) {
+          json(res, 500, { error: safeMessage(error) })
+        }
+      },
+    })
     return () => {
+      disposeCheckin()
       disposeRefresh()
       disposeAccounts()
       disposeUsage()

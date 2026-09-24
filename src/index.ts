@@ -90,19 +90,21 @@ export { prepareSoloBody, TraeSoloUpstreamClient, TRAE_SOLO_CHAT_PATH, TRAE_SOLO
 export { bridgeTraeSoloStream, TraeSoloBridge } from './solo-bridge.ts'
 export { TraeSoloRemoteCatalogClient, TRAE_SOLO_REMOTE_BASE, type TraeSoloRemoteCatalogOptions } from './solo-remote.ts'
 export { TraeDelegatingUpstreamClient } from './delegating-upstream.ts'
-export { TRAE_PAY_BASE, TraeUsageClient, type TraeActivityRule, type TraeCheckinStatus, type TraeUsageOptions, type TraeUsagePack, type TraeUsageSnapshot, type TraeUsageSummary, type TraeUsageView } from './usage.ts'
+export { TRAE_PAY_BASE, TraeUsageClient, type TraeActivityRule, type TraeCheckinClaim, type TraeCheckinStatus, type TraeUsageOptions, type TraeUsagePack, type TraeUsageSnapshot, type TraeUsageSummary, type TraeUsageView } from './usage.ts'
 export { registerTraeUsageRoute, traeWebUsage, type TraeUsageRouteOptions } from './web-status.ts'
 export {
   regionOfTraeStatusUrl,
   regionEnabledOf,
   nextRegionEnabled,
   nextRegionSlots,
+  TRAE_CHECKIN_PATH,
   TRAE_REGION_PARAM,
   TRAE_REGIONS,
   TRAE_USAGE_PATH,
   withTraeRegion,
   type TraeWebActivity,
   type TraeWebCheckin,
+  type TraeWebCheckinClaim,
   type TraeWebCredits,
   type TraeWebUsage,
 } from './status-paths.ts'
@@ -503,8 +505,8 @@ export function apply(ctx: Context, config: Config): void {
       })()
     }
 
-    // Read-only usage/credit summary served to the browser half. Optional on
-    // the `webServer` seam; absent in headless runs, the host provider still
+    // Usage/credit summary served to the browser half. Optional on the
+    // `webServer` seam; absent in headless runs, the host provider still
     // works.
     //
     // Account selection is strictly the user's choice: the store resolves the
@@ -513,7 +515,16 @@ export function apply(ctx: Context, config: Config): void {
     // must NOT silently switch to a different account that happens to have
     // general credits — that would bill the wrong account against the user's
     // intent.
-    const usageClient = new TraeUsageClient({ credential: () => store.resolve() })
+    //
+    // `deviceId` feeds the check-in routes only: the claim endpoint refuses a
+    // request without `x-device-id` (business code 9004, verified 2026-09-24),
+    // and it must be THIS installation's id — the same one the chat path sends.
+    // Resolved lazily and best-effort, so a machine whose identity cannot be
+    // read still gets the read-only usage panel.
+    const usageClient = new TraeUsageClient({
+      credential: () => store.resolve(),
+      deviceId: async () => (await identity()).deviceId,
+    })
 
     stacks[region] = {
       region,

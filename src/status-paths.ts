@@ -11,6 +11,11 @@ export const TRAE_USAGE_PATH = '/plugins/dsh-connect-trae/usage'
 export const TRAE_MODELS_REFRESH_PATH = '/plugins/dsh-connect-trae/models/refresh'
 /** Plugin-owned local account rescan endpoint. */
 export const TRAE_ACCOUNTS_REFRESH_PATH = '/plugins/dsh-connect-trae/accounts/refresh'
+/**
+ * Plugin-owned daily check-in claim endpoint. POST, loopback-only, and the only
+ * route in this plugin that changes upstream account state.
+ */
+export const TRAE_CHECKIN_PATH = '/plugins/dsh-connect-trae/checkin'
 
 /** Query parameter naming the region a card request addresses. */
 export const TRAE_REGION_PARAM = 'region'
@@ -71,10 +76,33 @@ export interface TraeWebModel {
   maxContextWindow?: number
 }
 
-/** Daily check-in status rendered by the card. */
+/**
+ * Daily check-in state rendered below the credit stats.
+ *
+ * `didCheckedIn` is not redundant with `checkedIn`: the upstream reports them
+ * separately, and the official client keeps the claim button disabled for the
+ * rest of the Beijing day off `did_checked_in` even when a status read comes
+ * back `checked_in: false`. The card mirrors that rule so a stale-looking
+ * status cannot invite a pointless second claim.
+ */
 export interface TraeWebCheckin {
   checkedIn: boolean
+  didCheckedIn: boolean
   credits: number
+  enabled: boolean
+  extraCredits?: number
+}
+
+/** The claim route's answer, so the card can report a business refusal verbatim. */
+export interface TraeWebCheckinClaim {
+  /** False when the upstream answered a non-zero business code (e.g. 9004). */
+  claimed: boolean
+  /** True when today was already claimed, so nothing was sent upstream. */
+  alreadyCheckedIn: boolean
+  code?: number
+  message?: string
+  /** The refreshed check-in state, present whenever the claim path ran. */
+  checkin?: TraeWebCheckin
 }
 
 /** One reward activity rule (name + work/general credits when present). */
@@ -223,6 +251,14 @@ export type TraeWebUsage =
     }
     credits?: TraeWebCredits
     creditsError?: string
+    /**
+     * Daily check-in state (CN only). Absent on the international region,
+     * whose check-in surface does not exist — probed 2026-09-24: the
+     * `/trae/api/v2/ug/*` family answers 404 on every ai gateway, so the card
+     * shows no claim button there rather than a button that cannot work.
+     */
+    checkin?: TraeWebCheckin
+    checkinError?: string
     /** Subscription status of an international account (region ai only). */
     payStatus?: TraeWebPayStatus
     payStatusError?: string

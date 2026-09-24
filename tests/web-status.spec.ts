@@ -5,7 +5,7 @@ import { TraeUsageClient, type TraeUsageOptions } from '../src/usage.ts'
 import type { TraeRegion } from '../src/region.ts'
 import type { TraeUsageRouteOptions } from '../src/web-status.ts'
 import { traeWebUsage } from '../src/web-status.ts'
-import { TRAE_USAGE_PATH } from '../src/status-paths.ts'
+import { TRAE_CHECKIN_PATH, TRAE_USAGE_PATH } from '../src/status-paths.ts'
 
 const expiresAtMs = Date.now() + 60_000
 const credential: TraeCredential = {
@@ -95,6 +95,9 @@ describe('traeWebUsage', () => {
           ],
         }), { status: 200 })
       }
+      if (url.endsWith('/checkin_credits/status')) {
+        return new Response(JSON.stringify({ checked_in: false, code: 0, credits: 150, did_checked_in: false, enable: true, extra_credits: 50 }), { status: 200 })
+      }
       throw new Error(`unexpected fetch: ${url}`)
     }
     const deps = makeRoute({ fetchImpl })
@@ -110,6 +113,7 @@ describe('traeWebUsage', () => {
       models: [{ id: 'DeepSeek-V4-Flash', name: 'DeepSeek-V4-Flash', contextWindow: 168_000, maxTokens: 32_000 }],
       rawChat: { state: 'protocol-gated', status: 400, checkedAtMs: 123 },
       enabledModelIds: ['DeepSeek-V4-Flash'],
+      checkin: { checkedIn: false, didCheckedIn: false, credits: 150, enabled: true, extraCredits: 50 },
     })
     expect(result.credits).toEqual({
       total: 7500,
@@ -122,7 +126,9 @@ describe('traeWebUsage', () => {
         { displayDesc: '签到奖励', remain: 20.3712, size: 200 },
       ],
     })
-    expect(call).toBe(1)
+    // Credits and check-in are two independent reads, so the card document
+    // costs exactly two upstream calls.
+    expect(call).toBe(2)
   })
 
   it('keeps discovered candidates separate from the saved runtime list', async () => {
@@ -348,5 +354,171 @@ describe('registerTraeUsageRoute region dispatch', () => {
     const { res, status } = response()
     await usage.handler({ method: 'GET', url: TRAE_USAGE_PATH, headers: { origin: 'https://evil.example.com' } }, res)
     expect(status()).toBe(403)
+  })
+
+  /**
+   * The claim route is the only one that changes upstream account state, so it
+   * carries the strictest guards in the plugin. Each one is asserted against
+   * the CALL COUNT of the upstream claim: a guard that answers 200 without
+   * having prevented the claim would be worse than no guard at all.
+   */
+  describe('daily check-in claim route', () => {
+    /** Build a usage client whose check-in answers are scripted per call. */
+    function checkinClient(options: {
+      statuses: readonly Record<string, unknown>[]
+      claim?: () => Promise<{ claimed: boolean; code: number; message: string }>
+      onClaim?: () => void
+    }): TraeUsageClient {
+      let read = 0
+      return new TraeUsageClient({
+        credential: async () => credential,
+        fetchImpl: async (input: string | URL | Request) => {
+          const url = String(input)
+          if (url.endsWith('/checkin_credits/status')) {
+            const status = options.statuses[Math.min(read, options.statuses.length - 1)] ?? {}
+            read += 1
+            return new Response(JSON.stringify(status), { status: 200 })
+          }
+          if (url.endsWith('/checkin_credits/claim')) {
+            options.onClaim?.()
+            const claim = await options.claim?.() ?? { claimed: true, code: 0, message: 'success' }
+            return new Response(JSON.stringify({ code: claim.code, message: claim.message }), { status: 200 })
+          }
+          throw new Error(`unexpected fetch: ${url}`)
+        },
+        baseUrl: 'https://api.trae.cn',
+      })
+    }
+
+    async function mountCheckin(client: TraeUsageClient): Promise<CapturedEntry> {
+      const captured = await mountRoutes({ client: () => client })
+      const route = captured.find(entry => entry.path === TRAE_CHECKIN_PATH)
+      if (route === undefined) throw new Error('check-in route was not registered')
+      return route
+    }
+
+    it('claims exactly once and returns the refreshed state', async () => {
+      const claims: number[] = []
+      let read = 0
+      const client = new TraeUsageClient({
+        credential: async () => credential,
+        fetchImpl: async (input: string | URL | Request) => {
+          const url = String(input)
+          if (url.endsWith('/checkin_credits/status')) {
+            read += 1
+            // First read is the guard (unclaimed); the post-claim refresh
+            // reports the day as claimed, exactly like the upstream does.
+            return new Response(JSON.stringify({
+              checked_in: read > 1,
+              code: 0,
+              credits: 150,
+              did_checked_in: read > 1,
+              enable: true,
+              extra_credits: 50,
+            }), { status: 200 })
+          }
+          if (url.endsWith('/checkin_credits/claim')) {
+            claims.push(1)
+            return new Response(JSON.stringify({ code: 0, message: 'success' }), { status: 200 })
+          }
+          throw new Error(`unexpected fetch: ${url}`)
+        },
+        baseUrl: 'https://api.trae.cn',
+      })
+      const route = await mountCheckin(client)
+      const { res, status, body } = response()
+      await route.handler({ method: 'POST', url: `${TRAE_CHECKIN_PATH}?region=cn`, headers: {} }, res)
+      expect(status()).toBe(200)
+      expect(claims).toHaveLength(1)
+      expect(body()).toMatchObject({
+        claimed: true,
+        alreadyCheckedIn: false,
+        code: 0,
+        checkin: { checkedIn: true, didCheckedIn: true, credits: 150, extraCredits: 50 },
+      })
+    })
+
+    it('never reaches the upstream claim when today is already claimed', async () => {
+      const claims: number[] = []
+      const client = checkinClient({
+        statuses: [{ checked_in: true, code: 0, credits: 150, did_checked_in: true, enable: true }],
+        onClaim: () => { claims.push(1) },
+      })
+      const route = await mountCheckin(client)
+      const { res, status, body } = response()
+      await route.handler({ method: 'POST', url: TRAE_CHECKIN_PATH, headers: {} }, res)
+      expect(status()).toBe(200)
+      expect(claims).toEqual([])
+      expect(body()).toMatchObject({ alreadyCheckedIn: true, checkin: { checkedIn: true, didCheckedIn: true } })
+    })
+
+    it('treats a previously claimed day (did_checked_in) as done too', async () => {
+      // The app keeps the button disabled off `did_checked_in` even when the
+      // status read reports `checked_in: false`; claiming again there would be
+      // a wasted request against a day the upstream already granted.
+      const claims: number[] = []
+      const client = checkinClient({
+        statuses: [{ checked_in: false, code: 0, credits: 150, did_checked_in: true, enable: true }],
+        onClaim: () => { claims.push(1) },
+      })
+      const route = await mountCheckin(client)
+      const { res, status } = response()
+      await route.handler({ method: 'POST', url: TRAE_CHECKIN_PATH, headers: {} }, res)
+      expect(status()).toBe(200)
+      expect(claims).toEqual([])
+    })
+
+    it('refuses with 409 and never claims when the activity is disabled', async () => {
+      const claims: number[] = []
+      const client = checkinClient({
+        statuses: [{ checked_in: false, code: 0, credits: 0, did_checked_in: false, enable: false }],
+        onClaim: () => { claims.push(1) },
+      })
+      const route = await mountCheckin(client)
+      const { res, status, body } = response()
+      await route.handler({ method: 'POST', url: TRAE_CHECKIN_PATH, headers: {} }, res)
+      expect(status()).toBe(409)
+      expect(claims).toEqual([])
+      expect(body()).toMatchObject({ error: 'check-in is not enabled for this account' })
+    })
+
+    it('surfaces a business refusal as claimed:false rather than a 500', async () => {
+      // HTTP 200 + code 9004 is the upstream's answer when the claim is
+      // rejected (observed live without `x-device-id`). Reporting it as a
+      // transport failure would hide the one detail that explains it.
+      const client = checkinClient({
+        statuses: [{ checked_in: false, code: 0, credits: 150, did_checked_in: false, enable: true }],
+        claim: async () => ({ claimed: false, code: 9004, message: 'The submitted order parameters are incorrect.' }),
+      })
+      const route = await mountCheckin(client)
+      const { res, status, body } = response()
+      await route.handler({ method: 'POST', url: TRAE_CHECKIN_PATH, headers: {} }, res)
+      expect(status()).toBe(200)
+      expect(body()).toMatchObject({ claimed: false, code: 9004 })
+    })
+
+    it('answers 404 for the international region instead of an upstream HTML 404', async () => {
+      // The `/trae/api/v2/ug/*` family does not exist on the ai gateways, so
+      // the route states that rather than letting an HTML 404 masquerade as a
+      // network fault.
+      const captured = await mountRoutes({ client: () => checkinClient({ statuses: [{}] }) })
+      const route = captured.find(entry => entry.path === TRAE_CHECKIN_PATH)
+      if (route === undefined) throw new Error('check-in route was not registered')
+      const { res, status, body } = response()
+      await route.handler({ method: 'POST', url: `${TRAE_CHECKIN_PATH}?region=ai`, headers: {} }, res)
+      expect(status()).toBe(404)
+      expect(body()).toMatchObject({ error: 'check-in is not available for the international region' })
+    })
+
+    it('refuses non-POST methods with 405 and non-loopback origins with 403', async () => {
+      const route = await mountCheckin(checkinClient({ statuses: [{}] }))
+      const wrongMethod = response()
+      await route.handler({ method: 'GET', url: TRAE_CHECKIN_PATH, headers: {} }, wrongMethod.res)
+      expect(wrongMethod.status()).toBe(405)
+
+      const foreign = response()
+      await route.handler({ method: 'POST', url: TRAE_CHECKIN_PATH, headers: { origin: 'https://evil.example.com' } }, foreign.res)
+      expect(foreign.status()).toBe(403)
+    })
   })
 })

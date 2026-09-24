@@ -15,12 +15,13 @@ import {
   nextRegionSlots,
   regionEnabledOf,
   TRAE_ACCOUNTS_REFRESH_PATH,
+  TRAE_CHECKIN_PATH,
   TRAE_MODELS_REFRESH_PATH,
   TRAE_REGIONS,
   TRAE_USAGE_PATH,
   withTraeRegion,
 } from '../status-paths.ts'
-import type { TraeWebModel, TraeWebUsage } from '../status-paths.ts'
+import type { TraeWebCheckinClaim, TraeWebModel, TraeWebUsage } from '../status-paths.ts'
 import type { TraeRegion } from '../region.ts'
 import { TRAE_PLUGIN_ICON } from './icon.ts'
 import { TRAE_CARD_CSS } from './styles.ts'
@@ -119,6 +120,14 @@ export function TraeUsageCard({ t, settingsScope }: TraeUsageCardProps) {
   const [switchingAccount, setSwitchingAccount] = useState(false)
   /** Region whose on/off checkbox write is in flight, so its box can't race. */
   const [togglingRegion, setTogglingRegion] = useState<TraeRegion | undefined>(undefined)
+  /**
+   * Whether a check-in claim is in flight. A single flag rather than a
+   * per-region map: the claim exists only on the CN tab, and one shared flag
+   * keeps a tab switch from stranding a second concurrent claim.
+   */
+  const [claiming, setClaiming] = useState(false)
+  /** Last claim refusal, shown until the next successful refresh. */
+  const [claimError, setClaimError] = useState<string | undefined>(undefined)
   const mounted = useRef(true)
 
   useEffect(() => {
@@ -183,6 +192,13 @@ export function TraeUsageCard({ t, settingsScope }: TraeUsageCardProps) {
 
   const status: TraeWebUsage = statusByRegion[activeRegion] ?? { status: 'signed-out', accounts: [] }
 
+  /**
+   * Drop a claim refusal when the tab changes. The error belongs to the region
+   * it came from — carrying it onto the other tab would attribute an
+   * international account's problem to the CN one (or the reverse).
+   */
+  useEffect(() => { setClaimError(undefined) }, [activeRegion])
+
   useEffect(() => {
     if (!open || !activeRegionOn || status.status !== 'signed-in') return
     const controller = new AbortController()
@@ -221,6 +237,43 @@ export function TraeUsageCard({ t, settingsScope }: TraeUsageCardProps) {
       await refreshUsage(activeRegion)
     } finally {
       if (mounted.current) setSwitchingAccount(false)
+    }
+  }
+
+  /**
+   * Claim today's check-in reward for the active tab's region.
+   *
+   * The Host route owns every guard that matters — POST only, loopback origin
+   * only, CN only, and a status read before the claim — because a browser-side
+   * check is not a guard. The button's own `disabled` is therefore a courtesy
+   * (it stops an obviously pointless click), not the protection.
+   *
+   * A refusal is not thrown away: the route answers `claimed: false` with the
+   * upstream's business code and message, and the card shows it. The upstream
+   * also reports success for an already-claimed day, so `alreadyCheckedIn`
+   * refreshes the state without pretending a new reward landed.
+   */
+  const claimCheckin = async (): Promise<void> => {
+    setClaiming(true)
+    setClaimError(undefined)
+    try {
+      const response = await fetch(withTraeRegion(TRAE_CHECKIN_PATH, activeRegion), {
+        method: 'POST',
+        headers: { accept: 'application/json' },
+        credentials: 'same-origin',
+      })
+      const body = await response.json().catch(() => undefined) as (TraeWebCheckinClaim & { error?: string }) | undefined
+      if (!response.ok) throw new Error(body?.error ?? `HTTP ${response.status}`)
+      if (body?.claimed === false && body.alreadyCheckedIn !== true) {
+        throw new Error(body.message === undefined || body.message === ''
+          ? t('row.checkinRefused', { code: String(body.code ?? '') })
+          : `${t('row.checkinRefused', { code: String(body.code ?? '') })}: ${body.message}`)
+      }
+      await refreshUsage(activeRegion)
+    } catch (error: unknown) {
+      if (mounted.current) setClaimError(error instanceof Error ? error.message : t('row.requestFailed'))
+    } finally {
+      if (mounted.current) setClaiming(false)
     }
   }
 
@@ -555,6 +608,49 @@ export function TraeUsageCard({ t, settingsScope }: TraeUsageCardProps) {
                     )}
                     {status.creditsError === undefined ? null
                       : <p className="dsm-trae-usage-error">{t('row.creditsError', { message: status.creditsError })}</p>}
+                    {status.checkin === undefined ? null : (() => {
+                      // `didCheckedIn` counts as done alongside `checkedIn`: the
+                      // upstream reports them separately, and the official app
+                      // keeps the button disabled for the rest of the day off
+                      // the former. Disabling on both means a status read that
+                      // happens to say `checked_in: false` cannot invite a
+                      // second, pointless claim.
+                      const done = status.checkin.checkedIn || status.checkin.didCheckedIn
+                      const reward = formatNumber(status.checkin.credits)
+                      const bonus = status.checkin.extraCredits === undefined
+                        ? ''
+                        : ` + ${formatNumber(status.checkin.extraCredits)}`
+                      return (
+                        <div className="dsm-trae-checkin">
+                          <span className="dsm-trae-checkin-copy">
+                            <span className="dsm-trae-checkin-label">{t('row.checkinLabel')}</span>
+                            <span className="dsm-trae-checkin-hint">
+                              {t('row.checkinReward', { reward: `${reward}${bonus}` })}
+                              {done ? ` · ${t('row.checkinDoneHint')}` : ''}
+                            </span>
+                          </span>
+                          <button
+                            type="button"
+                            className="dsm-btn dsm-btn-primary dsm-trae-checkin-button"
+                            disabled={!status.checkin.enabled || done || claiming}
+                            onClick={() => { void claimCheckin() }}
+                          >
+                            {claiming
+                              ? t('row.checkinClaiming')
+                              : done ? t('row.checkinClaimed') : t('row.checkinClaim')}
+                          </button>
+                        </div>
+                      )
+                    })()}
+                    {status.checkin !== undefined && !status.checkin.enabled
+                      ? <p className="dsm-trae-usage-error">{t('row.checkinDisabled')}</p>
+                      : null}
+                    {status.checkinError === undefined
+                      ? null
+                      : <p className="dsm-trae-usage-error">{t('row.checkinError', { message: status.checkinError })}</p>}
+                    {claimError === undefined
+                      ? null
+                      : <p className="dsm-trae-usage-error" role="alert">{t('row.checkinError', { message: claimError })}</p>}
                     <section className="dsm-trae-models" aria-label={t('row.modelsTitle')}>
                       <div className="dsm-trae-models-head">
                         <div>

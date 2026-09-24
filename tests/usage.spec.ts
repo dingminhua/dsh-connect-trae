@@ -71,7 +71,106 @@ describe('TraeUsageClient', () => {
     const { client, urls } = makeClient(() => ({ checked_in: true, code: 0, credits: 200, enable: true }))
     const status = await client.checkinStatus()
     expect(urls[0]).toBe('https://api.trae.cn/trae/api/v2/ug/checkin_credits/status')
-    expect(status).toEqual({ checkedIn: true, credits: 200, enabled: true })
+    expect(status).toEqual({ checkedIn: true, credits: 200, enabled: true, didCheckedIn: false })
+  })
+
+  it('carries did_checked_in and extra_credits off the live check-in answer', async () => {
+    // The real CN answer (captured 2026-09-24) reports four fields the card
+    // needs: `enable` gates the button, `did_checked_in` keeps an
+    // already-claimed day disabled, and `extra_credits` is the bonus that
+    // rides on top of the base reward.
+    const { client } = makeClient(() => ({
+      checked_in: true,
+      code: 0,
+      credits: 150,
+      did_checked_in: true,
+      enable: true,
+      extra_credits: 50,
+      message: 'success',
+    }))
+    const status = await client.checkinStatus()
+    expect(status).toEqual({ checkedIn: true, credits: 150, enabled: true, didCheckedIn: true, extraCredits: 50 })
+  })
+
+  it('omits extraCredits when the upstream reports none', async () => {
+    // `0` must read as absent rather than as a real bonus, so the card never
+    // renders "+0".
+    const { client } = makeClient(() => ({ checked_in: false, credits: 200, enable: true, extra_credits: 0 }))
+    const status = await client.checkinStatus()
+    expect(status).not.toHaveProperty('extraCredits')
+  })
+
+  it('claims the daily check-in with the installation device id', async () => {
+    // The claim is refused with business code 9004 unless `x-device-id` is
+    // present (verified against the live endpoint 2026-09-24), so the header
+    // is part of the contract rather than an optional flourish.
+    const seen: Record<string, string>[] = []
+    const fetchImpl = async (_input: string | URL | Request, init?: RequestInit) => {
+      seen.push(init?.headers as Record<string, string>)
+      return new Response(JSON.stringify({ code: 0, message: 'success' }), { status: 200 })
+    }
+    const client = new TraeUsageClient({
+      credential: async () => credential,
+      deviceId: async () => 'device-abc',
+      fetchImpl,
+      baseUrl: 'https://api.trae.cn',
+    })
+    const claim = await client.claimCheckin()
+    expect(claim).toEqual({ claimed: true, code: 0, message: 'success' })
+    expect(seen[0]?.['x-device-id']).toBe('device-abc')
+  })
+
+  it('reports a business refusal instead of throwing', async () => {
+    // HTTP 200 + non-zero code is how the upstream refuses (e.g. 9004 when the
+    // device header is missing). That is a business answer, not a transport
+    // fault, so it must surface as `claimed: false` for the card to explain.
+    const fetchImpl = async () => new Response(JSON.stringify({
+      code: 9004,
+      message: 'The submitted order parameters are incorrect. Please try placing the order again',
+    }), { status: 200 })
+    const client = new TraeUsageClient({ credential: async () => credential, fetchImpl, baseUrl: 'https://api.trae.cn' })
+    const claim = await client.claimCheckin()
+    expect(claim.claimed).toBe(false)
+    expect(claim.code).toBe(9004)
+    expect(claim.message).toContain('order parameters')
+  })
+
+  it('still reads check-in status when the device id cannot be resolved', async () => {
+    // Identity resolution is best-effort: a machine whose storage layout we
+    // cannot read must still get the read-only status, and only the claim is
+    // then expected to be refused upstream.
+    const seen: Record<string, string>[] = []
+    const fetchImpl = async (_input: string | URL | Request, init?: RequestInit) => {
+      seen.push(init?.headers as Record<string, string>)
+      return new Response(JSON.stringify({ checked_in: false, credits: 150, enable: true }), { status: 200 })
+    }
+    const failing = new TraeUsageClient({
+      credential: async () => credential,
+      deviceId: async () => { throw new Error('no identity') },
+      fetchImpl,
+      baseUrl: 'https://api.trae.cn',
+    })
+    await expect(failing.checkinStatus()).resolves.toMatchObject({ checkedIn: false })
+    expect(seen[0]?.['x-device-id']).toBeUndefined()
+
+    const empty = new TraeUsageClient({
+      credential: async () => credential,
+      deviceId: async () => '',
+      fetchImpl,
+      baseUrl: 'https://api.trae.cn',
+    })
+    await expect(empty.checkinStatus()).resolves.toMatchObject({ checkedIn: false })
+    expect(seen[1]?.['x-device-id']).toBeUndefined()
+  })
+
+  it('refuses to claim on the international region', async () => {
+    // The `/trae/api/v2/ug/*` family does not exist on the ai gateways, so the
+    // client refuses before spending a request on a known 404.
+    const client = new TraeUsageClient({
+      credential: async () => ({ ...credential, edition: 'sg' as const, host: 'https://api-sg-central.trae.ai' }),
+      fetchImpl: async () => { throw new Error('should not fetch') },
+    })
+    await expect(client.claimCheckin()).rejects.toThrow(/only available for the CN region/)
   })
 
   it('parses activity rules', async () => {

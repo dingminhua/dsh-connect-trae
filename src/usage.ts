@@ -17,6 +17,21 @@ export const TRAE_PAY_BASE = 'https://api.trae.cn'
 
 export interface TraeUsageOptions {
   credential(): Promise<TraeCredential | undefined>
+  /**
+   * Device identity of the credential's own installation, sent as
+   * `x-device-id` on the check-in routes.
+   *
+   * The claim endpoint is the one WRITE in this client, and it is guarded
+   * server-side by that header: with the same Authorization but no
+   * `x-device-id`, the upstream answers HTTP 200 with business code `9004`
+   * ("The submitted order parameters are incorrect") and grants nothing —
+   * verified 2026-09-24 against a live CN account, where adding the header
+   * flipped the same request to `code: 0` and the daily reward landed. The
+   * official client sends it on every check-in call
+   * (`main.js`'s `fb(headers)` sets `x-device-id` from `guaranteedDeviceId`).
+   * Absent, the client still reads status; only the claim refuses.
+   */
+  deviceId?(): Promise<string | undefined>
   fetchImpl?: typeof fetch
   baseUrl?: string
   timeoutMs?: number
@@ -71,8 +86,28 @@ export interface TraeUsageSnapshot {
 
 export interface TraeCheckinStatus {
   checkedIn: boolean
+  /** Reward for one check-in, as reported by the upstream (`credits`). */
   credits: number
   enabled: boolean
+  /**
+   * Whether today's reward was claimed in a previous session. The upstream
+   * reports `did_checked_in` separately from `checked_in`: the app uses the
+   * former to keep the claim button disabled for the rest of the Beijing day
+   * even when the status read happens to report `checked_in: false`.
+   */
+  didCheckedIn: boolean
+  /** Bonus credit granted on top of the base reward, when the upstream reports one. */
+  extraCredits?: number
+}
+
+/** Result of claiming today's check-in reward. */
+export interface TraeCheckinClaim {
+  /** Whether the upstream accepted the claim (`code === 0`). */
+  claimed: boolean
+  /** Business code from the answer; `0` on success. */
+  code: number
+  /** Upstream message, verbatim but truncated — never token material. */
+  message: string
 }
 
 export interface TraeActivityRule {
@@ -138,8 +173,11 @@ function parseUsageSnapshot(payload: Record<string, unknown>): TraeUsageSnapshot
 }
 
 /**
- * A read-only client for the verified Trae usage/credits endpoints.
- * All methods are safe to call from a plugin and never mutate account state.
+ * A client for the verified Trae usage/credits endpoints.
+ *
+ * Every method is read-only except {@link TraeUsageClient.claimCheckin}, which
+ * claims the daily check-in reward — the one deliberate mutation, requested by
+ * the user from the card and guarded before it is sent.
  */
 export class TraeUsageClient {
   private readonly fetchImpl: typeof fetch
@@ -167,6 +205,21 @@ export class TraeUsageClient {
     return this.baseUrl ?? REGION_GATEWAYS[await this.currentRegion()].pay
   }
 
+  /**
+   * Device id for the check-in routes, or undefined when the machine's
+   * installation identity cannot be read. Best-effort on purpose: a missing
+   * identity must not break the read-only status query, which the upstream
+   * answers with or without the header.
+   */
+  private async deviceIdHeader(): Promise<Record<string, string>> {
+    try {
+      const deviceId = await this.options.deviceId?.()
+      return deviceId === undefined || deviceId === '' ? {} : { 'x-device-id': deviceId }
+    } catch {
+      return {}
+    }
+  }
+
   private async authedHeaders(): Promise<Record<string, string>> {
     const credential = await this.options.credential()
     if (credential === undefined || credential.accessToken === '') {
@@ -182,8 +235,13 @@ export class TraeUsageClient {
     }
   }
 
-  private async post<T>(path: string, data: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
-    const headers = await this.authedHeaders()
+  private async post<T>(
+    path: string,
+    data: Record<string, unknown>,
+    signal?: AbortSignal,
+    extraHeaders: Record<string, string> = {},
+  ): Promise<T> {
+    const headers = { ...await this.authedHeaders(), ...extraHeaders }
     const response = await this.fetchImpl(`${await this.payBase()}${path}`, {
       method: 'POST',
       headers,
@@ -245,14 +303,47 @@ export class TraeUsageClient {
     return parseUsageSnapshot(payload)
   }
 
-  /** Daily check-in status. */
+  /**
+   * Daily check-in status. Read-only, and answered with or without the device
+   * header — the claim is what needs it.
+   */
   async checkinStatus(signal?: AbortSignal): Promise<TraeCheckinStatus> {
     await this.requireCnRegion('check-in status')
-    const payload = await this.post<Record<string, unknown>>('/trae/api/v2/ug/checkin_credits/status', {}, signal)
+    const headers = await this.deviceIdHeader()
+    const payload = await this.post<Record<string, unknown>>('/trae/api/v2/ug/checkin_credits/status', {}, signal, headers)
+    const extraCredits = asNumber(payload['extra_credits'])
     return {
       checkedIn: payload['checked_in'] === true,
       credits: asNumber(payload['credits']) ?? 0,
       enabled: payload['enable'] !== false,
+      didCheckedIn: payload['did_checked_in'] === true,
+      ...extraCredits === undefined || extraCredits <= 0 ? {} : { extraCredits },
+    }
+  }
+
+  /**
+   * Claim today's check-in reward. The ONLY state-changing call in this client.
+   *
+   * The upstream is idempotent per Beijing day (verified 2026-09-24: repeating
+   * the call on an already-claimed day answers `code: 0` while the entitlement
+   * total stays byte-identical), so a double click cannot double-grant. The
+   * card and its route still guard, because "cannot double-grant" is a property
+   * of the upstream we verify rather than one we rely on.
+   *
+   * A business refusal arrives as HTTP 200 with a non-zero `code` — most often
+   * `9004` when the request carries no `x-device-id`. That is reported as
+   * `claimed: false` rather than thrown, so the caller can tell "the upstream
+   * refused this" apart from "the request never arrived".
+   */
+  async claimCheckin(signal?: AbortSignal): Promise<TraeCheckinClaim> {
+    await this.requireCnRegion('check-in claim')
+    const headers = await this.deviceIdHeader()
+    const payload = await this.post<Record<string, unknown>>('/trae/api/v2/ug/checkin_credits/claim', {}, signal, headers)
+    const code = asNumber(payload['code']) ?? 0
+    return {
+      claimed: code === 0,
+      code,
+      message: typeof payload['message'] === 'string' ? payload['message'].slice(0, 200) : '',
     }
   }
 

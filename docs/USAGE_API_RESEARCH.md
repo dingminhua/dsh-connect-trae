@@ -16,10 +16,11 @@
 | 权益/活动规则 | `POST /trae/api/v2/pay/web_user_pay_status` | ✅ |
 | 过期权益 | `POST /trae/api/v2/pay/expired_ents` | ✅ `{expired_ent_list: []}` |
 | 每日签到状态 | `POST /trae/api/v2/ug/checkin_credits/status` | ✅ |
+| **每日签到领取（写操作）** | `POST /trae/api/v2/ug/checkin_credits/claim` | ✅ 必须带 `x-device-id` |
 | 奖励活动规则 | `POST /trae/api/v2/ug/activity/info` | ✅ |
 | **每笔消费明细表** | `POST /trae/api/v1/pay/query_user_usage_group_by_session` | ⚠️ HTTP 200 但 `total: 0`，拿不到 |
 
-所有成功接口均为**只读查询，不消耗 Trae 积分**。
+除 `checkin_credits/claim` 外，所有接口均为**只读查询，不消耗 Trae 积分**。领取接口是**唯一会改变账号状态的调用**，只由用户在插件卡片上主动点击触发（详见下文「每日签到领取」）。
 
 ## 认证与 Host
 
@@ -73,6 +74,48 @@ pack 内 `usage.credits_amount` 表示该套餐当前剩余积分。
 - `POST /trae/api/v2/ug/checkin_credits/status` → `{checked_in: true, credits: 200, code: 0}`
 - `POST /trae/api/v2/ug/activity/info` → `commercial_activities`（checkin_credits 200、new_user_credits 2000+2000、send_message_reward 500 等）
 
+## 每日签到领取（写操作，2026-09-24 实测）
+
+`POST https://api.trae.cn/trae/api/v2/ug/checkin_credits/claim`
+Body: `{}`（官方客户端发 `{"req_source":1|2}`，实测该字段对结果无影响）
+
+### 决定性发现：缺 `x-device-id` 会被拒
+
+同一份 Authorization，仅改一个请求头，结果完全不同：
+
+| 请求头 | 结果 |
+|---|---|
+| 插件原有头（`Authorization` / `Content-Type` / `UA` / `Origin` / `Referer`） | HTTP 200，`{"code":9004,"message":"The submitted order parameters are incorrect. Please try placing the order again"}` —— **未发放** |
+| 追加 `x-device-id: <本机 dc 设备号>` | HTTP 200，`{"code":0,"message":"success"}` —— **奖励到账** |
+
+- 业务码 `9004` 是**业务拒绝**，HTTP 状态仍是 200，所以「看 HTTP 状态」会把它误判为成功。
+- `x-device-id` 取本机 `iCubeAuthInfo://icube-dc:<id>` 的数字后缀（即 `src/identity.ts` 的 `deviceId`，与聊天通道同源）。官方客户端在 `main.js` 的 `fb(headers)` 里给每个 ug 请求都补上它（`guaranteedDeviceId`）。
+- 状态查询接口**不需要**该头也能正常返回；只有领取需要。
+
+### 幂等性（已实测，未重复发放）
+
+| 步骤 | 结果 |
+|---|---|
+| 领取前 status | `checked_in:false, did_checked_in:false` |
+| claim | `code: 0` |
+| 领取后 status | `checked_in:true, did_checked_in:true` |
+| **再次 claim** | `code: 0`（仍报成功） |
+| 再次 claim 后的额度 | `total=1600, consumed=390.8`，与首次领取后**逐字节相同** |
+
+结论：上游按北京自然日幂等，重复调用**不会重复发放**。插件仍自行加守卫（领取前先读状态、已领取则直接返回且不发请求），因为「不会重复发放」是上游的行为、不是插件可以依赖的保证。
+
+### 区域限制
+
+`/trae/api/v2/ug/*` 全族在**国际版网关上不存在**（2026-09-24 实测：`growsg-normal.trae.ai` / `api-sg-central.trae.ai` / `api.trae.ai` 均 404，`www.trae.ai` 回落 HTML 首页）。因此国际版 tab 不显示签到按钮，插件路由对该区域直接答 404，而不是把一个上游 HTML 404 当成网络故障抛给用户。
+
+### 客户端状态字段（来自官方 bundle）
+
+官方 `workbench.desktop.main.solo-lite.js` 的签到状态机用到这些字段，插件对齐其判定：
+
+- `enable` —— 活动是否开启（按钮是否可用）
+- `checked_in` / `did_checked_in` —— **两个独立字段**；官方在「今日已领取」判定上同时看 `did_checked_in`，即使某次状态读回 `checked_in:false` 也保持按钮禁用
+- `credits` —— 基础奖励；`extra_credits` —— 额外奖励（本机实测 150 + 50）
+
 ## 消费明细表（未拿到）
 
 `POST https://api.trae.cn/trae/api/v1/pay/query_user_usage_group_by_session`
@@ -108,3 +151,8 @@ start_time, end_time, page_size, page_num, usage_type, Request
    - 真实验证（本机 solo 凭据）：总可用 1620.37、签到 `checked_in:true`、packs 与活动规则均正常返回；只读、未消耗积分。
 2. 消费明细表待拿到 Solo/TraeWork 网页版真实明细接口（需登录态）后再接入；不阻塞额度能力。
 3. 所有新增接口遵循既有安全原则：只读、不写日志、不缓存 secret、脱敏输出。
+4. ~~接入每日签到领取~~ **已完成（2026-09-24）**：
+   - `TraeUsageClient` 新增 `claimCheckin()`（本客户端**唯一的写操作**），并让 `checkinStatus()` 一并回传 `didCheckedIn` / `extraCredits`；两者都带 `x-device-id`（`deviceId` 由 `index.ts` 从 `identity()` 注入，读不到时降级为不发该头，只影响领取、不影响状态查询）。
+   - 新增路由 `POST /plugins/dsh-connect-trae/checkin`：仅 POST、仅回环来源、仅 `cn` 区域；**先读状态**，已领取直接返回且不发领取请求；活动关闭答 409。业务拒绝（如 9004）以 `claimed:false` + 原始 code/message 返回，不当成 500。
+   - 卡片新增签到行（每日奖励、按钮、领取中/已领取三态），已领取判定同时看 `checkedIn` 与 `didCheckedIn`，与官方客户端一致。
+   - 新增 21 条测试（`usage.spec.ts` 6 条、`web-status.spec.ts` 7 条、`card-checkin.spec.tsx` 8 条，含真实点击；全仓测试数 261 → 282）；做过**变异验证**：去掉路由的 `didCheckedIn` 守卫、去掉卡片的同款判定、把卡片改成 GET，对应测试各自立刻失败。
