@@ -1,5 +1,52 @@
 # Changelog
 
+## 2.2.0 (2026-09-24)
+
+### Bug Fixes
+
+- **支持 DSH 0.1.7 线，且同一个构建同时服务 0.1.5 与 0.1.7**（修复 [issue #13](https://github.com/dingminhua/dsh-connect-trae/issues/13)）。这不是「多支持一个版本」的可选增强——**在 0.1.7 上插件的浏览器半侧此前根本不激活**：
+
+  ```
+  web boot: 1 entry did not activate
+  dsh-connect-trae: pending (waiting for service: settingsScope)
+  ```
+
+  - **根因：`settingsScope` 被整个移除，而 Cordis 的依赖闸门是硬闸。** DSH **0.1.7-alpha.1** 起客户端设置服务换成 `configForms`，`settingsScope` **不再存在**（不是弃用、没有兼容层；0.1.6-alpha.2 还有，0.1.7-alpha.1 起包内已无此符号）。插件 `inject` 里仍声明它，于是 fiber 永远停在 `PENDING`——**不是某个功能坏掉，是整个客户端插件不激活**，因此「重新登录」「重装插件」一概无效。修法与 workbuddy 一致：`inject` 收窄为两条线都有的 `['slots', 'locale']`，设置面改由 `ctx.get()` **按能力软探测**（属性访问会抛 `cannot get property X without inject`，`?.` 挡不住；`ctx.get` 对缺失服务返回 `undefined`）。
+  - **0.1.7 上另有三处断裂，issue 只报了第一处。** 逐项对照 workbuddy 的实测（该仓库已用同一套适配跑通 0.1.7）：
+
+    | # | 位置 | 0.1.5 | 0.1.7 |
+    |---|---|---|---|
+    | 1 | 客户端设置服务 | `settingsScope` | `configForms` |
+    | 2 | 客户端槽位名 | `settings.plugin.item` | `plugins.bundle.config` / `plugins.row.config` |
+    | 3 | 宿主端注册 | `installSection()` | `configure({auto}, owner)` |
+    | 4 | schema 可写声明 | 无需 | 必须标 `volatile()` |
+    | 5 | primitives 图标名 | `…Outline14` | `…OutlineRegular` |
+
+  - **第 2 条（槽位名）最容易被漏掉**：两条线声明的槽位集合**互不相交**（0.1.5 只有 `settings.plugin.item`；0.1.7 只有 `plugins.*`）。就算设置服务改对了，槽位名不改卡片依然渲染不出来。现在三个槽位**各自独立 try/catch** 逐个注册——一条线上不存在的槽位不能把另一条线的注册一起带走。
+  - **第 3 条（宿主端）在 0.1.7 上是静默失败**：`installSection` 被 `SettingsForms.configure()` 取代。由于该调用位于嵌套的 `ctx.inject` 回调内，抛出的 `installSection is not a function` 落在**那个子 fiber** 上——外层插件照常加载、两个 provider 照常注册，**但 `trae` 设置命名空间从未注册**，表现为卡片设置区无声消失。现在按能力探测：有 `configure` 走 `configure`，否则回落 `installSection`。
+  - **第 4 条（易失声明）**：0.1.7 的 settings 写入门要求插件 schema 把可写字段标为 volatile，否则**写入被直接拒绝**（`Plugin entry "trae" has no volatile fields`），而 `scope.set()` 却正常 resolve——用户会看到开关翻过去又静默复原。新增 `asVolatile()`：运行时探测 `schema.volatile()`，**有则调用、无则退化为 identity no-op**（`volatile()` 自 schemastery 3.18.3 起才有，0.1.5 线锁在 3.18.2）。**故意不手写 `meta.volatile = true`**——那会绕过 schemastery 自身的 `validateVolatileSchema` 校验，产出一个它自己都不认的 schema。
+  - **0.1.7 以「活引用」交付配置值。** 该线把 volatile 字段以 `{get(): T}` 形式交给消费方；不解包则 `config.regions`、`value.accounts[region]`、`config.authFile` 静默变成对象或 `undefined`，表现为「设置明明写了却读不到」。更隐蔽的是**展开一个活引用得到的是 `{get: <function>}` 而不是值**——卡片「写一个区域、保留另一个」的合并会因此**丢掉兄弟区域并把函数泄进设置文档**。新增 `unwrapVolatile()` / `unwrapVolatileDeep()` 并在所有读取与合并路径上解包，同时监听 `loader/volatile-update` 在每次写入后重读选择。
+  - **第 5 条（图标）会让整个客户端包挂掉**：两条线 primitives 的图标名不重叠（`IconChevronDownOutline14` vs `IconChevronDownOutlineRegular`），**没有任何一个静态 import 能同时服务两边**——静态导入 0.1.5 的名字会让 0.1.7 上的客户端包解析失败，整个卡片随之消失。折叠箭头改为**纯 CSS caret**（`border` + `rotate`），与版本无关。
+  - **设置写入改为「写入后回读校验」**：`set()` 的 promise resolve **不代表值已落盘**（0.1.7 上被拒绝的写入会重新加载 Host 状态然后正常返回，0.1.5 上则可能被文件占用丢弃）。四处写入（账号选择、账号重扫、区域开关、模型目录）统一走 `writeSettingsField()`：写入后回读，未落盘即抛错并在卡片上明确显示，而不是「点了没反应」。0.1.7 的 `set()` 还会返回显式布尔值，`false` 同样按拒绝处理。
+  - **卡片的 `view` 属性**：0.1.7 的插件管理器通过 owner props 向每个配置条目索取两种视图（`summary` 一句话简介 / `page` 带保存控件的完整表单）。卡片接受该属性并在 `page` 下默认展开——否则在 0.1.7 的插件页里卡片会是折叠的一行。
+  - **开发环境的 schemastery 从 3.18.2 提到 3.18.4**（`pnpm-workspace.yaml` 的 override，与 `devDependencies` 对齐）。此前 dev 树锁在 3.18.2，那里没有 `volatile()`，`asVolatile()` 退化为 no-op——**于是 volatile 真正生效的那条路径（每个 0.1.7 用户都会走的那条）在本地从未被执行过**，这类缺陷可以同时躲过评审与 CI。这与 workbuddy 记录的教训同源。
+
+### Tests
+
+测试总数 282 → 310。
+
+- **新增 `tests/client-activation.spec.tsx`（3 例，本次最关键的一组）**：用真实的 cordis `Context` **启动真实的客户端入口模块**，分别对 0.1.7 形态（有 `configForms`、**无** `settingsScope`）、0.1.5 形态（有 `settingsScope`、无 `configForms`）、以及**两者都没有**的形态断言 fiber 到达 `ACTIVE`、槽位注册齐全、scope 取自正确的服务。之所以能直接导入真实入口，是因为它运行期只依赖 React 与本地文件，所有 DSH 包都是**类型导入**、构建时即被擦除。
+  - 此前 `client-fallback.spec.ts` 抓不到这个缺陷：它**手工镜像**入口函数体，因此验证的是「思路」而**从不执行真实的 `inject` 数组**——而恰恰是那个数组让 fiber 卡在 PENDING。
+  - **变异验证**：把 `inject` 改回 `['slots','locale','settingsScope']`，0.1.7 与「无设置面」两例立即变红（fiber 停在 0/1，永远到不了 `ACTIVE`），0.1.5 那例仍绿——精确复现了 issue 报的现象。
+- **新增 `tests/dsh-017-compat.spec.ts`（13 例）**：活引用的单层/深层解包、数组与嵌套、**不就地改写调用方对象**；`regionEnabledOf` / `regionStateOf` / `regionEnabled` 穿透活引用读值；合并时**保留兄弟区域且不泄露函数**；`asVolatile()` 的两条分支按运行时能力确定性断言；以及**宿主端 `configure()` 优先于 `installSection()`**（用一个只有 `configure` 的真 Service 装配，断言走的是 `configure({auto:true})` 且没有 `installSection` 报错）。
+  - **变异验证**：把 `configure` 探测改回无保护裸调 `installSection` → 1 条立即变红；把 `nextRegionSlots` 的深解包去掉 → 1 条立即变红。
+- `client-fallback.spec.ts` 的镜像同步更新，并补 2 例：**两条线都提供时 `configForms` 优先**（0.1.7 的写入闸门只认它），以及 **`configForms` 缺席时回落 `settingsScope.bind()`**。
+- **`card-region-switch.spec.tsx` 新增 8 例**（渲染真组件、点真按钮）：穿透活引用读区域开关；合并时**保留兄弟区域且不泄露函数**；Host 明确拒绝（`set()` 返回 `false`）与**「接受了但没落盘」**（`set()` 返回 `true` 而文档未变）两种失败都必须显式报错；0.1.5 的 `void` 返回视为成功；`view: 'page'` 时默认展开、无 `view` 时默认折叠；无设置面时渲染为只读。
+  - **变异验证**：去掉 `regionsMapOf` 的解包 → 1 条失败；去掉 `view` 判断 → 1 条失败；去掉 `false` 判断 → 0 条失败（回读校验兜住了，说明两层防护确实互补）；去掉回读校验 → 1 条失败；**两层都去掉 → 1 条失败**。
+  - 顺带移除了该文件对 `dsh-client-ui-primitives` 的整包 `vi.mock`：图标已改纯 CSS，不再需要这个桩。
+
+**双版本验证**：同一份代码在 schemastery **3.18.4**（volatile 生效）与 **3.18.2**（no-op 分支）下**均为 310 通过**。
+
 ## 2.1.0 (2026-09-24)
 
 ### Features

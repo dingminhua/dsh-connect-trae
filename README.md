@@ -96,6 +96,25 @@ npm install dsh-connect-trae
 
 安装、更新或卸载 bundle 后，需要重启对应的 DSH 进程。
 
+## DSH 版本兼容
+
+**同一个构建同时服务 DSH 0.1.5 与 0.1.7 两条线**，无需按版本安装不同的包。
+
+两条线的设置体系不同，插件在运行期按能力探测，而不是假定某一条：
+
+| | 0.1.5 线 | 0.1.7 线 |
+|---|---|---|
+| 客户端设置服务 | `settingsScope` | `configForms` |
+| 配置卡片槽位 | `settings.plugin.item` | `plugins.bundle.config` / `plugins.row.config` |
+| 宿主端注册 | `installSection()` | `configure({auto}, owner)` |
+| schema 可写声明 | 无需 | 必须标 `volatile()` |
+| primitives 图标名 | `…Outline14` | `…OutlineRegular` |
+
+两处关键做法：
+
+- **`inject` 只声明两条线都有的服务**（`slots` / `locale`），设置面用 `ctx.get()` 软探测。Cordis 的依赖闸门是硬闸——`inject` 里任一服务在运行线上不存在，`apply()` 就永远不会执行（0.1.7 上 `settingsScope` 已被移除，这正是 2.1.0 及更早版本在 0.1.7 上卡在 `pending (waiting for service: settingsScope)` 的原因）。
+- **折叠箭头用纯 CSS**，不静态导入任何图标：两条线的图标名不重叠，静态导入必然在其中一条线上解析失败。
+
 ## Windows 说明
 
 - **账号数据目录**：插件读取 `%APPDATA%\Trae CN` / `%APPDATA%\TRAE SOLO CN` 下的 `User\globalStorage\storage.json`（与安装目录无关）。目录名与 macOS 一致，无需额外配置；若目录名对不上，可用插件配置项 `authFile` + `edition` 直接指定完整路径。

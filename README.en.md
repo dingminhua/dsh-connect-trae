@@ -94,6 +94,25 @@ npm install dsh-connect-trae
 
 Restart the DSH process after install/update/uninstall.
 
+## DSH version compatibility
+
+**One build serves both the DSH 0.1.5 and 0.1.7 lines** — no per-version package.
+
+The two lines differ in their settings machinery, and the plugin probes for capability at runtime instead of assuming either:
+
+| | 0.1.5 line | 0.1.7 line |
+|---|---|---|
+| Client settings service | `settingsScope` | `configForms` |
+| Config card slots | `settings.plugin.item` | `plugins.bundle.config` / `plugins.row.config` |
+| Host registration | `installSection()` | `configure({auto}, owner)` |
+| Schema writable marker | not needed | `volatile()` required |
+| Primitives icon names | `…Outline14` | `…OutlineRegular` |
+
+Two decisions matter most:
+
+- **`inject` declares only the services BOTH lines provide** (`slots` / `locale`); the settings surface is probed with `ctx.get()`. Cordis' dependency gate is hard — any `inject` entry the running line does not provide keeps `apply()` from ever running (0.1.7 removed `settingsScope`, which is why 2.1.0 and earlier sat at `pending (waiting for service: settingsScope)` on that line).
+- **The collapse caret is pure CSS**, with no static icon import: the two lines' icon names do not overlap, so any static import fails to resolve on one of them.
+
 ## Windows notes
 
 - **Account data directory**: the plugin reads `%APPDATA%\Trae CN` / `%APPDATA%\TRAE SOLO CN` → `User\globalStorage\storage.json` (unrelated to the install directory). The folder names match macOS, so no extra config is needed; if the name does not match, point the `authFile` + `edition` plugin options at the exact path.
