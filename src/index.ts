@@ -33,6 +33,7 @@ import type { TraeRawDiagnostic } from './raw-diagnostic.ts'
 import { TraeDelegatingUpstreamClient } from './delegating-upstream.ts'
 import { TraeUsageClient } from './usage.ts'
 import { registerTraeUsageRoute } from './web-status.ts'
+import { unwrapVolatile, unwrapVolatileDeep } from './status-paths.ts'
 
 export {
   createTraeAdapter,
@@ -101,6 +102,8 @@ export {
   TRAE_REGION_PARAM,
   TRAE_REGIONS,
   TRAE_USAGE_PATH,
+  unwrapVolatile,
+  unwrapVolatileDeep,
   withTraeRegion,
   type TraeWebActivity,
   type TraeWebCheckin,
@@ -191,7 +194,12 @@ export interface Config {
  * picks (the same failure workbuddy fixed with its region split).
  */
 export function regionStateOf(config: Config, region: TraeRegion): TraeRegionState {
-  const stored = config.regions?.[region]
+  // Unwrap first: on DSH 0.1.7 a volatile-marked field arrives as a `{get(): T}`
+  // live reference, so `config.regions?.[region]` would read `undefined` and
+  // every region would silently fall back to its defaults ("settings written
+  // but not read back").
+  const regions = unwrapVolatile(config.regions)
+  const stored = unwrapVolatile(regions?.[region])
   if (stored !== undefined) return stored
   if (region !== 'cn') return {}
   return {
@@ -212,6 +220,32 @@ export function regionStateOf(config: Config, region: TraeRegion): TraeRegionSta
  */
 export function regionEnabled(config: Config, region: TraeRegion): boolean {
   return regionStateOf(config, region).enabled !== false
+}
+
+/**
+ * Mark a schema's field as volatile on the DSH lines that support it.
+ *
+ * `volatile()` exists from schemastery 3.18.3 (the DSH 0.1.7 line, which is the
+ * only line whose settings write gate reads the marker). Older pinning (3.18.2,
+ * the 0.1.5 line) has no such method, and the schema must stay byte-identical
+ * to the unmarked original there: hand-writing `meta.volatile = true` would
+ * bypass schemastery's own `validateVolatileSchema` checks and produce a schema
+ * no 0.1.5 consumer understands — so on that line this degrades to an identity
+ * no-op.
+ *
+ * Without the marker, 0.1.7's settings write gate REJECTS every write with
+ * `Plugin entry "trae" has no volatile fields` while the scope's `set()` still
+ * resolves — so the card would look like it saved and silently revert.
+ *
+ * Exported so BOTH arms are testable on any machine: the capability is decided
+ * by whichever schemastery the dependency tree resolves, so without a seam the
+ * no-op arm would silently stop being exercised the moment the pin moved up.
+ */
+export function asVolatile<S>(schema: S): S {
+  if (typeof (schema as { volatile?: () => S }).volatile === 'function') {
+    return (schema as { volatile: () => S }).volatile()
+  }
+  return schema
 }
 
 const modelConfig = z.object({
@@ -243,11 +277,15 @@ const accountSelectionConfig = z.object({
 })
 
 export const Config: z<Config> = z.object({
-  authFile: z.string().description('Optional Trae storage.json path override'),
-  edition: z.union(['auto', 'cn', 'sg', 'solo', 'solo-sg']).default('auto').description('Trae edition hint'),
+  authFile: asVolatile(z.string().description('Optional Trae storage.json path override')),
+  edition: asVolatile(z.union(['auto', 'cn', 'sg', 'solo', 'solo-sg']).default('auto').description('Trae edition hint')),
   accountId: z.string().description('Deprecated: pre-split account selector, attributed to its own region'),
-  accounts: accountSelectionConfig.description('Per-region account selections, keyed cn | ai'),
-  regions: z.dict(regionStateConfig).default({}).description('Per-region model directory and selection, keyed cn | ai'),
+  // The cast is required because `asVolatile` returns `z<T>` with `T` inferred
+  // from the wrapped schema, which is narrower than the optional
+  // `Partial<Record<TraeRegion, string>>` the Config interface declares. The
+  // schema is unchanged either way — this only restores the assignment.
+  accounts: asVolatile(accountSelectionConfig.description('Per-region account selections, keyed cn | ai')) as z<Partial<Record<TraeRegion, string>>>,
+  regions: asVolatile(z.dict(regionStateConfig).default({}).description('Per-region model directory and selection, keyed cn | ai')),
   lastCatalog: z.array(modelConfig).description('Deprecated: pre-region-split CN model directory') as z<TraeModelInfo[]>,
   enabledModelIds: z.array(z.string()).default([]).description('Deprecated: pre-region-split CN selection'),
   contextBudgets: z.dict(z.number().step(1).min(1)).default({}).description('Deprecated: pre-region-split CN context budgets'),
@@ -365,7 +403,10 @@ export function apply(ctx: Context, config: Config): void {
    */
   let legacyAccountRegion: TraeRegion | undefined
   const effectiveAccountFor = (region: TraeRegion, value: Config): string | undefined => {
-    const explicit = value.accounts?.[region]
+    // `accounts` is volatile on the 0.1.7 line: the raw value is a live
+    // reference, so `value.accounts?.[region]` would read `undefined` and the
+    // user's saved account selection would be silently ignored.
+    const explicit = unwrapVolatile(value.accounts)?.[region]
     if (explicit !== undefined) return explicit
     return legacyAccountRegion === region ? value.accountId : undefined
   }
@@ -406,17 +447,23 @@ export function apply(ctx: Context, config: Config): void {
     const identity = async () => {
       let preferred: TraeEdition | undefined
       try { preferred = (await store.current())?.edition } catch { /* fall through to every candidate */ }
-      const explicit = config.edition !== undefined && config.edition !== 'auto' ? config.edition : undefined
+      // `authFile` and `edition` are volatile on the 0.1.7 line, so the raw
+      // config value is a `{get(): T}` live reference: reading it directly
+      // would make the storage path an object and the edition a truthy non-enum
+      // (silently mis-resolving every credential).
+      const authFile = unwrapVolatile(config.authFile)
+      const edition = unwrapVolatile(config.edition)
+      const explicit = edition !== undefined && edition !== 'auto' ? edition : undefined
       const hint = explicit ?? preferred
       // Pick the first desktop candidate whose storage file actually exists,
       // mirroring the credential store's skip-missing semantics. Windows
       // machines often install only SOLO, so pinning the first (cn) candidate
       // and reading a missing file used to throw ENOENT and break every
       // refresh/chat request.
-      const candidates = config.authFile === undefined
+      const candidates = authFile === undefined
         ? traeStorageCandidates().filter(item => item.source === 'desktop'
           && (hint !== undefined ? item.edition === hint : regionOfEdition(item.edition) === region))
-        : [{ edition: hint ?? (region === 'ai' ? 'sg' as const : 'solo' as const), path: config.authFile, source: 'desktop' as const }]
+        : [{ edition: hint ?? (region === 'ai' ? 'sg' as const : 'solo' as const), path: authFile, source: 'desktop' as const }]
       // Desktop storage first; a machine with only the CLI (`traecli`, the WSL2
       // case) has no storage.json at all, and identity resolution falls back to
       // the CLI home's own deterministic identifiers instead of failing every
@@ -439,8 +486,8 @@ export function apply(ctx: Context, config: Config): void {
     }
     const store = new TraeCredentialStore({
       region,
-      ...config.authFile === undefined ? {} : { storagePath: config.authFile },
-      edition: config.edition ?? 'auto',
+      ...unwrapVolatile(config.authFile) === undefined ? {} : { storagePath: unwrapVolatile(config.authFile) },
+      edition: unwrapVolatile(config.edition) ?? 'auto',
       // The refresh callback resolves the device identity lazily so an
       // international SOLO account refreshes with its own installation's
       // machine/device ids (the official client sends a DeviceInfo body there).
@@ -651,7 +698,14 @@ export function apply(ctx: Context, config: Config): void {
   const applySelection = (value: Config): void => {
     for (const region of REGION_KEYS) {
       const stack = stacks[region]
-      stack.store.setSource(value.authFile, value.edition ?? 'auto', effectiveAccountFor(region, value))
+      // Unwrap the volatile fields here too: `setSource` stores them for every
+      // later credential read, so handing it a live reference would make the
+      // storage path an object and the edition a truthy non-enum.
+      stack.store.setSource(
+        unwrapVolatile(value.authFile),
+        unwrapVolatile(value.edition) ?? 'auto',
+        effectiveAccountFor(region, value),
+      )
       stack.catalog.set(configuredModels(value, region))
       stack.invalidateAdapter()
     }
@@ -694,16 +748,67 @@ export function apply(ctx: Context, config: Config): void {
   // reads it defensively off the module namespace. Prefer the helper when it
   // exists (0.1.1 hosts and shimmed 0.1.2 hosts) and fall back to the service
   // method everywhere else, so one build serves both host generations.
+  //
+  // DSH 0.1.7 is a THIRD shape, and it is not interchangeable with either:
+  // `SettingsForms` dropped `installSection` entirely and exposes
+  // `configure({auto}, owner)` instead. Calling `installSection` there throws
+  // `ctx.settings.installSection is not a function`; because this call sits
+  // inside a nested `ctx.inject` callback, the throw lands in THAT child fiber
+  // (which fails) while the outer plugin keeps loading — so the providers
+  // still register but the `trae` settings namespace never does, and the
+  // card's settings area silently disappears. Each shape is therefore probed
+  // for the method it needs rather than assumed.
+  //
+  // Both service calls go through a narrow local type rather than a blanket
+  // `any`: the installed typings describe the 0.1.5 line only, so `configure`
+  // is not on `SettingsProvider`.
+  interface SettingsShapes {
+    configure?: (presentation: { auto?: boolean }, owner?: unknown) => unknown
+    installSection?: (
+      owner: Context,
+      ns: string,
+      schema: z<Config>,
+      entry: Config,
+      hooks: SettingsSectionHooks<Config>,
+    ) => unknown
+  }
+
   const legacyInstallSettingsSection = (dshSettings as {
     installSettingsSection?: (ctx: Context, ns: string, schema: z<Config>, entry: Config, hooks: SettingsSectionHooks<Config>) => void
   }).installSettingsSection
   if (typeof legacyInstallSettingsSection === 'function') {
     legacyInstallSettingsSection(ctx, TRAE_SETTINGS_NS, Config, config, sectionHooks)
   } else {
+    // `inject` rather than a direct read: `settings` is an optional service,
+    // and the callback runs once it is actually present.
     ctx.inject(['settings'], settingsCtx => {
-      settingsCtx.settings.installSection(ctx, TRAE_SETTINGS_NS, Config, config, sectionHooks)
+      const settings = settingsCtx.settings as unknown as SettingsShapes
+      if (typeof settings.configure === 'function') {
+        settings.configure({ auto: true }, ctx.fiber)
+        return
+      }
+      if (typeof settings.installSection === 'function') {
+        // The entry is DEEP-unwrapped, not passed as-is. `installSection`
+        // validates and `structuredClone`s the whole object, so a live
+        // reference anywhere inside it fails validation with a message that
+        // names the field but not the cause:
+        // `$.authFile expected string but got [object Object]`. That is not
+        // hypothetical — it is what broke every field the moment volatile
+        // marking became active, taking the whole namespace registration down
+        // with it (the card's settings area vanishes, 13 tests go red).
+        const entry = unwrapVolatileDeep(config)
+        settings.installSection(ctx, TRAE_SETTINGS_NS, Config, entry, sectionHooks)
+      }
     })
   }
+
+  // 0.1.7 hands volatile values back as live references and announces each
+  // write on this event, so the card's selections are re-read after one. The
+  // event does not exist on 0.1.5, which never emits it.
+  ;(ctx as unknown as { on(name: string, listener: () => void): unknown })
+    .on('loader/volatile-update', () => {
+      applySelection(current())
+    })
 
   let stopped = false
   ctx.effect(() => () => {

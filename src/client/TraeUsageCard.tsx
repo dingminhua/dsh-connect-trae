@@ -6,10 +6,8 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { createElement as h } from 'react'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client'
-import { IconChevronDownOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
 import {
   nextRegionEnabled,
   nextRegionSlots,
@@ -19,6 +17,7 @@ import {
   TRAE_MODELS_REFRESH_PATH,
   TRAE_REGIONS,
   TRAE_USAGE_PATH,
+  unwrapVolatileDeep,
   withTraeRegion,
 } from '../status-paths.ts'
 import type { TraeWebCheckinClaim, TraeWebModel, TraeWebUsage } from '../status-paths.ts'
@@ -30,10 +29,16 @@ import type { TraeSettingsKey } from './locales.ts'
 /** Localized copy injected by the browser-plugin registration. */
 export interface TraeUsageCardInjected {
   t: (key: TraeSettingsKey, params?: Record<string, unknown>) => string
-  settingsScope: {
+  /**
+   * Optional by design: a host line that provides neither settings surface
+   * (or a probe before the mirror populates) leaves this undefined, and the
+   * card renders read-only — saving is the only capability that needs it.
+   */
+  settingsScope?: {
     getSnapshot(): { status: string; value?: unknown; writable: boolean }
     subscribe(listener: () => void): () => void
-    set(field: string, value: unknown): Promise<void>
+    /** Whether the Host accepted the write (0.1.7); `void` on the 0.1.5 line. */
+    set(field: string, value: unknown): Promise<boolean | void>
   }
 }
 
@@ -41,6 +46,12 @@ export interface TraeUsageCardInjected {
 export type TraeUsageCardProps =
   PropsRuntime<'settings.plugin.item'>
   & Partial<TraeUsageCardInjected>
+  // 0.1.7's plugin manager asks every configuration entry for one of two views
+  // through its owner props (`plugins.item` / `plugins.bundle.config` /
+  // `plugins.row.config`). `page` is the full form with its own save control;
+  // `summary` is a one-liner. Only the `settings.plugin.item` line passes no
+  // `view` at all, so it stays optional.
+  & { view?: 'summary' | 'page' }
 
 const POLL_INTERVAL_MS = 60_000
 const TRAE_GITHUB_URL = 'https://github.com/dingminhua/dsh-connect-trae'
@@ -53,10 +64,63 @@ interface TraeDraft {
   contextBudgets: Record<string, number>
 }
 
-/** Read the per-region account selections out of the settings snapshot. */
+/**
+ * Read the per-region account selections out of the settings snapshot.
+ *
+ * Deep-unwraps first: on DSH 0.1.7 a volatile field arrives as a `{get(): T}`
+ * live reference, which passes the `typeof === 'object'` check below and would
+ * be returned as if it were the map. Every lookup on it is then `undefined`,
+ * and the card's merge (`{ ...configured, [region]: id }`) would spread a
+ * reference into `{get: <function>}` — dropping the other region's selection
+ * and leaking a function into the settings document.
+ */
 function configuredAccountsOf(configured: unknown): Record<string, string> {
-  const accounts = (configured as { accounts?: unknown } | undefined)?.accounts
+  const accounts = (unwrapVolatileDeep(configured) as { accounts?: unknown } | undefined)?.accounts
   return typeof accounts === 'object' && accounts !== null ? accounts as Record<string, string> : {}
+}
+
+/**
+ * Write one settings field and confirm the value actually landed.
+ *
+ * `settingsScope.set()` / `configForms.set()` resolving is NOT proof that
+ * anything was stored. On DSH 0.1.7 a write can be accepted by the transport
+ * and still not materialize — a rejected write reloads Host state and merely
+ * RETURNS, so the caller's `await` succeeds while the document is unchanged.
+ * The 0.1.7 form also answers with an explicit boolean for exactly this reason.
+ *
+ * Either way the caller must not report success on an unpersisted write: the
+ * user would see the control flip and then silently revert.
+ *
+ * @throws {TraeSettingsWriteError} when the write was refused or did not land.
+ */
+class TraeSettingsWriteError extends Error {
+  constructor(field: string, detail?: string) {
+    super(detail === undefined || detail === ''
+      ? `trae: settings field "${field}" was not persisted by the settings write`
+      : `trae: settings field "${field}" was not persisted by the settings write (${detail})`)
+    this.name = 'TraeSettingsWriteError'
+  }
+}
+
+async function writeSettingsField(
+  scope: NonNullable<TraeUsageCardInjected['settingsScope']>,
+  field: string,
+  value: unknown,
+  landed: (readBack: unknown) => boolean,
+): Promise<void> {
+  const accepted = await scope.set(field, value)
+  // 0.1.5 answers `void` (its scope reloads Host state on failure instead), so
+  // only an explicit `false` counts as a refusal.
+  if (accepted === false) throw new TraeSettingsWriteError(field, 'the Host refused the write')
+  if (!landed(unwrapVolatileDeep(scope.getSnapshot().value))) {
+    throw new TraeSettingsWriteError(field)
+  }
+}
+
+/** Read one region's stored `regions` slot out of an unwrapped settings value. */
+function regionSlotsOf(value: unknown): Record<string, unknown> {
+  const regions = (value as { regions?: unknown } | undefined)?.regions
+  return typeof regions === 'object' && regions !== null ? regions as Record<string, unknown> : {}
 }
 
 /** Inject the shared card CSS once. */
@@ -101,9 +165,11 @@ function dotStyle(status: TraeWebUsage['status']): Record<string, string> {
 }
 
 /** Render Trae sign-in state and the total usage summary as one expandable card. */
-export function TraeUsageCard({ t, settingsScope }: TraeUsageCardProps) {
+export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
   if (t === undefined) throw new Error('Trae usage card requires its translation function')
-  const [open, setOpen] = useState(false)
+  // 0.1.7 opens the card as a full page with its own save control, so the body
+  // must already be expanded there; the 0.1.5 item slot starts collapsed.
+  const [open, setOpen] = useState(view === 'page')
   /** The region whose tab is on screen; each tab is its own provider stack. */
   const [activeRegion, setActiveRegion] = useState<TraeRegion>('cn')
   /** Last-known usage per region, so tab dots survive tab switches. */
@@ -128,6 +194,12 @@ export function TraeUsageCard({ t, settingsScope }: TraeUsageCardProps) {
   const [claiming, setClaiming] = useState(false)
   /** Last claim refusal, shown until the next successful refresh. */
   const [claimError, setClaimError] = useState<string | undefined>(undefined)
+  /**
+   * A refused or unpersisted settings write, surfaced instead of silently
+   * reverting. On 0.1.7 a rejected write resolves normally, so without this
+   * the control would flip and then quietly snap back on the next snapshot.
+   */
+  const [writeError, setWriteError] = useState<string | undefined>(undefined)
   const mounted = useRef(true)
 
   useEffect(() => {
@@ -211,6 +283,7 @@ export function TraeUsageCard({ t, settingsScope }: TraeUsageCardProps) {
 
   const rescanAccounts = async (): Promise<void> => {
     setBusy(true)
+    setWriteError(undefined)
     try {
       const response = await fetch(withTraeRegion(TRAE_ACCOUNTS_REFRESH_PATH, activeRegion), {
         method: 'POST', headers: { accept: 'application/json' }, credentials: 'same-origin',
@@ -219,10 +292,15 @@ export function TraeUsageCard({ t, settingsScope }: TraeUsageCardProps) {
       if (!response.ok || !Array.isArray(body.accounts)) throw new Error(`HTTP ${response.status}`)
       const selected = body.accounts.find(account => account.selected)?.id
       const configured = configuredAccountsOf(settingsScope?.getSnapshot().value)
-      if (selected !== undefined && selected !== configured[activeRegion] && settingsScope?.getSnapshot().writable === true) {
-        await settingsScope.set('accounts', { ...configured, [activeRegion]: selected })
+      if (selected !== undefined && selected !== configured[activeRegion] && settingsScope !== undefined
+        && settingsScope.getSnapshot().writable === true) {
+        await writeSettingsField(settingsScope, 'accounts',
+          { ...configured, [activeRegion]: selected },
+          readBack => configuredAccountsOf(readBack)[activeRegion] === selected)
       }
       await refreshUsage(activeRegion)
+    } catch (error: unknown) {
+      if (mounted.current) setWriteError(error instanceof Error ? error.message : t('row.requestFailed'))
     } finally {
       if (mounted.current) setBusy(false)
     }
@@ -231,10 +309,15 @@ export function TraeUsageCard({ t, settingsScope }: TraeUsageCardProps) {
   const switchAccount = async (accountId: string): Promise<void> => {
     if (settingsScope === undefined) return
     setSwitchingAccount(true)
+    setWriteError(undefined)
     try {
       const configured = configuredAccountsOf(settingsScope.getSnapshot().value)
-      await settingsScope.set('accounts', { ...configured, [activeRegion]: accountId })
+      await writeSettingsField(settingsScope, 'accounts',
+        { ...configured, [activeRegion]: accountId },
+        readBack => configuredAccountsOf(readBack)[activeRegion] === accountId)
       await refreshUsage(activeRegion)
+    } catch (error: unknown) {
+      if (mounted.current) setWriteError(error instanceof Error ? error.message : t('row.requestFailed'))
     } finally {
       if (mounted.current) setSwitchingAccount(false)
     }
@@ -287,10 +370,16 @@ export function TraeUsageCard({ t, settingsScope }: TraeUsageCardProps) {
   const toggleRegion = async (item: TraeRegion, enabled: boolean): Promise<void> => {
     if (settingsScope === undefined || settingsScope.getSnapshot().writable !== true) return
     setTogglingRegion(item)
+    setWriteError(undefined)
     try {
       // `nextRegionEnabled` unwraps the settings section itself and returns the
       // bare `regions` map, which is exactly what this field write needs.
-      await settingsScope.set('regions', nextRegionEnabled(settingsScope.getSnapshot().value, item, enabled))
+      await writeSettingsField(settingsScope, 'regions',
+        nextRegionEnabled(settingsScope.getSnapshot().value, item, enabled),
+        readBack => regionSlotsOf(readBack)[item] !== undefined
+          && (regionSlotsOf(readBack)[item] as { enabled?: unknown }).enabled === enabled)
+    } catch (error: unknown) {
+      if (mounted.current) setWriteError(error instanceof Error ? error.message : t('row.requestFailed'))
     } finally {
       if (mounted.current) setTogglingRegion(undefined)
     }
@@ -337,7 +426,12 @@ export function TraeUsageCard({ t, settingsScope }: TraeUsageCardProps) {
     }
   }
 
-  const settingsValue = settingsScope?.getSnapshot().value
+  // Deep-unwrap ONCE at the source: on DSH 0.1.7 the whole section (and each
+  // volatile field inside it) arrives as a `{get(): T}` live reference. Every
+  // read below assumes a plain object — `regions` would otherwise pass the
+  // `typeof === 'object'` check while every region lookup on it returns
+  // undefined, so the card would show no saved budgets or image opt-ins at all.
+  const settingsValue = unwrapVolatileDeep(settingsScope?.getSnapshot().value)
   // Region-scoped saved state: the active tab's own slot first; the
   // pre-region-split flat fields are only read for cn (the Host reads them the
   // same way, see regionStateOf), so a budget set on one region's model is
@@ -424,6 +518,7 @@ export function TraeUsageCard({ t, settingsScope }: TraeUsageCardProps) {
   const saveModels = async (): Promise<void> => {
     if (settingsScope === undefined) return
     setSaving(true)
+    setWriteError(undefined)
     try {
       // Save this region's raw directory plus the pure selection. The Host
       // derives the runtime catalog from these on save/restart, so re-opening
@@ -435,15 +530,27 @@ export function TraeUsageCard({ t, settingsScope }: TraeUsageCardProps) {
       // Carry the region's on/off flag through: this write replaces the whole
       // slot, and dropping `enabled` would silently re-enable a provider the
       // user switched off just by saving its model list.
-      await settingsScope.set('regions', nextRegionSlots(configuredRegions, activeRegion, {
+      const nextSlot = {
         enabled: regionOn(activeRegion),
         lastCatalog: visibleModels.map(model => ({ ...model, input: ['text'] })),
         enabledModelIds: [...activeEnabledIds],
         imageModelIds: [...activeImageIds].filter(id => activeEnabledIds.has(id)),
         contextBudgets: activeContextBudgets,
-      }))
+      }
+      await writeSettingsField(settingsScope, 'regions',
+        nextRegionSlots(configuredRegions, activeRegion, nextSlot),
+        readBack => {
+          // A shallow "is anything there?" check would pass a truncated write;
+          // compare the selection that was actually saved.
+          const slot = regionSlotsOf(readBack)[activeRegion] as { enabledModelIds?: unknown } | undefined
+          const ids = slot?.enabledModelIds
+          return Array.isArray(ids) && ids.length === nextSlot.enabledModelIds.length
+            && nextSlot.enabledModelIds.every(id => (ids as unknown[]).includes(id))
+        })
       discardModels()
       await refreshUsage(activeRegion)
+    } catch (error: unknown) {
+      if (mounted.current) setWriteError(error instanceof Error ? error.message : t('row.requestFailed'))
     } finally {
       if (mounted.current) setSaving(false)
     }
@@ -473,9 +580,7 @@ export function TraeUsageCard({ t, settingsScope }: TraeUsageCardProps) {
         <span
           aria-hidden="true"
           className={`dsm-plugin-card-chevron${open ? ' dsm-plugin-card-chevron-open' : ''}`}
-        >
-          {h(IconChevronDownOutline14, { size: 14 })}
-        </span>
+        />
       </button>
       <div className="dsm-plugin-card-body" hidden={!open}>
         {open
@@ -518,6 +623,9 @@ export function TraeUsageCard({ t, settingsScope }: TraeUsageCardProps) {
                 })}
               </div>
               <p className="dsm-trae-tab-hint">{t('row.tabHint')}</p>
+              {writeError === undefined
+                ? null
+                : <p className="dsm-trae-usage-error" role="alert">{t('row.settingsWriteFailed', { message: writeError })}</p>}
               {regionOn(activeRegion)
                 ? null
                 : <p className="dsm-trae-tab-off-notice" role="status">{t('row.tabOffNotice')}</p>}

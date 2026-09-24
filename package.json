@@ -100,7 +100,7 @@
     "@deepseek-ai/dsh-llm": "0.1.5-rc.2",
     "@deepseek-ai/dsh-llm-pi-ai": "0.1.5-rc.2",
     "@deepseek-ai/dsh-settings": "0.1.5-rc.2",
-    "@deepseek-ai/schemastery": "3.18.2",
+    "@deepseek-ai/schemastery": "3.18.4",
     "@earendil-works/pi-ai": "^0.85.1",
     "@testing-library/dom": "^10.4.2",
     "@testing-library/react": "^16.3.3",

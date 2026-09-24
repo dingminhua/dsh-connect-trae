@@ -1,6 +1,20 @@
 packages:
   - '.'
 
+# Align the development tree with what users actually resolve.
+#
+# `volatile()` (the marker DSH 0.1.7's settings write gate requires) first
+# appeared in schemastery 3.18.3, and the 0.1.7 line ships ~3.18.4 — but this
+# repo's devDependency pinned 3.18.2, where `asVolatile()` degrades to an
+# identity no-op. That meant the volatile-ACTIVE path, the one every 0.1.7 user
+# hits, was never exercised locally: a defect there could pass both review and
+# CI. The override makes the dev tree match the user's, and the two arms are
+# kept covered deterministically by the exported `asVolatile` (see
+# `tests/dsh-017-compat.spec.ts`) rather than by whatever version happens to be
+# installed.
+overrides:
+  '@deepseek-ai/schemastery': 3.18.4
+
 allowBuilds:
   '@google/genai': false
   protobufjs: false

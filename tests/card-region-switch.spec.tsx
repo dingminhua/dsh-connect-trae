@@ -19,13 +19,6 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-// Primitives ships browser-only CSS modules (shiki, `anser`, `*.module.css`) that
-// jsdom cannot transform. The card needs exactly one icon from it, so the package
-// is stubbed wholesale — the card itself is still the shipped implementation.
-vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => ({
-  IconChevronDownOutline14: () => null,
-}))
-
 import { TraeUsageCard } from '../src/client/TraeUsageCard.tsx'
 import type { TraeSettingsKey } from '../src/client/locales.ts'
 
@@ -39,9 +32,13 @@ const t = ((key: TraeSettingsKey, params?: Record<string, unknown>) =>
  * contract the card depends on: `getSnapshot()` returns the WHOLE settings
  * section (that shape is the whole point of this spec), and `set(field, value)`
  * commits one top-level field and notifies subscribers.
+ *
+ * The clone is deliberately NOT `structuredClone`: a live reference
+ * (`{get(): T}`) carries a function, which `structuredClone` refuses to copy —
+ * and those references are exactly what the 0.1.7 cases below must exercise.
  */
 function makeScope(initial: Record<string, unknown>, writable = true) {
-  let value: Record<string, unknown> = structuredClone(initial)
+  let value: Record<string, unknown> = clonePreservingFunctions(initial)
   const listeners = new Set<() => void>()
   const writes: { field: string; value: unknown }[] = []
   return {
@@ -51,12 +48,23 @@ function makeScope(initial: Record<string, unknown>, writable = true) {
       getSnapshot: () => ({ status: 'ready', value, writable }),
       subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener) } },
       set: async (field: string, next: unknown) => {
-        writes.push({ field, value: structuredClone(next) })
-        value = { ...value, [field]: structuredClone(next) }
+        writes.push({ field, value: clonePreservingFunctions(next) })
+        value = { ...value, [field]: clonePreservingFunctions(next) }
         for (const listener of listeners) listener()
       },
     },
   }
+}
+
+/** Structural copy that keeps functions (a live reference is not cloneable). */
+function clonePreservingFunctions<T>(value: T): T {
+  if (value === null || typeof value !== 'object') return value
+  if (Array.isArray(value)) return value.map(entry => clonePreservingFunctions(entry)) as T
+  const out: Record<string, unknown> = {}
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    out[key] = clonePreservingFunctions(entry)
+  }
+  return out as T
 }
 
 /** The card body (and therefore the switches) only exists once expanded. */
@@ -182,6 +190,130 @@ describe('TraeUsageCard provider on/off switch', () => {
   it('disables the boxes when settings are not writable', () => {
     const { scope } = makeScope({}, false)
     renderOpen(scope)
+    for (const box of switches()) expect(box.disabled).toBe(true)
+  })
+})
+
+/**
+ * DSH 0.1.7 hands a volatile-marked field over as a `{get(): T}` LIVE
+ * REFERENCE. A reference is still `typeof === 'object'`, so it passes a naive
+ * object check and every lookup on it answers `undefined` — and spreading one
+ * yields `{get: <function>}` rather than the value, silently DROPPING every
+ * sibling it was meant to preserve.
+ */
+describe('TraeUsageCard over 0.1.7 live references', () => {
+  const live = <T,>(value: T): { get: () => T } => ({ get: () => value })
+
+  it('reads the stored flag through a live reference', () => {
+    // `regions` (and the slot inside it) both arrive as references on 0.1.7.
+    const { scope } = makeScope({ regions: live({ cn: live({ enabled: false }), ai: live({ enabled: true }) }) })
+    renderOpen(scope)
+    const [cn, ai] = switches()
+    // Without unwrapping, both would read as enabled — the box would be pinned
+    // checked no matter what the document says.
+    expect(cn.checked).toBe(false)
+    expect(ai.checked).toBe(true)
+  })
+
+  it('carries the sibling region through the merge instead of dropping it', async () => {
+    const state = makeScope({
+      regions: live({ cn: live({ enabled: true, enabledModelIds: ['keep-me'] }), ai: live({ enabled: true }) }),
+    })
+    renderOpen(state.scope)
+
+    fireEvent.click(switches()[1])
+
+    await vi.waitFor(() => { expect(state.writes.length).toBe(1) })
+    const written = onlyWrite(state.writes).value as Record<string, unknown>
+    // Both regions present, and the untouched sibling keeps its saved picks.
+    expect(Object.keys(written).sort()).toEqual(['ai', 'cn'])
+    expect((written.cn as { enabledModelIds?: unknown }).enabledModelIds).toEqual(['keep-me'])
+    expect((written.ai as { enabled?: unknown }).enabled).toBe(false)
+    // And no live reference leaked into the document.
+    for (const slot of Object.values(written)) {
+      expect(typeof (slot as { get?: unknown }).get).toBe('undefined')
+    }
+  })
+
+  it('surfaces a write the Host refused instead of silently reverting', async () => {
+    // 0.1.7 can accept the call and still not materialize the value: the write
+    // resolves while the document is unchanged. The card must SAY so — silence
+    // is what makes "the box flips back by itself" so confusing.
+    const state = makeScope({ regions: { cn: { enabled: true }, ai: { enabled: true } } })
+    // A scope that resolves normally but never commits.
+    const locked = {
+      getSnapshot: state.scope.getSnapshot,
+      subscribe: state.scope.subscribe,
+      set: async () => false,
+    }
+    render(<TraeUsageCard t={t} settingsScope={locked as never} />)
+    expand()
+
+    fireEvent.click(switches()[1])
+
+    await vi.waitFor(() => {
+      expect(screen.getByRole('alert').textContent).toContain('row.settingsWriteFailed')
+    })
+  })
+
+  it('surfaces a write the Host accepted but never persisted', async () => {
+    // The subtler 0.1.7 failure: `set()` resolves TRUE (the transport accepted
+    // it) while the document is unchanged — a rejected write reloads Host state
+    // and merely returns. Reporting success here is what makes the control flip
+    // and then quietly snap back, so the read-back is the guard that catches it.
+    const state = makeScope({ regions: { cn: { enabled: true }, ai: { enabled: true } } })
+    const acceptedButDropped = {
+      getSnapshot: state.scope.getSnapshot,
+      subscribe: state.scope.subscribe,
+      set: async () => true,
+    }
+    render(<TraeUsageCard t={t} settingsScope={acceptedButDropped as never} />)
+    expand()
+
+    fireEvent.click(switches()[1])
+
+    await vi.waitFor(() => {
+      expect(screen.getByRole('alert').textContent).toContain('row.settingsWriteFailed')
+    })
+  })
+
+  it('accepts a void return (the 0.1.5 contract) as success', async () => {
+    // 0.1.5's `set()` answers `void` and reloads Host state itself, so only an
+    // explicit `false` may be treated as a refusal.
+    const state = makeScope({ regions: { cn: { enabled: true }, ai: { enabled: true } } })
+    const legacy = {
+      getSnapshot: state.scope.getSnapshot,
+      subscribe: state.scope.subscribe,
+      set: state.scope.set,
+    }
+    render(<TraeUsageCard t={t} settingsScope={legacy as never} />)
+    expand()
+
+    fireEvent.click(switches()[1])
+
+    await vi.waitFor(() => { expect(state.writes.length).toBe(1) })
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('renders expanded when 0.1.7 opens it as a page', () => {
+    // The plugin manager passes `view: 'page'` for the full form; starting
+    // collapsed there would show the user a one-line row instead of the form.
+    const { scope } = makeScope({})
+    render(<TraeUsageCard t={t} settingsScope={scope as never} view="page" />)
+    expect(screen.getByRole('tablist')).toBeTruthy()
+  })
+
+  it('starts collapsed in the 0.1.5 item slot, which passes no view', () => {
+    const { scope } = makeScope({})
+    render(<TraeUsageCard t={t} settingsScope={scope as never} />)
+    expect(screen.queryByRole('tablist')).toBeNull()
+  })
+
+  it('renders read-only when no settings surface exists at all', () => {
+    // A line with neither settings service still gets the card; only saving
+    // needs the scope, so every write control must be inert rather than absent.
+    render(<TraeUsageCard t={t} />)
+    expand()
     for (const box of switches()) expect(box.disabled).toBe(true)
   })
 })

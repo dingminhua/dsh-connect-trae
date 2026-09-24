@@ -134,6 +134,50 @@ export interface TraeWebSearchPath {
 }
 
 /**
+ * Peel ONE `{get(): T}` live reference, the shape DSH 0.1.7 delivers a
+ * volatile-marked settings field as (see {@link unwrapVolatileDeep}).
+ */
+export function unwrapVolatile<T>(value: T): T {
+  if (value !== null && typeof value === 'object' && typeof (value as { get?: unknown }).get === 'function') {
+    return (value as unknown as { get: () => T }).get()
+  }
+  return value
+}
+
+/**
+ * Deep copy of a value with every `{get(): T}` live reference replaced by the
+ * value it resolves to.
+ *
+ * DSH 0.1.7 hands volatile-marked fields back as live references, and a live
+ * reference is still `typeof === 'object'` — so it passes a naive object check
+ * and every lookup on it is `undefined`. Worse, spreading one (`{ ...ref }`)
+ * does NOT read the field: it produces `{ get: <function> }`. Any merge that
+ * spreads a resolved field to preserve its siblings — the card's "write one
+ * region, keep the other" write, or the account map's spread — would otherwise
+ * DROP every sibling and leak a function into the document.
+ *
+ * Both halves therefore unwrap before touching a resolved field. This lives in
+ * the node-free host↔client bridge because the browser half needs it too.
+ *
+ * Non-reference values are recursed into so a nested volatile field is caught
+ * as well; arrays and objects are rebuilt rather than mutated, so the caller's
+ * value is never touched.
+ */
+export function unwrapVolatileDeep<T>(value: T): T {
+  if (value === null || typeof value !== 'object') return value
+  if (typeof (value as { get?: unknown }).get === 'function') {
+    return unwrapVolatileDeep((value as unknown as { get: () => unknown }).get()) as T
+  }
+  if (Array.isArray(value)) return value.map(entry => unwrapVolatileDeep(entry)) as T
+  const source = value as Record<string, unknown>
+  const out: Record<string, unknown> = {}
+  for (const key of Object.keys(source)) {
+    out[key] = unwrapVolatileDeep(source[key])
+  }
+  return out as T
+}
+
+/**
  * Build the next `regions` settings value for the card's save. The write
  * targets ONLY the signed-in account's region slot; every other region's slot
  * is carried over untouched, so switching accounts never clobbers the other
@@ -145,8 +189,12 @@ export function nextRegionSlots<Slot extends object>(
   region: TraeRegion,
   slot: Slot,
 ): Record<string, unknown> {
-  const base = typeof regions === 'object' && regions !== null && !Array.isArray(regions)
-    ? regions as Record<string, unknown>
+  // Deep-unwrap first: on DSH 0.1.7 each slot is a `{get(): T}` live reference,
+  // and spreading one produces `{get: <function>}` — dropping every field of
+  // the sibling region it was meant to preserve.
+  const unwrapped = unwrapVolatileDeep(regions)
+  const base = typeof unwrapped === 'object' && unwrapped !== null && !Array.isArray(unwrapped)
+    ? unwrapped as Record<string, unknown>
     : {}
   return { ...base, [region]: slot }
 }
@@ -158,10 +206,16 @@ export function nextRegionSlots<Slot extends object>(
  * where the map was expected was a real shipped bug — the lookup then read
  * `section['cn']` (absent), so the card's checkbox reported `true` forever and
  * clicking it appeared to do nothing even though the write succeeded.
+ *
+ * Unwraps live references first: on DSH 0.1.7 the `regions` field arrives as a
+ * `{get(): T}` reference, which passes the `typeof === 'object'` check below
+ * and would otherwise be returned as if it were the map — making every region
+ * read back as absent (and the enabled flag read as "on" forever).
  */
 function regionsMapOf(value: unknown): Record<string, unknown> {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return {}
-  const record = value as Record<string, unknown>
+  const unwrapped = unwrapVolatileDeep(value)
+  if (typeof unwrapped !== 'object' || unwrapped === null || Array.isArray(unwrapped)) return {}
+  const record = unwrapped as Record<string, unknown>
   const nested = record['regions']
   if (typeof nested === 'object' && nested !== null && !Array.isArray(nested)) {
     return nested as Record<string, unknown>
@@ -171,7 +225,7 @@ function regionsMapOf(value: unknown): Record<string, unknown> {
 
 /** One region's stored slot as a plain object; any other shape reads as empty. */
 function regionSlotOf(value: unknown, region: TraeRegion): Record<string, unknown> {
-  const slot = regionsMapOf(value)[region]
+  const slot = unwrapVolatile(regionsMapOf(value)[region])
   return typeof slot === 'object' && slot !== null && !Array.isArray(slot)
     ? slot as Record<string, unknown>
     : {}
