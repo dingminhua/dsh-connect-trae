@@ -1,7 +1,7 @@
 {
   "name": "dsh-connect-trae",
   "displayName": "DSH Connect Trae",
-  "description": "Connect locally signed-in Trae models to DeepSeek Harness, with a usage/credits summary and daily check-in claiming.",
+  "description": "把本机登录的 Trae 模型接入 DeepSeek Harness：国内版与国际版双供应商并行，提供用量/积分概览与每日签到领取。",
   "version": "2.3.0",
   "author": "dingminhua",
   "copyright": "Copyright (c) 2026 LaoDing",
