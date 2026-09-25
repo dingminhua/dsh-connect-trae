@@ -123,6 +123,13 @@ export interface TraeWireModel {
   maxTokens?: number
   reasoning?: TraeReasoningCapability
   /**
+   * Effective (post-discount) credit multiplier, read from the row's
+   * `display_contact_config` — the figure the Trae IDE renders (see
+   * `wireCreditMultiplier` in solo.ts). Wins over the Remote directory's own
+   * `consumption_rate`, which reports the undiscounted value.
+   */
+  creditMultiplier?: number
+  /**
    * The `get_detail_param` function this config_name came from. Trae splits its
    * callable roster across several functions (SOLO modes), and a model is only
    * callable through the function that actually lists it — glm-5.3 answers
@@ -144,12 +151,19 @@ function displayKey(name: string): string {
  * skeleton: it supplies the display id, display name, context windows, credit
  * multiplier, reasoning and multimodal flags. `wire` (from `get_detail_param`)
  * supplies the real `llm_utils_chat` `config_name` — the only id the chat
- * endpoint actually accepts. A remote row is only callable when it maps to a
- * wire `config_name`, so a remote row with no wire match is DROPPED (it would
- * otherwise be sent as an invalid `config_name` and rejected with 4001
- * "param is invalid"). Verified 2026-08-30: the Remote directory advertises
- * `Doubao-Seed-Code` and `glm-5.3`, neither of which is a current `config_name`;
- * both fail every request, so they must not be exposed.
+ * endpoint actually accepts — plus the authoritative post-discount credit
+ * multiplier when `display_contact_config` carries one. A remote row is only
+ * callable when it maps to a wire `config_name`, so a remote row with no wire
+ * match is DROPPED (it would otherwise be sent as an invalid `config_name` and
+ * rejected with 4001 "param is invalid"). Verified 2026-08-30: the Remote
+ * directory advertises `Doubao-Seed-Code` and `glm-5.3`, neither of which is a
+ * current `config_name`; both fail every request, so they must not be exposed.
+ *
+ * Credit multiplier precedence: the wire's `display_contact_config` rate wins
+ * whenever present (it is the post-discount figure the Trae IDE renders — the
+ * Remote directory can report up to 10x the undiscounted value, see
+ * `wireCreditMultiplier` in solo.ts); the Remote `consumption_rate` is the
+ * fallback when the wire row carries none.
  *
  * Joining is two-tier, in priority order:
  *  1. `wire.id` (the `config_name`) equals the remote id — the model's display
@@ -176,12 +190,17 @@ export function mergeTraeModelSources(
     // No config_name maps to this display id → uncallable via llm_utils_chat.
     // Drop it rather than advertise a model that always fails with 4001.
     if (wireModel === undefined) continue
+    // The wire rate wins whenever it is present — it is the post-discount
+    // figure the Trae IDE renders (`display_contact_config`); the Remote
+    // directory's own `consumption_rate` can report up to 10x the undiscounted
+    // value under a live promotion (e.g. 0.80 vs the IDE's 0.08).
+    const creditMultiplier = wireModel.creditMultiplier ?? model.creditMultiplier
     result.push({
       id: model.id,
       name: model.name,
       ...model.contextWindow === undefined ? {} : { contextWindow: model.contextWindow },
       ...model.maxContextWindow === undefined ? {} : { maxContextWindow: model.maxContextWindow },
-      ...model.creditMultiplier === undefined ? {} : { creditMultiplier: model.creditMultiplier },
+      ...creditMultiplier === undefined ? {} : { creditMultiplier },
       input: ['text'],
       reasoningSupported: model.reasoningSupported,
       ...model.reasoning === undefined ? {} : {

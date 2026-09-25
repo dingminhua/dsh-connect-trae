@@ -2,19 +2,65 @@ import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
+import { Context, Service } from '@deepseek-ai/cordis'
 import LlmRuntime from '@deepseek-ai/dsh-llm'
-import SettingsProvider from '@deepseek-ai/dsh-settings'
-import type { SettingsNamespace } from '@deepseek-ai/dsh-settings'
+import type {} from '@deepseek-ai/dsh-settings'
 import * as Trae from '../src/index.ts'
 
-class MemorySettings extends SettingsProvider {
-  readonly writable = true
-  private storedDocument: Record<string, unknown> = {}
-  protected load(): Promise<Record<string, unknown>> { return Promise.resolve(structuredClone(this.storedDocument)) }
-  protected persist(ns: SettingsNamespace, section: Record<string, unknown>): Promise<void> {
-    this.storedDocument[ns] = structuredClone(section)
-    return Promise.resolve()
+/**
+ * A `{get(): T}` live reference, exactly as DSH 0.1.7 delivers a
+ * volatile-marked settings field to `apply()`. The getter must read the
+ * backing field at CALL time — capturing the value would freeze it at mount
+ * and no later settings write would ever be visible through `current()`.
+ */
+function liveOf<T>(field: () => T): { get: () => T } {
+  return { get: field }
+}
+
+/**
+ * The plugin's schema marks exactly these fields volatile — the only fields
+ * the 0.1.7 settings write gate accepts (matches `asVolatile` in `src/index.ts`).
+ */
+const VOLATILE_FIELDS = new Set(['authFile', 'edition', 'accounts', 'regions'])
+
+/**
+ * 0.1.7-shaped in-memory settings service.
+ *
+ * `SettingsForms` (the real 0.1.7 service) dropped `installSection` and keys
+ * namespaces by the Loader entry id; writes go through the profile patch and
+ * announce themselves with `loader/volatile-update`, and volatile fields are
+ * delivered as live references that resolve the updated document. This double
+ * models that surface for the plugin and the tests:
+ *
+ * - `configure({auto}, owner)` is the sole host registration path;
+ * - `update(ns, patch)` enforces the 0.1.7 write gate (only volatile fields),
+ *   folds the patch into a SHARED document, then emits
+ *   `loader/volatile-update` so the plugin re-applies over `current()` — whose
+ *   volatile fields are live references INTO this document (see
+ *   {@link isolatedPlugin}). That is exactly how a real host write reaches the
+ *   plugin: the references resolve the updated document.
+ */
+class MemorySettings extends Service {
+  readonly document: Record<string, unknown>
+  readonly configureCalls: { auto?: boolean }[] = []
+  constructor(owner: Context, document: Record<string, unknown> = {}) {
+    super(owner, 'settings')
+    this.document = document
+  }
+  configure(presentation: { auto?: boolean }): () => void {
+    this.configureCalls.push(presentation)
+    return () => {}
+  }
+  describe(): { ns: string; writable: boolean; value: unknown }[] {
+    return [{ ns: 'trae', writable: true, value: this.document }]
+  }
+  async update(ns: string, patch: Record<string, unknown>): Promise<void> {
+    for (const key of Object.keys(patch)) {
+      if (!VOLATILE_FIELDS.has(key)) throw new Error(`Config field "${key}" is not volatile`)
+    }
+    Object.assign(this.document, structuredClone(patch))
+    ;(this.ctx as unknown as { emit(name: string): void }).emit('loader/volatile-update')
+    void ns
   }
 }
 
@@ -29,11 +75,34 @@ afterEach(async () => { await context?.fiber.dispose(); context = undefined })
  * credential resolves, and converges the tracked region on it (workbuddy
  * semantics) — would surface the machine's real roster and region, making
  * every fallback assertion depend on who happens to be signed in.
+ *
+ * The plugin's config is handed over as live references INTO the settings
+ * document (the 0.1.7 delivery shape), and the plugin is mounted WITHOUT its
+ * Config schema so cordis does not re-validate and re-snapshot those
+ * references — `apply` is the same function either way.
  */
 async function isolatedPlugin(ctx: Context, config: Partial<Trae.Config> = {}): Promise<() => Promise<void>> {
+  const settings = ctx.get('settings') as unknown as MemorySettings
+  const document = settings.document
+  document.authFile = config.authFile ?? '/nonexistent/dsh-connect-trae-test-storage.json'
+  document.edition = config.edition ?? 'auto'
+  document.accounts = config.accounts
+  document.regions = config.regions
+  const pluginConfig = {
+    authFile: liveOf(() => document.authFile),
+    edition: liveOf(() => document.edition),
+    accounts: liveOf(() => document.accounts),
+    regions: liveOf(() => document.regions),
+    accountId: config.accountId,
+    lastCatalog: config.lastCatalog,
+    enabledModelIds: config.enabledModelIds,
+    contextBudgets: config.contextBudgets,
+    imageModelIds: config.imageModelIds,
+    models: config.models,
+  }
   const previousHome = process.env.DSH_HOME
   process.env.DSH_HOME = await mkdtemp(join(tmpdir(), 'dsh-trae-test-home-'))
-  await ctx.plugin(Trae, { edition: 'auto', ...config, authFile: '/nonexistent/dsh-connect-trae-test-storage.json' })
+  await ctx.plugin({ name: Trae.name, inject: Trae.inject, apply: Trae.apply }, pluginConfig as unknown as Trae.Config)
   return async () => {
     if (previousHome === undefined) delete process.env.DSH_HOME
     else process.env.DSH_HOME = previousHome
@@ -81,7 +150,10 @@ describe('Trae provider registration', () => {
     try {
       await expect.poll(() => ctx.llm.listProviders().map(provider => provider.id)).toContain('trae')
 
-      await ctx.settings.update(Trae.TRAE_SETTINGS_NS, { imageModelIds: ['DeepSeek-V4-Pro-Official'] })
+      // 0.1.7's write gate accepts volatile fields only, so the image opt-in is
+      // written into the volatile `regions.cn` slot (the card's shape), not the
+      // non-volatile legacy flat field.
+      await ctx.settings.update(Trae.TRAE_SETTINGS_NS, { regions: { cn: { imageModelIds: ['DeepSeek-V4-Pro-Official'] } } })
 
       const models = await ctx.llm.listModels('trae')
       expect(models.find(model => model.id === 'DeepSeek-V4-Pro-Official')?.inputModalities).toEqual(['text', 'image'])
@@ -100,12 +172,17 @@ describe('Trae provider registration', () => {
 
       // Saving the directory persists the multiplier; the adapter then exposes
       // the DSH-facing name `Name · x<rate>` while the model id stays pure.
+      // The write goes into the volatile `regions.cn` slot (0.1.7 write gate).
       await ctx.settings.update(Trae.TRAE_SETTINGS_NS, {
-        lastCatalog: [
-          { id: 'glm-5.2', name: 'GLM-5.2', input: ['text'], creditMultiplier: 0.79 },
-          { id: 'DeepSeek-V4-Flash', name: 'DeepSeek-V4-Flash', input: ['text'] },
-        ],
-        enabledModelIds: ['glm-5.2'],
+        regions: {
+          cn: {
+            lastCatalog: [
+              { id: 'glm-5.2', name: 'GLM-5.2', input: ['text'], creditMultiplier: 0.79 },
+              { id: 'DeepSeek-V4-Flash', name: 'DeepSeek-V4-Flash', input: ['text'] },
+            ],
+            enabledModelIds: ['glm-5.2'],
+          },
+        },
       })
 
       const models = await ctx.llm.listModels('trae')
@@ -260,10 +337,9 @@ describe('per-region model slots', () => {
       await expect.poll(() => ctx.llm.listProviders().map(provider => provider.id)).toContain('trae')
 
       // Both shapes present: the explicit slot must be what the runtime serves.
+      // (The flat `lastCatalog` field is non-volatile, so only the `regions.cn`
+      // slot is written — which is exactly the 0.1.7 write gate.)
       await ctx.settings.update(Trae.TRAE_SETTINGS_NS, {
-        lastCatalog: [
-          { id: 'glm-5.2', name: 'GLM-5.2', input: ['text'] },
-        ],
         regions: {
           cn: {
             lastCatalog: [
@@ -354,14 +430,61 @@ describe('per-region model slots', () => {
     try {
       await expect.poll(() => ctx.llm.listProviders().map(provider => provider.id)).toContain('trae-global')
 
-      // The legacy flat image opt-in is CN-only state.
-      await ctx.settings.update(Trae.TRAE_SETTINGS_NS, { imageModelIds: ['DeepSeek-V4-Pro-Official'] })
+      // The image opt-in is CN-only state, written into the volatile
+      // `regions.cn` slot (0.1.7 write gate).
+      await ctx.settings.update(Trae.TRAE_SETTINGS_NS, { regions: { cn: { imageModelIds: ['DeepSeek-V4-Pro-Official'] } } })
 
       const cnModels = await ctx.llm.listModels('trae')
       expect(cnModels.find(model => model.id === 'DeepSeek-V4-Pro-Official')?.inputModalities).toEqual(['text', 'image'])
       // The international provider's own directory carries no such opt-in.
       const globalModels = await ctx.llm.listModels('trae-global')
       expect(globalModels.find(model => model.id === 'DeepSeek-V4-Pro-Official')?.inputModalities ?? []).not.toContain('image')
+    } finally { await restore() }
+  })
+})
+
+describe('settingsNamespaceOf', () => {
+  it('uses the Loader entry id when the host provides one', () => {
+    expect(Trae.settingsNamespaceOf({ fiber: { entry: { options: { id: 'include:dsh-connect-trae' } } } }))
+      .toBe('include:dsh-connect-trae')
+  })
+
+  it('falls back to the declared namespace when there is no Loader entry', () => {
+    // A bare `ctx.plugin()` mount (as every test here does), or a host that
+    // does not expose the entry.
+    expect(Trae.settingsNamespaceOf({})).toBe(Trae.TRAE_SETTINGS_NS)
+    expect(Trae.settingsNamespaceOf({ fiber: {} })).toBe(Trae.TRAE_SETTINGS_NS)
+    expect(Trae.settingsNamespaceOf({ fiber: { entry: { options: {} } } })).toBe(Trae.TRAE_SETTINGS_NS)
+  })
+
+  it('never returns an empty or non-string id', () => {
+    // An empty id would be a namespace nothing can address.
+    expect(Trae.settingsNamespaceOf({ fiber: { entry: { options: { id: '' } } } }))
+      .toBe(Trae.TRAE_SETTINGS_NS)
+    expect(Trae.settingsNamespaceOf({ fiber: { entry: { options: { id: 42 } } } }))
+      .toBe(Trae.TRAE_SETTINGS_NS)
+  })
+
+  it('advertises the resolved namespace to the provider directory, not the constant', async () => {
+    // The regression this guards: the directory named `trae` while the host
+    // served `include:...` made the lookup miss and the provider read as
+    // unconfigured (workbuddy 2.0.16). `ctx.plugin` has no Loader entry, so
+    // the fallback applies — the point is that whatever the host serves is
+    // what gets advertised.
+    const ctx = new Context()
+    context = ctx
+    await ctx.plugin(LlmRuntime)
+    await ctx.plugin(MemorySettings)
+    const restore = await isolatedPlugin(ctx)
+    try {
+      await expect.poll(() => ctx.llm.listProviders().map(provider => provider.id)).toContain('trae')
+      // Both regional entries must advertise the resolved namespace — asserting
+      // the constant would pass either way, asserting the resolved value is the
+      // point (the directory is what the harness looks up by EXACT match).
+      await expect.poll(() => {
+        const entries = ctx.llm.listConfigurableProviders()
+        return entries.length === 2 && entries.every(entry => entry.settingsNs === Trae.settingsNamespaceOf(ctx))
+      }).toBe(true)
     } finally { await restore() }
   })
 })

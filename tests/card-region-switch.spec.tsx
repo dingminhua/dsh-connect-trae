@@ -277,25 +277,7 @@ describe('TraeUsageCard over 0.1.7 live references', () => {
     })
   })
 
-  it('accepts a void return (the 0.1.5 contract) as success', async () => {
-    // 0.1.5's `set()` answers `void` and reloads Host state itself, so only an
-    // explicit `false` may be treated as a refusal.
-    const state = makeScope({ regions: { cn: { enabled: true }, ai: { enabled: true } } })
-    const legacy = {
-      getSnapshot: state.scope.getSnapshot,
-      subscribe: state.scope.subscribe,
-      set: state.scope.set,
-    }
-    render(<TraeUsageCard t={t} settingsScope={legacy as never} />)
-    expand()
-
-    fireEvent.click(switches()[1])
-
-    await vi.waitFor(() => { expect(state.writes.length).toBe(1) })
-    expect(screen.queryByRole('alert')).toBeNull()
-  })
-
-  it('renders expanded when 0.1.7 opens it as a page', () => {
+  it('renders expanded when the host opens it as a page', () => {
     // The plugin manager passes `view: 'page'` for the full form; starting
     // collapsed there would show the user a one-line row instead of the form.
     const { scope } = makeScope({})
@@ -303,7 +285,7 @@ describe('TraeUsageCard over 0.1.7 live references', () => {
     expect(screen.getByRole('tablist')).toBeTruthy()
   })
 
-  it('starts collapsed in the 0.1.5 item slot, which passes no view', () => {
+  it('starts collapsed when the host passes no view', () => {
     const { scope } = makeScope({})
     render(<TraeUsageCard t={t} settingsScope={scope as never} />)
     expect(screen.queryByRole('tablist')).toBeNull()

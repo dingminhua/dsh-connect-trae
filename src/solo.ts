@@ -104,8 +104,40 @@ export interface TraeSoloModel {
   contextWindow?: number
   maxTokens?: number
   reasoning?: TraeReasoningCapability
+  /** Effective (post-discount) credit multiplier, as the Trae IDE shows it. */
+  creditMultiplier?: number
   /** The directory function that listed this config (replayed when calling it). */
   function?: string
+}
+
+/**
+ * Read the effective credit multiplier from a `get_detail_param` row.
+ *
+ * The rate the Trae IDE renders lives in `display_contact_config` — a *string*
+ * holding a second JSON document — and its `consumption_rate.data.rate` is
+ * already the post-discount value (verified 2026-09-13, commit 1.4.2: the
+ * Remote directory reports the undiscounted figure, e.g. `0.8`, while the IDE
+ * and this field both say `0.08` under a 限时 1 折 promotion — up to a 10x
+ * difference). The wire figure therefore wins over the Remote one during the
+ * merge; this parser is what feeds it.
+ *
+ * The international (ai) gateway serves no `consumption_rate` anywhere (its
+ * subscription models carry only `features.cost` tags), so rows without the
+ * field keep their bare name — parsed-but-absent, never fabricated.
+ */
+function wireCreditMultiplier(config: Record<string, unknown>): number | undefined {
+  const raw = config['display_contact_config']
+  if (typeof raw !== 'string' || raw === '') return undefined
+  let parsed: unknown
+  try { parsed = JSON.parse(raw) } catch { return undefined }
+  if (typeof parsed !== 'object' || parsed === null) return undefined
+  const consumption = (parsed as Record<string, unknown>)['consumption_rate']
+  if (typeof consumption !== 'object' || consumption === null) return undefined
+  const entry = consumption as Record<string, unknown>
+  if (entry['enable'] !== true) return undefined
+  const data = entry['data']
+  if (typeof data !== 'object' || data === null) return undefined
+  return finitePositive((data as Record<string, unknown>)['rate'])
 }
 
 export interface TraeSoloClientOptions {
@@ -196,6 +228,7 @@ export class TraeSoloUpstreamClient {
       const contextWindow = promptMaxTokens ?? devTokens
       const maxTokens = finitePositive(detail['max_tokens'])
       const reasoning = parseReasoningCapability({ ...config, ...detail })
+      const creditMultiplier = wireCreditMultiplier(config)
       // First function to list a config_name owns it: TRAE_DIRECTORY_FUNCTIONS
       // is ordered by precedence, and this is what makes a model callable (the
       // chat call replays this exact function).
@@ -206,6 +239,7 @@ export class TraeSoloUpstreamClient {
         ...contextWindow === undefined ? {} : { contextWindow },
         ...maxTokens === undefined ? {} : { maxTokens },
         ...reasoning === undefined ? {} : { reasoning },
+        ...creditMultiplier === undefined ? {} : { creditMultiplier },
         function: directoryFunction,
       })
     }

@@ -98,22 +98,15 @@ npm install dsh-connect-trae
 
 ## DSH 版本兼容
 
-**同一个构建同时服务 DSH 0.1.5 与 0.1.7 两条线**，无需按版本安装不同的包。
+**要求 DSH 0.1.7-rc.1 及以上**（2.3.0 起不再支持 0.1.7 之前的宿主；peer 依赖范围已按此收窄）。
 
-两条线的设置体系不同，插件在运行期按能力探测，而不是假定某一条：
+0.1.7 把设置体系整体重建，插件按 0.1.7 的契约工作：
 
-| | 0.1.5 线 | 0.1.7 线 |
-|---|---|---|
-| 客户端设置服务 | `settingsScope` | `configForms` |
-| 配置卡片槽位 | `settings.plugin.item` | `plugins.bundle.config` / `plugins.row.config` |
-| 宿主端注册 | `installSection()` | `configure({auto}, owner)` |
-| schema 可写声明 | 无需 | 必须标 `volatile()` |
-| primitives 图标名 | `…Outline14` | `…OutlineRegular` |
-
-两处关键做法：
-
-- **`inject` 只声明两条线都有的服务**（`slots` / `locale`），设置面用 `ctx.get()` 软探测。Cordis 的依赖闸门是硬闸——`inject` 里任一服务在运行线上不存在，`apply()` 就永远不会执行（0.1.7 上 `settingsScope` 已被移除，这正是 2.1.0 及更早版本在 0.1.7 上卡在 `pending (waiting for service: settingsScope)` 的原因）。
-- **折叠箭头用纯 CSS**，不静态导入任何图标：两条线的图标名不重叠，静态导入必然在其中一条线上解析失败。
+- **宿主端注册**：`SettingsForms.configure({auto}, owner)`（0.1.7 起 `installSection` 已删除），命名空间取**宿主实际服务的 Loader 条目 id**（`ctx.fiber.entry?.options.id`，回落到 `trae`）——harness 按精确匹配查找 provider 的命名空间，写死 `trae` 会让 provider 被判「未配置」。
+- **客户端设置面**：`configForms`（0.1.7 起 `settingsScope` 已移除）。`inject` 只声明 `slots` / `locale`，设置面用 `ctx.get()` 软探测——Cordis 的依赖闸门是硬闸，`inject` 里任一服务在运行线上不存在，`apply()` 就永远不会执行（这正是 2.2.0 及更早版本在 0.1.7 上卡在 `pending (waiting for service: settingsScope)` 的原因）。
+- **配置卡片槽位**：`plugins.bundle.config` / `plugins.row.config`（`settings.plugin.item` 已删除）。
+- **schema 可写声明**：可写字段必须标 `volatile()`（`asVolatile`），否则写入被 0.1.7 的写入门直接拒绝；0.1.7 以 `{get(): T}` 活引用交付配置值，所有读取与合并路径都先解包（`unwrapVolatile` / `unwrapVolatileDeep`）。
+- **折叠箭头用纯 CSS**，不静态导入任何 primitives 图标——图标命名族随版本变动，静态导入不是稳定契约。
 
 ## Windows 说明
 

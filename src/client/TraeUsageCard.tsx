@@ -6,7 +6,6 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client'
 import {
   nextRegionEnabled,
@@ -30,28 +29,31 @@ import type { TraeSettingsKey } from './locales.ts'
 export interface TraeUsageCardInjected {
   t: (key: TraeSettingsKey, params?: Record<string, unknown>) => string
   /**
-   * Optional by design: a host line that provides neither settings surface
-   * (or a probe before the mirror populates) leaves this undefined, and the
-   * card renders read-only — saving is the only capability that needs it.
+   * Optional by design: before the configForms mirror populates (or on a host
+   * with no settings surface) this is undefined, and the card renders
+   * read-only — saving is the only capability that needs it.
    */
   settingsScope?: {
     getSnapshot(): { status: string; value?: unknown; writable: boolean }
     subscribe(listener: () => void): () => void
-    /** Whether the Host accepted the write (0.1.7); `void` on the 0.1.5 line. */
-    set(field: string, value: unknown): Promise<boolean | void>
+    /** Whether the Host accepted the write. */
+    set(field: string, value: unknown): Promise<boolean>
   }
 }
 
-/** Props delivered by the Plugin configuration item slot. */
-export type TraeUsageCardProps =
-  PropsRuntime<'settings.plugin.item'>
-  & Partial<TraeUsageCardInjected>
-  // 0.1.7's plugin manager asks every configuration entry for one of two views
-  // through its owner props (`plugins.item` / `plugins.bundle.config` /
-  // `plugins.row.config`). `page` is the full form with its own save control;
-  // `summary` is a one-liner. Only the `settings.plugin.item` line passes no
-  // `view` at all, so it stays optional.
-  & { view?: 'summary' | 'page' }
+/**
+ * Props delivered by the Plugin configuration item slots
+ * (`plugins.bundle.config` / `plugins.row.config`). The type is structural on
+ * purpose: the slot names are declared by the host app bundle, not by any
+ * package in the plugin's own tree, so referencing a named slot contract here
+ * would fail to resolve in the plugin's dev environment.
+ */
+export type TraeUsageCardProps = Partial<TraeUsageCardInjected> & {
+  /** The plugin manager asks for one of two views through its owner props.
+   * `page` is the full form with its own save control; `summary` is a
+   * one-liner. An absent `view` starts the card collapsed. */
+  view?: 'summary' | 'page'
+}
 
 const POLL_INTERVAL_MS = 60_000
 const TRAE_GITHUB_URL = 'https://github.com/dingminhua/dsh-connect-trae'
@@ -82,11 +84,11 @@ function configuredAccountsOf(configured: unknown): Record<string, string> {
 /**
  * Write one settings field and confirm the value actually landed.
  *
- * `settingsScope.set()` / `configForms.set()` resolving is NOT proof that
- * anything was stored. On DSH 0.1.7 a write can be accepted by the transport
- * and still not materialize — a rejected write reloads Host state and merely
- * RETURNS, so the caller's `await` succeeds while the document is unchanged.
- * The 0.1.7 form also answers with an explicit boolean for exactly this reason.
+ * `configForms.set()` resolving is NOT proof that anything was stored: a write
+ * can be accepted by the transport and still not materialize — a rejected
+ * write reloads Host state and merely RETURNS, so the caller's `await`
+ * succeeds while the document is unchanged. The form answers with an explicit
+ * boolean for exactly this reason.
  *
  * Either way the caller must not report success on an unpersisted write: the
  * user would see the control flip and then silently revert.
@@ -109,8 +111,7 @@ async function writeSettingsField(
   landed: (readBack: unknown) => boolean,
 ): Promise<void> {
   const accepted = await scope.set(field, value)
-  // 0.1.5 answers `void` (its scope reloads Host state on failure instead), so
-  // only an explicit `false` counts as a refusal.
+  // The 0.1.7 form answers an explicit boolean: `false` is a refusal.
   if (accepted === false) throw new TraeSettingsWriteError(field, 'the Host refused the write')
   if (!landed(unwrapVolatileDeep(scope.getSnapshot().value))) {
     throw new TraeSettingsWriteError(field)
@@ -167,8 +168,9 @@ function dotStyle(status: TraeWebUsage['status']): Record<string, string> {
 /** Render Trae sign-in state and the total usage summary as one expandable card. */
 export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
   if (t === undefined) throw new Error('Trae usage card requires its translation function')
-  // 0.1.7 opens the card as a full page with its own save control, so the body
-  // must already be expanded there; the 0.1.5 item slot starts collapsed.
+  // The plugin manager opens the card as a full page (its own save control)
+  // when it asks for `view: 'page'`; absent a view, start collapsed so a
+  // summary row stays a one-liner.
   const [open, setOpen] = useState(view === 'page')
   /** The region whose tab is on screen; each tab is its own provider stack. */
   const [activeRegion, setActiveRegion] = useState<TraeRegion>('cn')

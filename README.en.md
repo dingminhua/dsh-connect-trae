@@ -96,22 +96,15 @@ Restart the DSH process after install/update/uninstall.
 
 ## DSH version compatibility
 
-**One build serves both the DSH 0.1.5 and 0.1.7 lines** — no per-version package.
+**Requires DSH 0.1.7-rc.1 and up** (since 2.3.0 the plugin no longer targets hosts older than 0.1.7; the peer dependency ranges are narrowed accordingly).
 
-The two lines differ in their settings machinery, and the plugin probes for capability at runtime instead of assuming either:
+0.1.7 rebuilt the settings machinery, and the plugin follows the 0.1.7 contract:
 
-| | 0.1.5 line | 0.1.7 line |
-|---|---|---|
-| Client settings service | `settingsScope` | `configForms` |
-| Config card slots | `settings.plugin.item` | `plugins.bundle.config` / `plugins.row.config` |
-| Host registration | `installSection()` | `configure({auto}, owner)` |
-| Schema writable marker | not needed | `volatile()` required |
-| Primitives icon names | `…Outline14` | `…OutlineRegular` |
-
-Two decisions matter most:
-
-- **`inject` declares only the services BOTH lines provide** (`slots` / `locale`); the settings surface is probed with `ctx.get()`. Cordis' dependency gate is hard — any `inject` entry the running line does not provide keeps `apply()` from ever running (0.1.7 removed `settingsScope`, which is why 2.1.0 and earlier sat at `pending (waiting for service: settingsScope)` on that line).
-- **The collapse caret is pure CSS**, with no static icon import: the two lines' icon names do not overlap, so any static import fails to resolve on one of them.
+- **Host registration**: `SettingsForms.configure({auto}, owner)` (`installSection` was removed in 0.1.7), and the namespace is the **Loader entry id the host actually serves** (`ctx.fiber.entry?.options.id`, falling back to `trae`) — the harness looks a provider's namespace up by exact match, so hard-coding `trae` made the provider read as "not configured".
+- **Client settings surface**: `configForms` (`settingsScope` was removed in 0.1.7). `inject` declares only `slots` / `locale`; the settings surface is probed with `ctx.get()`. Cordis' dependency gate is hard — any `inject` entry the running line does not provide keeps `apply()` from ever running (this is why 2.2.0 and earlier sat at `pending (waiting for service: settingsScope)` on 0.1.7).
+- **Config card slots**: `plugins.bundle.config` / `plugins.row.config` (`settings.plugin.item` was removed).
+- **Schema writable marker**: writable fields must be marked `volatile()` (`asVolatile`), or 0.1.7's write gate rejects every write; 0.1.7 delivers config values as `{get(): T}` live references, so every read and merge path unwraps them first (`unwrapVolatile` / `unwrapVolatileDeep`).
+- **The collapse caret is pure CSS**, with no static primitives icon import — icon naming changes across releases, so a static import is not a stable contract.
 
 ## Windows notes
 

@@ -110,6 +110,32 @@ describe('Trae SOLO protocol', () => {
     expect(fetchImpl.mock.calls[0]?.[0]).toBe('https://trae-api-cn.mchost.guru/api/ide/v1/get_detail_param')
   })
 
+  it('reads the post-discount credit multiplier from display_contact_config', async () => {
+    // The Trae IDE renders `consumption_rate.data.rate` from the second-layer
+    // JSON in `display_contact_config` (commit 1.4.2). Restoring this parser
+    // keeps the card's rate equal to what the IDE shows instead of the Remote
+    // directory's 10x undiscounted figure (Seed-2.1-Pro: 0.08 vs 0.80).
+    const fetchImpl = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => new Response(JSON.stringify({ config_info_list: [
+      {
+        config_name: 'Doubao-Seed-2.1-Pro', display_config: { display_name: 'Seed-2.1-Pro' },
+        context_window_tokens: { dev: 1000000 },
+        model_detail_list: [{ prompt_max_tokens: 1024000, max_tokens: 32000 }],
+        // The wire's own discounted rate (the IDE shows 0.08, not 0.80).
+        display_contact_config: JSON.stringify({ consumption_rate: { enable: true, data: { rate: 0.08 } } }),
+      },
+      {
+        config_name: 'glm-5.2', display_config: { display_name: 'GLM-5.2' },
+        context_window_tokens: { dev: 232768 },
+        model_detail_list: [{ prompt_max_tokens: 168000, max_tokens: 32000 }],
+        // No display_contact_config at all → multiplier stays absent, not fabricated.
+      },
+    ] }), { status: 200, headers: { 'content-type': 'application/json' } }))
+    const client = new TraeSoloUpstreamClient({ credential: async () => credential, identity: async () => identity, fetchImpl })
+    const models = await client.fetchModels()
+    expect(models.find(m => m.id === 'Doubao-Seed-2.1-Pro')?.creditMultiplier).toBe(0.08)
+    expect(models.find(m => m.id === 'glm-5.2')?.creditMultiplier).toBeUndefined()
+  })
+
   it('parses SOLO output, usage and reasoning tokens', () => {
     expect(decodeTraeEvent({ event: 'output', data: '{"response":"a","reasoning_content":"r","tool_calls":[{"index":0}]}' })).toEqual({ type: 'delta', text: 'a', reasoning: 'r', toolCalls: [{ index: 0 }] })
     expect(decodeTraeEvent({ event: 'token_usage', data: '{"prompt_tokens":2,"completion_tokens":3,"total_tokens":5,"reasoning_tokens":2}' })).toEqual({ type: 'usage', inputTokens: 2, outputTokens: 3, totalTokens: 5, reasoningTokens: 2 })

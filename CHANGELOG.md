@@ -1,5 +1,40 @@
 # Changelog
 
+## 2.3.0 (2026-09-25)
+
+### Breaking Changes
+
+- **只支持 DSH 0.1.7-rc.1 及以上，不再支持 0.1.7 之前的宿主**。2.2.0 用「双线 + 运行期能力探测」同时服务 0.1.5 与 0.1.7；0.1.5 线的设置面（`installSection` / `settingsScope` / `settings.plugin.item` / 非 volatile 写入）与 0.1.7 的新模型**互不相交**，保留它意味着每条路径都要背两套契约。从本版起删除全部 0.1.5 分支，`peerDependencies` 与 `devDependencies` 一并收窄到 `>=0.1.7-rc.1` / `0.1.7-rc.1`（`cordis >=4.0.4`、`schemastery >=3.18.4`）。做法对齐同级 `dsh-connect-workbuddy`（其 2.1.0 起的 0.1.7-only 改造）。
+
+### Bug Fixes
+
+- **0.1.7 上 provider 被判「未配置」——命名空间必须用宿主服务的那个**（对齐 workbuddy 2.0.16 的实测）。0.1.7 的 `SettingsForms.describe()` 以 **Loader 条目 id** 为键，harness 对 provider 的命名空间做**精确匹配**查表（`namespaces.get(entry.settingsNs)`）。此前硬编码 `settingsNs: 'trae'`，而桌面宿主实际以 `dsh-connect-trae`（或 `include:dsh-connect-trae`）挂载条目，于是查表落空、provider 读作「未配置」，**配置入口与模型发现静默失效**、不报错。
+  - **修法**：新增 `settingsNamespaceOf(ctx)`，采用一线插件（`dsh-llm-pi-ai`）的权威范式 `const settingsNs = ctx.fiber.entry?.options.id ?? TRAE_SETTINGS_NS`，`registerConfigurableProviders` 与 `registerModelDiscovery` 全部改用解析值；`ctx.fiber.entry` 由 Loader 注入（非 Cordis 公共类型），保留探测 + 回落到 `'trae'`。
+  - **回归测试**（`tests/settings-integration.spec.ts`，+4 例）：采纳 Loader 条目 id、无条目/空 id/非字符串时回落、以及**目录实际宣告的就是解析值**（断言目录条目而非常量，否则恒过）。
+- **移除宿主端 `installSection` 双路径，`configure({auto}, owner)` 成为唯一路径**（对齐 workbuddy 的 0.1.7-only 写法）。0.1.7 的 `SettingsForms` 删除了 `installSection`；2.2.0 按能力探测两条路径，本版起无条件调用 `configure`，且把返回的 disposer 挂进 `ctx.effect()`——否则展示策略泄漏到插件销毁之后（一线插件同款：`child.effect(() => child.settings.configure({ auto: false }, …))`）。随 `installSection` 一起删除 `legacyInstallSettingsSection` / `sectionHooks` 及其对 `@deepseek-ai/dsh-settings` 命名空间的依赖。
+- **客户端设置面只走 `configForms`**（对齐 workbuddy 的 0.1.7-only 写法）：删除 `settingsScope.bind` 回退分支与 `settings.plugin.item` 槽位注册，只保留 `configForms.get(entryId)` + `plugins.bundle.config` / `plugins.row.config` 两个槽位。`inject` 维持 `['slots', 'locale']`，设置面仍经 `ctx.get()` 软探测。
+- **卡片的 `view` 行为不再按双线区分**：`page` 视图默认展开、无 `view` 默认折叠；`set()` 契约收窄为 `Promise<boolean>`（0.1.7 表单返回显式布尔，`false` 即拒绝）。
+- **区域开关等设置保存被宿主拒绝（`No configurable plugin entry "trae"`）——客户端命名空间绑定必须跟随 describe 镜像**。卡片此前在 `apply()` 时**一次性**解析命名空间：describe 镜像异步加载，且在运行中的 profile 里新增插件条目（本插件正是这种场景）时，镜像首次 describe 可能早于条目出现；`/trae/i` 匹配落空就**永久**回落到声明的 `'trae'`。`configForms.get('trae')` 把表单控制器永久绑到该 ns——宿主 `configEditor.entries()` 里没有 `options.id === 'trae'` 的条目，每次写入都抛 `No configurable plugin entry "trae"` 被拒；而控件仍可点（controller 对「ns 不在镜像」的派生沿用全局 `writable=true`），表现为「开关翻过去又弹回」。
+  - **修法**：设置面改为**可重绑代理**——`getSnapshot` / `set` 转发到「当前」控制器；别名解析（`served.ns`，`/trae/i` 匹配）在 apply 时尝试一次，并订阅镜像（`describe().subscribe`）在每次变化后重绑；镜像已就绪但缺条目时**一次性**触发 `describe().load()` 补拉（此后宿主 `settings/document-updated` 事件保持新鲜）。绑定前代理返回 `writable: false`，卡片只读而非提供必定失败的控件。
+  - **回归测试**（+3 例）：激活测试的镜像桩改为真实形状（`ns: 'dsh-connect-trae'`，即 patch id，非声明的 fallback），断言绑定到 `dsh-connect-trae`；新增「镜像在 apply 后才出现条目 → 重绑到正确 ns」与「一次性 nudge 补拉镜像」两例。测试桩此前的 `ns: 'trae'` 恰好把 fallback 当成了正解，是这条缺陷没被 CI 拦住的原因之一。
+- **插件管理页 / 市场页的 logo 显示不对**（默认占位/空白，对齐 workbuddy 2.0.17 的实测）。0.1.7 的插件管理页从插件包 `package.json` 的 `icon` 字段读图标（`dsh-client-ui-plugin-manager` 渲染 `row.meta?.icon`），此前没有声明该字段 → 宿主无图可用。
+  - **修法**（照同级 `dsh-connect-workbuddy` 的做法）：新增 `icons/` 目录（64px + 128px 真实 PNG，其中 64px 与既有卡片内嵌 base64 逐字节一致——同族 LD logo），`package.json` 声明 `"icon": "icons/dsh-connect-trae-128.png"`，并把 `icons` 加入 `files` 白名单随包分发。
+  - **验证**：`npm pack --dry-run` 确认两个 PNG 进包（12 → 14 文件）。
+- **模型倍率改回「wire 权威、Remote 兜底」，恢复折后价显示**（回归：b8f09bc 重构时误删 1.4.2 的 `display_contact_config` 解析）。`get_detail_param` 每行的 `display_contact_config`（第二层 JSON）里的 `consumption_rate.data.rate` 才是 Trae IDE 渲染的**折后价**；Remote 目录的 `consumption_rate` 在限时折扣下会报**未折价**（Seed-2.1-Pro：IDE `x0.08` vs Remote `0.80`，差 10 倍）。b8f09bc 改成多 function 并集时把这个解析连带删掉，倍率从此退化成 Remote 值。
+  - **修法**：`solo.ts` 恢复 `wireCreditMultiplier()`（读 `display_contact_config.consumption_rate.data.rate`，`enable` 为真且为正有限数时取值，缺失/损坏留空不虚构），`TraeSoloModel` / `TraeWireModel` 增列 `creditMultiplier`；`mergeTraeModelSources` 合并时 **wire 优先、Remote 兜底**（wire 未提供才用 Remote）。
+  - **国际版（ai）区域**：实测（2026-09-25 只读探测）国际版上游任何目录都不含 `consumption_rate`（订阅制，只有 `cost` 标签与 `manual_usage: 0|1`，官方 App 也只渲染「Lite-friendly」这类标签而非数值倍率），因此 ai 模型行按「解析不出则留空」保持不显示倍率——不虚构数值。
+  - **回归测试**（+2 例）：`solo.spec.ts` 断言 wire 解析出折后价、缺失时不虚构；`catalog.spec.ts` 断言合并时 wire 优先、Remote 兜底、双缺留空。变异验证：把合并改回只读 Remote → 新用例立即失败。
+
+### Dependencies
+
+- `peerDependencies`：全部 `@deepseek-ai/dsh-*` 收窄为 `>=0.1.7-rc.1 <0.2.0-0`；`@deepseek-ai/cordis` 收窄为 `>=4.0.4 <5.0.0`；`@deepseek-ai/schemastery` 收窄为 `>=3.18.4 <4.0.0`（`volatile()` 自 3.18.3 起才有）。
+- `devDependencies`：全部 `@deepseek-ai/dsh-*` 与 `cordis` / `schemastery` 升到 0.1.7-rc.1 线，开发树与用户解析一致。
+- `tests/settings-integration.spec.ts` 的 settings 测试替身改为 **0.1.7 形状**（`SettingsForms` 语义的内存服务：`configure` + `describe` + 只写 volatile 字段的 `update` + `loader/volatile-update`），插件以**活引用配置**（volatile 字段 = `{get(): T}` 指向同一份文档）挂载，模拟真实宿主的写入→重放路径；原先写非 volatile 扁平字段（`lastCatalog` / `imageModelIds` / `enabledModelIds`）的用例改为写 `regions.cn` 槽位——正是 0.1.7 写入门接受且卡片实际采用的形状。
+
+### Tests
+
+- 310 → 316。移除 0.1.5 形态用例（client-activation 的 `settingsScope` 宿主、client-fallback 的 `settingsScope.bind` 回退、card-region-switch 的 void 返回契约），新增 4 例 `settingsNamespaceOf`、3 例命名空间重绑/补拉、2 例 wire 倍率解析与合并优先级。`pnpm run check`（typecheck + test + build）全绿。
+
 ## 2.2.0 (2026-09-24)
 
 ### Bug Fixes

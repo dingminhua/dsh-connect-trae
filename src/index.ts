@@ -1,7 +1,6 @@
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import * as dshSettings from '@deepseek-ai/dsh-settings'
-import type { SettingsSectionHooks } from '@deepseek-ai/dsh-settings'
+import type {} from '@deepseek-ai/dsh-settings'
 import type { AdapterRegistrationHandle, DirectoryRegistrationHandle } from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-attachment'
 import type {} from '@deepseek-ai/dsh-host-webserver'
@@ -33,7 +32,7 @@ import type { TraeRawDiagnostic } from './raw-diagnostic.ts'
 import { TraeDelegatingUpstreamClient } from './delegating-upstream.ts'
 import { TraeUsageClient } from './usage.ts'
 import { registerTraeUsageRoute } from './web-status.ts'
-import { unwrapVolatile, unwrapVolatileDeep } from './status-paths.ts'
+import { unwrapVolatile } from './status-paths.ts'
 
 export {
   createTraeAdapter,
@@ -118,13 +117,34 @@ export const name = 'dsh-connect-trae'
 export const inject = ['llm']
 /**
  * Settings namespace, as a plain lowercase literal. DSH 0.1.2 removed the
- * `settingsNamespace` brand constructor from the npm package (the Desktop
- * host still ships it as a legacy shim), and every consumer of this constant —
- * `registerModelDiscovery`, `registerConfigurableProviders`,
- * `settings.installSection`, the settings test — takes it as a kebab string,
- * so no branding is needed for either host generation.
+ * `settingsNamespace` brand constructor from the npm package, and every
+ * consumer of this constant takes it as a kebab string — so no branding is
+ * needed. It is the FALLBACK namespace; the namespace the host actually serves
+ * comes from {@link settingsNamespaceOf} (0.1.7 keys settings by the Loader
+ * entry id, which a profile patch may mount as `dsh-connect-trae` or
+ * `include:dsh-connect-trae`).
  */
 export const TRAE_SETTINGS_NS = 'trae'
+
+/**
+ * The namespace the HOST actually serves this plugin under.
+ *
+ * On DSH 0.1.7 `SettingsForms.describe()` keys every namespace by the Loader
+ * entry id, and the harness looks a provider's namespace up by EXACT match —
+ * advertising `trae` while the host serves `include:dsh-connect-trae` made the
+ * provider read as "not configured": its configure affordance and model
+ * discovery both silently went dead.
+ *
+ * `ctx.fiber.entry` is added by the Loader, not by Cordis itself, so it is not
+ * in Cordis's public types and is absent on hosts that mount a plugin without a
+ * Loader entry (a test harness, or `ctx.plugin()` called directly). Hence the
+ * probe plus the documented fallback, mirroring the first-party plugins:
+ * `const settingsNs = ctx.fiber.entry?.options.id ?? NS`.
+ */
+export function settingsNamespaceOf(ctx: unknown): string {
+  const id = (ctx as { fiber?: { entry?: { options?: { id?: unknown } } } })?.fiber?.entry?.options?.id
+  return typeof id === 'string' && id !== '' ? id : TRAE_SETTINGS_NS
+}
 
 /** One region's saved model state: its own directory and the user's selection within it. */
 export interface TraeRegionState {
@@ -223,23 +243,18 @@ export function regionEnabled(config: Config, region: TraeRegion): boolean {
 }
 
 /**
- * Mark a schema's field as volatile on the DSH lines that support it.
+ * Mark a schema's field as volatile.
  *
- * `volatile()` exists from schemastery 3.18.3 (the DSH 0.1.7 line, which is the
- * only line whose settings write gate reads the marker). Older pinning (3.18.2,
- * the 0.1.5 line) has no such method, and the schema must stay byte-identical
- * to the unmarked original there: hand-writing `meta.volatile = true` would
- * bypass schemastery's own `validateVolatileSchema` checks and produce a schema
- * no 0.1.5 consumer understands — so on that line this degrades to an identity
- * no-op.
+ * `volatile()` exists from schemastery 3.18.3; since 2.3.0 the peer range
+ * requires `>=3.18.4`, so it is always present on a supported host. The probe
+ * is kept as a safety net for a consumer that resolves an older schemastery
+ * anyway (where the helper must degrade to identity — hand-writing
+ * `meta.volatile = true` would bypass schemastery's own `validateVolatileSchema`
+ * checks) and to keep both arms deterministically testable.
  *
  * Without the marker, 0.1.7's settings write gate REJECTS every write with
  * `Plugin entry "trae" has no volatile fields` while the scope's `set()` still
  * resolves — so the card would look like it saved and silently revert.
- *
- * Exported so BOTH arms are testable on any machine: the capability is decided
- * by whichever schemastery the dependency tree resolves, so without a seam the
- * no-op arm would silently stop being exercised the moment the pin moved up.
  */
 export function asVolatile<S>(schema: S): S {
   if (typeof (schema as { volatile?: () => S }).volatile === 'function') {
@@ -319,6 +334,11 @@ interface TraeRegionStack {
 }
 
 export function apply(ctx: Context, config: Config): void {
+  // The namespace the host actually serves (see `settingsNamespaceOf`). On
+  // 0.1.7 this is the Loader entry id, and the harness looks a provider's
+  // namespace up by EXACT match — advertising anything else makes the provider
+  // read as unconfigured (issue #13-class regression, workbuddy 2.0.16).
+  const settingsNs = settingsNamespaceOf(ctx)
   let current = () => config
   const enabledSet = (value: Config, region: TraeRegion): ReadonlySet<string> => new Set(regionStateOf(value, region).enabledModelIds ?? [])
   const imageSet = (value: Config, region: TraeRegion): ReadonlySet<string> => new Set(regionStateOf(value, region).imageModelIds ?? [])
@@ -688,7 +708,7 @@ export function apply(ctx: Context, config: Config): void {
       .map(region => ({
         provider: TRAE_PROVIDERS[region],
         displayName: TRAE_PROVIDER_DISPLAY_NAMES[region],
-        settingsNs: TRAE_SETTINGS_NS,
+        settingsNs,
         settingsPath: [],
         declared: false,
       })))
@@ -698,9 +718,9 @@ export function apply(ctx: Context, config: Config): void {
   const applySelection = (value: Config): void => {
     for (const region of REGION_KEYS) {
       const stack = stacks[region]
-      // Unwrap the volatile fields here too: `setSource` stores them for every
-      // later credential read, so handing it a live reference would make the
-      // storage path an object and the edition a truthy non-enum.
+      // Unwrap the volatile fields here too: `current()` hands them over as
+      // live references, so passing one through would make the storage path an
+      // object and the edition a truthy non-enum.
       stack.store.setSource(
         unwrapVolatile(value.authFile),
         unwrapVolatile(value.edition) ?? 'auto',
@@ -710,11 +730,6 @@ export function apply(ctx: Context, config: Config): void {
       stack.invalidateAdapter()
     }
     syncRegionRegistration(value)
-  }
-
-  const sectionHooks: SettingsSectionHooks<Config> = {
-    setSource(source) { current = source },
-    onChange() { applySelection(current()) },
   }
 
   // Initial wiring: selections and per-region catalogs from the saved state.
@@ -741,70 +756,37 @@ export function apply(ctx: Context, config: Config): void {
       // Scan failure: keep defaults; the next card-driven scan converges.
     }
   })()
-  // DSH 0.1.2 replaced the free `installSettingsSection` helper with the
-  // `settings` service's `installSection` method. The Desktop host keeps the
-  // old helper as a legacy shim, but npm installs of 0.1.2 do not — and a
-  // named import of a missing export fails at ESM link time, so the plugin
-  // reads it defensively off the module namespace. Prefer the helper when it
-  // exists (0.1.1 hosts and shimmed 0.1.2 hosts) and fall back to the service
-  // method everywhere else, so one build serves both host generations.
+  // Settings registration (0.1.7+ only).
   //
-  // DSH 0.1.7 is a THIRD shape, and it is not interchangeable with either:
   // `SettingsForms` dropped `installSection` entirely and exposes
-  // `configure({auto}, owner)` instead. Calling `installSection` there throws
-  // `ctx.settings.installSection is not a function`; because this call sits
-  // inside a nested `ctx.inject` callback, the throw lands in THAT child fiber
-  // (which fails) while the outer plugin keeps loading — so the providers
-  // still register but the `trae` settings namespace never does, and the
-  // card's settings area silently disappears. Each shape is therefore probed
-  // for the method it needs rather than assumed.
+  // `configure({auto}, owner)`; calling the removed method unconditionally made
+  // `apply()` throw on 0.1.7 (`ctx.settings.installSection is not a function`)
+  // and took down the WHOLE plugin. Since 2.3.0 the plugin supports DSH
+  // 0.1.7-rc.1 and up only, so `configure` is the sole path and is called
+  // unconditionally — the pre-0.1.7 `SettingsProvider.installSection` branch
+  // is gone with the line it served.
   //
-  // Both service calls go through a narrow local type rather than a blanket
-  // `any`: the installed typings describe the 0.1.5 line only, so `configure`
-  // is not on `SettingsProvider`.
+  // The call goes through a narrow local type rather than a blanket `any`: the
+  // installed typings describe the settings service surface, and the local
+  // shape names the pieces this plugin touches.
   interface SettingsShapes {
-    configure?: (presentation: { auto?: boolean }, owner?: unknown) => unknown
-    installSection?: (
-      owner: Context,
-      ns: string,
-      schema: z<Config>,
-      entry: Config,
-      hooks: SettingsSectionHooks<Config>,
-    ) => unknown
+    configure: (presentation: { auto?: boolean }, owner?: unknown) => () => void
   }
 
-  const legacyInstallSettingsSection = (dshSettings as {
-    installSettingsSection?: (ctx: Context, ns: string, schema: z<Config>, entry: Config, hooks: SettingsSectionHooks<Config>) => void
-  }).installSettingsSection
-  if (typeof legacyInstallSettingsSection === 'function') {
-    legacyInstallSettingsSection(ctx, TRAE_SETTINGS_NS, Config, config, sectionHooks)
-  } else {
-    // `inject` rather than a direct read: `settings` is an optional service,
-    // and the callback runs once it is actually present.
-    ctx.inject(['settings'], settingsCtx => {
-      const settings = settingsCtx.settings as unknown as SettingsShapes
-      if (typeof settings.configure === 'function') {
-        settings.configure({ auto: true }, ctx.fiber)
-        return
-      }
-      if (typeof settings.installSection === 'function') {
-        // The entry is DEEP-unwrapped, not passed as-is. `installSection`
-        // validates and `structuredClone`s the whole object, so a live
-        // reference anywhere inside it fails validation with a message that
-        // names the field but not the cause:
-        // `$.authFile expected string but got [object Object]`. That is not
-        // hypothetical — it is what broke every field the moment volatile
-        // marking became active, taking the whole namespace registration down
-        // with it (the card's settings area vanishes, 13 tests go red).
-        const entry = unwrapVolatileDeep(config)
-        settings.installSection(ctx, TRAE_SETTINGS_NS, Config, entry, sectionHooks)
-      }
-    })
-  }
+  // `inject` rather than a direct read: `settings` is an optional service, and
+  // the callback runs once it is actually present. `configure` returns a
+  // disposer that must be registered with the calling plugin's effects, or the
+  // presentation policy leaks past disposal (the first-party plugins do the
+  // same: `child.effect(() => child.settings.configure({ auto: false }, …))`).
+  ctx.inject(['settings'], settingsCtx => {
+    const settings = settingsCtx.settings as unknown as SettingsShapes
+    ctx.effect(() => settings.configure({ auto: true }, ctx.fiber))
+  })
 
   // 0.1.7 hands volatile values back as live references and announces each
-  // write on this event, so the card's selections are re-read after one. The
-  // event does not exist on 0.1.5, which never emits it.
+  // write on this event, so the selections are re-read after one — the live
+  // references resolve to the updated document, which is how `current()` picks
+  // a card write up without a `setSource` hook (there is none on 0.1.7).
   ;(ctx as unknown as { on(name: string, listener: () => void): unknown })
     .on('loader/volatile-update', () => {
       applySelection(current())
@@ -838,7 +820,7 @@ export function apply(ctx: Context, config: Config): void {
           ? ctx.llm.registerAdapter([TRAE_PROVIDER], trae.adapter)
           : ctx.llm.registerAdapter([TRAE_AI_PROVIDER], trae.adapter)
       }
-      ctx.llm.registerModelDiscovery(TRAE_SETTINGS_NS, async (request, signal) => {
+      ctx.llm.registerModelDiscovery(settingsNs, async (request, signal) => {
         const region = regionOfTraeProvider(request.provider ?? '')
         if (region === undefined) return []
         // A switched-off region advertises nothing: its route is withdrawn, so
@@ -870,7 +852,7 @@ export function apply(ctx: Context, config: Config): void {
       registration.cn.directory = ctx.llm.registerConfigurableProviders(REGION_KEYS.map(region => ({
         provider: TRAE_PROVIDERS[region],
         displayName: TRAE_PROVIDER_DISPLAY_NAMES[region],
-        settingsNs: TRAE_SETTINGS_NS,
+        settingsNs,
         settingsPath: [],
         declared: false,
       })))

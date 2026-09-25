@@ -122,13 +122,11 @@ describe('region reads over live references (0.1.7)', () => {
 
 describe('asVolatile', () => {
   /**
-   * The marker is what 0.1.7's write gate looks for. On schemastery 3.18.2
-   * (the 0.1.5 line) there is no `volatile()`, and the helper must return the
-   * SAME schema object — hand-writing `meta.volatile` would bypass
-   * schemastery's own validation and produce a schema 0.1.5 cannot read.
-   *
-   * Asserted against the resolved schemastery's actual capability rather than
-   * a hardcoded expectation, so the test is meaningful on either pin.
+   * The marker is what 0.1.7's write gate looks for. The helper probes the
+   * resolved schemastery's capability (the no-op arm guards a resolution older
+   * than 3.18.3) rather than assuming it, so the test is meaningful on either
+   * pin — asserted against the ACTUAL capability so it cannot pass on a
+   * hardcoded expectation.
    */
   it('matches the capability of the schemastery actually installed', () => {
     const schema = { description: () => schema } as unknown as Parameters<typeof Trae.asVolatile>[0]
@@ -150,14 +148,16 @@ describe('asVolatile', () => {
   })
 })
 
-describe('settings service shape compatibility (0.1.5 vs 0.1.7)', () => {
+describe('settings service shape (0.1.7)', () => {
   /**
    * `SettingsForms` (0.1.7) dropped `installSection` and exposes
-   * `configure({auto}, owner)`. Calling `installSection` there throws
-   * `ctx.settings.installSection is not a function`; because the call sits
-   * inside a nested `ctx.inject` callback, the throw lands in THAT child fiber
-   * — the providers still register, but the `trae` settings namespace never
-   * does, so the card's settings area silently disappears.
+   * `configure({auto}, owner)`. Calling the removed method unconditionally made
+   * `apply()` throw on 0.1.7 (`ctx.settings.installSection is not a function`);
+   * because the call sat inside a nested `ctx.inject` callback, the throw
+   * landed in THAT child fiber — the providers still registered, but the `trae`
+   * settings namespace never did, so the card's settings area silently
+   * disappeared. Since 2.3.0 the plugin supports 0.1.7-rc.1 and up only, so
+   * `configure` is the sole path, called unconditionally.
    */
   let context: Context | undefined
   let restoreHome: (() => void) | undefined

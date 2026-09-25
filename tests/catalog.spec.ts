@@ -172,6 +172,30 @@ describe('mergeTraeModelSources', () => {
     expect(merged.some(model => model.id === 'wire-orphan')).toBe(false)
   })
 
+  it('prefers the wire post-discount multiplier and falls back to the remote rate', () => {
+    // The wire's `display_contact_config` rate is the figure the Trae IDE
+    // renders; the Remote directory can report the undiscounted value (up to
+    // 10x higher under a live promotion). Wire wins; remote only fills in when
+    // the wire row carries no rate.
+    const remote: TraeDiscoveredModel[] = [
+      // Same model, two disagreements: remote says 0.80, wire says 0.08.
+      { id: 'Doubao-Seed-2.1-Pro', name: 'Seed-2.1-Pro', multimodal: false, reasoningSupported: false, creditMultiplier: 0.8 },
+      // Remote provides the only rate here.
+      { id: 'kimi-k3', name: 'Kimi-K3', multimodal: false, reasoningSupported: false, creditMultiplier: 1.83 },
+      // Neither source carries a rate → stays absent, never fabricated.
+      { id: 'glm-5.2', name: 'GLM-5.2', multimodal: false, reasoningSupported: false },
+    ]
+    const wire = [
+      { id: 'Doubao-Seed-2.1-Pro', name: 'Seed-2.1-Pro', creditMultiplier: 0.08 },
+      { id: 'kimi-k3', name: 'Kimi-K3' },
+      { id: 'glm-5.2', name: 'GLM-5.2' },
+    ]
+    const merged = mergeTraeModelSources(remote, wire)
+    expect(merged.find(model => model.id === 'Doubao-Seed-2.1-Pro')?.creditMultiplier).toBe(0.08)
+    expect(merged.find(model => model.id === 'kimi-k3')?.creditMultiplier).toBe(1.83)
+    expect(merged.find(model => model.id === 'glm-5.2')?.creditMultiplier).toBeUndefined()
+  })
+
   it('drops remote models that map to no wire config_name (uncallable → would 4001)', () => {
     // Doubao-Seed-Code and glm-5.3 are advertised by the Remote directory but
     // are NOT current `config_name`s in get_detail_param; sending them makes

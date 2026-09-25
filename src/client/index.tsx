@@ -3,24 +3,21 @@
  * Mirrors the `dsh-workbuddy-connect` browser-plugin entry so the external
  * presentation stays consistent across the plugin family.
  *
- * The registration shape serves TWO host lines at once, and the settings
- * surface differs between them:
- *
- *   0.1.5  `settingsScope.bind({ namespace })` + the `settings.plugin.item` slot
- *   0.1.7  `configForms.get(entryId)`          + the `plugins.*` slots
- *
- * `settingsScope` was REMOVED (not deprecated) in 0.1.7-alpha.1, so the
- * settings service is probed by capability rather than declared in `inject`
- * (see below), and each slot is registered on its own because the two lines
- * declare disjoint slot sets.
+ * DSH 0.1.7+ only. The client settings surface is `configForms` (probed
+ * through `ctx.get()` rather than declared in `inject`, because Cordis'
+ * dependency gate is hard — an `inject` entry the running line does not
+ * provide keeps `apply` from running at all, which is exactly how the plugin
+ * ended up `pending (waiting for service: settingsScope)` before 2.3.0), and
+ * the configuration cards live in the Plugins page's `plugins.*` slots. The
+ * pre-0.1.7 `settingsScope` service and `settings.plugin.item` slot are gone
+ * with the line they served.
  */
 
 // DSH 0.1.2 deleted `@deepseek-ai/dsh-client-runtime` (its services moved to
 // focused packages), so `ClientContext` is now cordis' own `Context` plus the
 // service augmentations below: `slots` comes from `dsh-client-ui-renderer`,
-// `locale` from `dsh-client-locale`. `settingsScope` (0.1.5) and `configForms`
-// (0.1.7) are NOT declared here — they are read through `ctx.get()`, which
-// needs no augmentation and works on whichever line is running.
+// `locale` from `dsh-client-locale`. `configForms` is NOT declared here — it
+// is read through `ctx.get()`, which needs no augmentation.
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
@@ -44,12 +41,11 @@ export const name = 'dsh-connect-trae-client'
 /**
  * Client services required by the Plugin configuration contribution.
  *
- * Deliberately only the two services that exist on BOTH host lines. Cordis'
- * dependency gate is hard: any `inject` entry the running line does not provide
- * keeps `apply` from ever running at all — which is exactly how this plugin
- * ended up `pending (waiting for service: settingsScope)` on 0.1.7. Probing the
- * settings surface through `ctx.get()` (which returns undefined, never throws,
- * for an absent service) is what lets one build serve both lines.
+ * Deliberately only the two services the 0.1.7 line provides unconditionally:
+ * `slots` (card injection) and `locale` (copy). The settings surface is probed
+ * through `ctx.get()` (which returns undefined, never throws, for an absent
+ * service), so the card degrades to read-only rather than failing to load if
+ * configForms is not served yet.
  */
 export const inject = ['slots', 'locale']
 
@@ -77,34 +73,80 @@ export function apply(ctx: ClientContext): void {
     // Soft service probe. Property access on an undeclared service THROWS
     // ("cannot get property X without inject") — `?.` guards null/undefined,
     // not a throwing getter — while `ctx.get()` returns undefined for an
-    // absent service. Never touch `ctx.configForms` / `ctx.settingsScope`
-    // directly; go through `get`.
+    // absent service. Never touch `ctx.configForms` directly; go through
+    // `get`.
     const softGet = (name: string): unknown => (ctx as unknown as { get(name: string): unknown }).get(name)
 
-    let settingsScope: TraeUsageCardInjected['settingsScope'] | undefined
     const forms = softGet('configForms') as
       | {
-          describe(): { getSnapshot(): { view?: { namespaces?: { ns: string }[] } } }
+          describe(): {
+            getSnapshot(): { view?: { namespaces?: { ns: string }[] } }
+            subscribe(listener: () => void): () => void
+          }
           get(ns: string): TraeUsageCardInjected['settingsScope']
         }
       | undefined
-    const legacy = softGet('settingsScope') as
-      | { bind(options: { namespace: string }): TraeUsageCardInjected['settingsScope'] }
-      | undefined
-    if (forms !== undefined) {
-      // 0.1.7 line: pick the namespace the Host actually serves (the plugin
-      // may be mounted under a different entry id), falling back to the
-      // declared one when the mirror has not populated yet.
-      let ns = 'trae'
-      try {
-        const namespaces = forms.describe().getSnapshot().view?.namespaces ?? []
-        const served = namespaces.find(entry => entry.ns === 'trae' || /trae/i.test(entry.ns))
-        if (served !== undefined) ns = served.ns
-      } catch { /* mirror not ready: the declared id is still correct */ }
-      settingsScope = forms.get(ns)
-    } else if (legacy !== undefined) {
-      settingsScope = legacy.bind({ namespace: 'trae' })
-    }
+
+    /**
+     * The card's settings scope, bound to whichever namespace the Host actually
+     * serves — resolved from the describe mirror, and RE-BOUND whenever the
+     * mirror changes.
+     *
+     * The mirror answers asynchronously relative to this plugin's `apply()`
+     * (and, on a profile reload, may gain namespaces that did not exist at
+     * boot — this plugin's entry is exactly such a case). Resolving the
+     * namespace ONCE at apply time and falling back to the declared constant
+     * is a real failure: the form controller is bound to its namespace forever,
+     * so a card whose entry appeared after the mirror's first load writes to
+     * `trae` — a namespace the host does not serve — and every write is
+     * refused (`No configurable plugin entry "trae"`), while the controls stay
+     * enabled (the mirror reports global `writable` even when the namespace is
+     * missing).
+     *
+     * The scope therefore forwards every read/write to the CURRENT controller:
+     * once the mirror lists the trae namespace (any name matching `/trae/i`,
+     * e.g. `dsh-connect-trae` or `include:dsh-connect-trae`), the card lands on
+     * the right namespace and re-renders through its own subscription. Before
+     * the mirror answers, the scope reports `writable: false` so the card is
+     * read-only rather than offering controls that cannot save.
+     */
+    const settingsScope: TraeUsageCardInjected['settingsScope'] = (() => {
+      let current: TraeUsageCardInjected['settingsScope'] | undefined
+      let currentOff: (() => void) | undefined
+      let refreshedOnce = false
+      const listeners = new Set<() => void>()
+      const notify = (): void => { for (const listener of [...listeners]) listener() }
+      const scope: TraeUsageCardInjected['settingsScope'] = {
+        getSnapshot: () => current?.getSnapshot() ?? { status: 'unavailable', value: undefined, writable: false },
+        subscribe: (listener) => { listeners.add(listener); return () => { listeners.delete(listener) } },
+        set: (field, value) => current !== undefined ? current.set(field, value) : Promise.resolve(false),
+      }
+      const rebind = (): void => {
+        let served: { ns: string } | undefined
+        try {
+          const namespaces = forms?.describe().getSnapshot().view?.namespaces ?? []
+          served = namespaces.find(entry => entry.ns === 'trae' || /trae/i.test(entry.ns))
+        } catch { /* mirror not ready: keep the current binding */ }
+        const next = served === undefined || forms === undefined ? undefined : forms.get(served.ns)
+        if (next !== current) {
+          currentOff?.()
+          current = next
+          currentOff = current?.subscribe(notify)
+          notify()
+        }
+        // The mirror may have settled before this entry existed. Nudge it to
+        // re-describe ONCE (the answer lands through the mirror update; later
+        // `settings/document-updated` events keep it fresh from there).
+        if (next === undefined && !refreshedOnce) {
+          refreshedOnce = true
+          try { (forms?.describe() as { load?(): unknown }).load?.() } catch { /* ignore */ }
+        }
+      }
+      // Try immediately (the mirror may already be ready), then follow it.
+      rebind()
+      forms?.describe().subscribe?.(rebind)
+      return scope
+    })()
 
     const registerCard = (slotName: string, key: string): void => {
       try {
@@ -117,25 +159,20 @@ export function apply(ctx: ClientContext): void {
           name: slotName,
           key,
           priority: 30,
-          // A line with no settings surface still renders the card read-only
-          // rather than not at all: saving is the only capability that needs
-          // the scope.
-          inject: () => settingsScope === undefined
-            ? { t }
-            : { t, settingsScope },
+          // The scope is always present (it is the re-binding proxy); a host
+          // with no settings surface leaves it permanently unbound, so the
+          // card renders read-only rather than not at all.
+          inject: () => ({ t, settingsScope }),
         }, TraeUsageCard))
       } catch (error: unknown) {
-        // Isolated per slot on purpose: the two host lines declare disjoint
-        // slot sets (0.1.5 only settings.plugin.item; 0.1.7 only the
-        // plugins.* pair), so one line's registration must never take the
-        // other slots down with it.
+        // Isolated per slot on purpose: a failed registration must never take
+        // the other slots down with it.
         console.error(`[dsh-connect-trae] card slot "${slotName}" failed to register (host provider unaffected):`, error)
       }
     }
 
     registerCard('plugins.bundle.config', 'dsh-connect-trae')
     registerCard('plugins.row.config', 'dsh-connect-trae#dsh-connect-trae')
-    registerCard('settings.plugin.item', 'trae')
   } catch (error: unknown) {
     // Degrade silently on the page: the host provider still serves models.
     console.error('[dsh-connect-trae] client card failed to load (host provider unaffected):', error)
