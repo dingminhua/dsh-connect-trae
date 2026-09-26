@@ -59,6 +59,31 @@ DshProject/
 - 每个关键结论应附有代码位置、运行日志或测试结果作为依据。
 - 最终以端到端可运行和可重复验证作为完成标准。
 
+## 多平台要求（Windows 为长期支持目标）
+
+**本项目支持 macOS、Windows 与 Linux 三个平台，其中 Windows 是明确的长期支持目标：任何改动都必须考虑 Windows 影响，不得只按 macOS 行为实现。**
+
+平台支持面（改动时按此判断影响）：
+
+| 区域 | 平台相关？ | 说明 |
+| --- | --- | --- |
+| 账号读取 / 解密 / 区域判定 / 签到 / 用量查询 | 否 | 与平台无关，三平台共用 |
+| 路径解析（`src/paths.ts`） | **是** | `%APPDATA%` vs `~/Library/Application Support` vs `$XDG_CONFIG_HOME`；目录**拼写**按平台多候选探测 |
+| 设备指纹（`src/identity.ts`） | **是** | `x-device-type`（`mac` / `windows` / `linux`）、`x-os-version`、`product.json` 路径与安装目录名 |
+| 文件锁与原子写 | 否（宿主已处理） | 宿主 `dsh-atomic-write` 原生处理 Windows 独占创建语义 |
+| 外部命令依赖 | **是** | 如 `sqlite3`（Windows 默认无）；新增外部依赖必须先确认 Windows 可用，否则必须有兜底 |
+
+改动时的强制检查项：
+
+1. **新增路径解析必须带平台分支**，且 Windows 分支要用多候选拼写探测——目录名未在真机验证，猜错只多一次失败的 `readFile`，漏猜则用户直接看不到登录。
+2. **不得用仅大小写不同的重复候选**：Windows 文件系统不区分大小写，`trae cn` 与 `Trae CN` 是同一个目录。
+3. **新增对外部可执行文件或 POSIX 专有能力的依赖**（`sqlite3`、权限位、符号链接等）必须：确认 Windows 行为 + 提供失败兜底 + 在 README「Windows 说明」登记为已知限制。
+4. **CI 必须在 `windows-latest` 上通过**（`.github/workflows/ci.yml` 已配置 `ubuntu-latest` + `windows-latest` 双平台矩阵）。新增测试若只覆盖 POSIX 语义，等于没有验证 Windows。
+5. **平台相关结论必须区分「已验证」与「未验证」**：macOS 可本机验证，Windows / Linux 目录名等未在真机确认的项，一律在 README 与 `docs/WINDOWS_TOKEN_PROBE.md` 标注为**未验证项**，不得写成既成事实。
+6. **文档同步**：新增平台差异时同步更新 README「平台支持」表与「Windows 说明」，以及 `docs/WINDOWS_TOKEN_PROBE.md` 的排查步骤。
+
+依据与背景见 `docs/WINDOWS_TOKEN_PROBE.md`（真机回报清单）与 `CHANGELOG.md` 2.3.1「Windows 多候选目录探测」。
+
 ## 对外发布基准
 
 对外 README、npm 包组织、发布文档和发布操作，以团队自己的项目 `dsh-subagent-default-model` 为主要基准：

@@ -285,7 +285,7 @@ src/catalog.ts
 
 这也修正了上一轮身份理解：Trae 根目录 `machineid` 是稳定身份来源之一，但主聊天 header 日志显示 `x-machine-id` 实际对应64字符的 `telemetry.machineId`。脱敏关系比较确认根目录36字符 `machineid` 与 `telemetry.machineId` 不相等，其 SHA-256 也不等于 telemetry 值；CN 与 SOLO CN 则共享同一个 telemetry machine/dev 值。实现已改为优先使用 `telemetry.machineId`，根目录 `machineid` 仅作缺失时兜底。
 
-`x-device-id` 的来源随后得到进一步确认：CN 与 SOLO CN 的 `storage.json` 都存在唯一的 `iCubeAuthInfo://icube-dc:221464824136636` 键，键后缀与历史官方聊天日志中的 `x-device-id` 完全一致。键值本身仍是加密字符串，未被输出或写入文档。实现现已优先使用唯一 `icube-dc:<id>` 后缀作为 device ID，`telemetry.devDeviceId` 仅作兜底。
+`x-device-id` 的来源随后得到进一步确认：CN 与 SOLO CN 的 `storage.json` 都存在唯一的 `iCubeAuthInfo://icube-dc:<15位数字>` 键，键后缀与历史官方聊天日志中的 `x-device-id` 完全一致。键值本身仍是加密字符串，未被输出或写入文档。实现现已优先使用唯一 `icube-dc:<id>` 后缀作为 device ID，`telemetry.devDeviceId` 仅作兜底。
 
 构建产物脱敏验证当前 CN 映射为：64字符 machine ID、15字符 device ID、真实 build version、darwin 平台；与历史官方日志的形态一致。
 

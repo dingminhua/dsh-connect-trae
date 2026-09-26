@@ -30,6 +30,17 @@ export { TRAE_USAGE_PATH } from './status-paths.ts'
 export type { TraeWebUsage } from './status-paths.ts'
 
 /**
+ * The upstream's business code for "该设备今日已参与签到" — this DEVICE already
+ * used today's check-in (measured 2026-09-26 on a CN account whose claim was
+ * refused with exactly this code after an account switch on the same machine).
+ *
+ * It arrives as HTTP 200 with a non-zero `code`, which is why it has to be
+ * matched on the code rather than on the HTTP status: read as a transport
+ * failure it looks like the plugin is broken, when the day is simply spent.
+ */
+const CHECKIN_DEVICE_ALREADY_CLAIMED = 9095
+
+/**
  * Constructor dependencies. Everything region-specific is addressed by the
  * region the request names: the two regions are separate provider stacks, so
  * the card must be served the directory, selection, and credits of the tab the
@@ -282,11 +293,22 @@ export function registerTraeUsageRoute(ctx: Context, deps: TraeUsageRouteOptions
     /**
      * Daily check-in claim — the ONLY route in this plugin that mutates
      * upstream account state, so it is guarded more tightly than its siblings:
-     * POST only, loopback origin only, and the status read runs FIRST so an
-     * already-claimed day never reaches the upstream claim at all. The upstream
-     * is idempotent per Beijing day anyway (verified 2026-09-24: a repeat claim
-     * answers `code: 0` with the entitlement total unchanged), but relying on
-     * that for correctness would put the guard in someone else's hands.
+     * POST only, loopback origin only, and the status read runs FIRST so a day
+     * the ACCOUNT has already been paid for never reaches the upstream claim.
+     *
+     * `alreadyCheckedIn` and `deviceCheckedIn` are deliberately separate
+     * answers, because the two flags mean different things (see
+     * {@link TraeWebCheckin}): `checkedIn` is the account's reward for today
+     * existing, `didCheckedIn` is this MACHINE having spent its check-in —
+     * possibly for a different account. Treating the latter as "claimed today"
+     * was a shipped bug: after switching accounts the card said "claimed
+     * today" and disabled the button, which is the right call for the wrong
+     * reason and hides that the new account was never rewarded.
+     *
+     * The upstream is idempotent per Beijing day (verified 2026-09-24: a
+     * repeat claim answers `code: 0` with the entitlement total unchanged), but
+     * relying on that for correctness would put the guard in someone else's
+     * hands.
      */
     const disposeCheckin = ctx.webServer.register({
       kind: 'exact',
@@ -308,17 +330,40 @@ export function registerTraeUsageRoute(ctx: Context, deps: TraeUsageRouteOptions
           if (!current.enabled) {
             return json(res, 409, { error: 'check-in is not enabled for this account' })
           }
-          // `didCheckedIn` as well as `checkedIn`: the app treats a day already
-          // claimed (even one whose status read reports `checked_in: false`) as
-          // done, and claiming again can only waste a request.
-          if (current.checkedIn || current.didCheckedIn) {
-            return json(res, 200, { claimed: false, alreadyCheckedIn: true, checkin: toCheckin(current) })
+          // Only the ACCOUNT-level flag stops a claim: this account's reward
+          // for today already exists, so there is genuinely nothing to do and
+          // no request is worth sending.
+          if (current.checkedIn) {
+            return json(res, 200, {
+              claimed: false,
+              alreadyCheckedIn: true,
+              deviceCheckedIn: current.didCheckedIn,
+              checkin: toCheckin(current),
+            })
+          }
+          // The device is spent but this account is not: a claim can only be
+          // refused (9095). Do not send it, and report the refusal truthfully.
+          if (current.didCheckedIn) {
+            return json(res, 200, {
+              claimed: false,
+              alreadyCheckedIn: false,
+              deviceCheckedIn: true,
+              code: CHECKIN_DEVICE_ALREADY_CLAIMED,
+              message: 'this device already used today\'s check-in',
+              checkin: toCheckin(current),
+            })
           }
           const claim = await client.claimCheckin()
           const checkin = await client.checkinStatus()
+          // 9095 is the upstream's own "该设备今日已参与签到": the device raced
+          // us (another window, or the Trae app itself). It is a refusal, but a
+          // benign one — reporting it as a hard error would tell the user
+          // something is broken when the day is simply used up.
+          const deviceClaimed = claim.code === CHECKIN_DEVICE_ALREADY_CLAIMED
           json(res, 200, {
             claimed: claim.claimed,
             alreadyCheckedIn: false,
+            ...deviceClaimed ? { deviceCheckedIn: true } : {},
             code: claim.code,
             message: claim.message,
             checkin: toCheckin(checkin),

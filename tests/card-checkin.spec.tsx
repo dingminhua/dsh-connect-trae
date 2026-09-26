@@ -149,17 +149,50 @@ describe('TraeUsageCard daily check-in', () => {
     expect(button.textContent).toBe('row.checkinClaimed')
   })
 
-  it('treats a previously claimed day (did_checked_in) as done', async () => {
-    // The upstream reports `checked_in: false` on some days whose reward was
-    // already granted; the official app keeps the button disabled off
-    // `did_checked_in`, and so must the card — otherwise it invites a click
-    // that can only waste a request.
+  it('does not call a device-spent day "claimed today"', async () => {
+    // Measured 2026-09-26: `did_checked_in` is keyed on the DEVICE
+    // (`x-device-id`), not on the account. After switching accounts on one
+    // machine the status reads `checked_in: false, did_checked_in: true`: the
+    // machine's daily check-in is spent, but the newly selected account was
+    // never rewarded. The card must keep the button disabled (a claim could
+    // only be refused with 9095) while saying what actually happened — the old
+    // copy said "今日已领取", which was the reported bug.
     stubFetch(usageDocument({ checkedIn: false, didCheckedIn: true, credits: 150, enabled: true }))
+    const { scope } = makeScope()
+    await renderOpen(scope)
+
+    const button = checkinButton()
+    expect(button.disabled).toBe(true)
+    expect(button.textContent).toBe('row.checkinClaim')
+    expect(screen.getByText('row.checkinDeviceSpent')).toBeTruthy()
+    expect(screen.queryByText(/row\.checkinDoneHint/)).toBeNull()
+  })
+
+  it('shows "claimed today" only when the ACCOUNT was paid', async () => {
+    stubFetch(usageDocument({ checkedIn: true, didCheckedIn: true, credits: 150, enabled: true }))
     const { scope } = makeScope()
     await renderOpen(scope)
 
     expect(checkinButton().disabled).toBe(true)
     expect(checkinButton().textContent).toBe('row.checkinClaimed')
+    expect(screen.queryByText('row.checkinDeviceSpent')).toBeNull()
+  })
+
+  it('explains a device-spent refusal from the route instead of "failed"', async () => {
+    // The route answers 9095 as `deviceCheckedIn` rather than as an error, so
+    // the card must render the device explanation and NOT the generic
+    // "签到失败" line — otherwise a rule of the upstream reads as a plugin bug.
+    stubFetch(
+      usageDocument({ checkedIn: false, didCheckedIn: false, credits: 150, enabled: true }),
+      { body: { claimed: false, alreadyCheckedIn: false, deviceCheckedIn: true, code: 9095, message: '当前设备今日已经签到，请明日再来哦～' } },
+    )
+    const { scope } = makeScope()
+    await renderOpen(scope)
+
+    fireEvent.click(checkinButton())
+
+    await waitFor(() => { expect(screen.getByText('row.checkinDeviceSpent')).toBeTruthy() })
+    expect(screen.queryByText(/row\.checkinError/)).toBeNull()
   })
 
   it('hides the button and explains itself when the activity is disabled', async () => {

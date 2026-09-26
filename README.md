@@ -26,6 +26,8 @@
 
 一个独立的 [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness) bundle 插件。它把本机已登录的 Trae 账号（**国内版与国际版均支持**）接到 DSH 的模型选择器：模型负责生成结构化工具调用，`bash` / `read` / `write` / `edit` 等工具由 DSH 本地执行；同时提供用量概览（国内版 Work/通用积分、国际版订阅状态）、每日签到领取与模型管理界面。**国内版与国际版是两个并行的供应商（`trae` / `trae-global`），可同时使用**；插件设置卡片以 tab 区分两者，方便统一管理。
 
+**支持 macOS、Windows 与 Linux**：CI 在 `ubuntu-latest` 与 `windows-latest` 上跑完整 typecheck / 测试 / 构建；Windows 侧的目录探测、应用版本头与锁行为均有针对性处理，详见 [Windows 说明](#windows-说明)。
+
 > 除每日签到领取外，插件的所有查询都是只读的、不消耗额度；签到领取也只在你点击按钮时才发生。
 
 ## 功能特性
@@ -39,7 +41,7 @@
 - **目录与勾选按区域隔离** —— 国内版与国际版各一套模型目录、勾选、图片开关与上下文预算，两个供应商各自读各自的槽位。
 - **多账号切换** —— 支持重新读取 Token 列表并选择账号；Token 不写入 DSH 设置。
 - **只读用量与模型管理** —— 国内版查看 Work 积分与通用积分，国际版查看订阅/试用状态；刷新/启用 Trae 模型；只读查询不消耗额度。
-- **每日签到领取** —— 国内版卡片上一键领取当日签到积分（按钮显示每日奖励，已领取则显示「今日已领取」并禁用）；这是插件里**唯一会改变账号状态**的操作，由你主动点击触发。国际版没有签到活动，因此不显示该按钮。
+- **每日签到领取** —— 国内版卡片上一键领取当日签到积分（按钮显示每日奖励，该账号已领取则显示「今日已领取」并禁用）；这是插件里**唯一会改变账号状态**的操作，由你主动点击触发。Trae 的签到按「**每台设备每天一次**」限制：切换账号后如果本机今天的名额已经用掉（无论是哪个账号用的），当前账号在本机当天无法再签，卡片会说明原因而不是谎报「已领取」。国际版没有签到活动，因此不显示该按钮。
 - **安全 loopback shim** —— 每区域一个随机端口 + 进程内随机 secret，真实 Trae token 不交给 pi-ai。
 
 ## 工作原理
@@ -57,7 +59,7 @@ DSH PiAiAdapter（每个 provider 一套）
 
 国内版与国际版各持一套完整的运行时栈——凭据 store、模型 catalog、wire 映射、上游客户端、回环 shim、adapter——按凭证自带的区域声明隔离可见账号，所以**两个区域的账号可以同时在线、同时被不同会话使用**。
 
-用量概览走 `https://api.trae.cn/trae/api/v2/pay/*` 与 `/trae/api/v2/ug/*` 只读接口（国际账号走其自有网关的订阅状态端点）；每日签到领取是其中唯一的写操作，走 `POST /trae/api/v2/ug/checkin_credits/claim`，需要携带本机安装的设备号（`x-device-id`，与聊天通道同源）。刷新得到的 token 按区域存放在 `$DSH_HOME/.trae-auth.cn.json` 与 `$DSH_HOME/.trae-auth.ai.json`（两个账号同时在线互不覆盖；旧的单文件 `.trae-auth.json` 作为迁移来源保留读取）。
+用量概览走 `https://api.trae.cn/trae/api/v2/pay/*` 与 `/trae/api/v2/ug/*` 只读接口（国际账号走其自有网关的订阅状态端点）；每日签到领取是其中唯一的写操作，走 `POST /trae/api/v2/ug/checkin_credits/claim`，需要携带本机安装的设备号（`x-device-id`，与聊天通道同源）。该设备号也正是签到「每台设备每天一次」的判定依据，所以换账号不会重置当天名额。刷新得到的 token 按区域存放在 `$DSH_HOME/.trae-auth.cn.json` 与 `$DSH_HOME/.trae-auth.ai.json`（两个账号同时在线互不覆盖；旧的单文件 `.trae-auth.json` 作为迁移来源保留读取）。
 
 > 详见 `docs/IMPLEMENTATION_PLAN.md`、`docs/SOLO_ROUTE_DECISION.md`、`docs/USAGE_API_RESEARCH.md`。
 
@@ -108,12 +110,26 @@ npm install dsh-connect-trae
 - **schema 可写声明**：可写字段必须标 `volatile()`（`asVolatile`），否则写入被 0.1.7 的写入门直接拒绝；0.1.7 以 `{get(): T}` 活引用交付配置值，所有读取与合并路径都先解包（`unwrapVolatile` / `unwrapVolatileDeep`）。
 - **折叠箭头用纯 CSS**，不静态导入任何 primitives 图标——图标命名族随版本变动，静态导入不是稳定契约。
 
+## 平台支持
+
+| 平台 | 状态 | 说明 |
+| --- | --- | --- |
+| **macOS** | ✅ 完全支持 | 开发与验证环境；目录名均经真机确认 |
+| **Windows** | ✅ 支持 | CI 跑 `windows-latest`；账号目录、应用版本头、锁行为均有专门处理。目录名见下方「未验证项」 |
+| **Linux** | ✅ 支持 | 含 WSL2 + Trae CLI 场景（issue #5）；目录名按多候选探测 |
+
+三个平台共享同一套逻辑：账号读取、解密、区域判定、签到与用量查询均与平台无关，平台差异只集中在**路径解析**（`src/paths.ts`）与**设备指纹**（`src/identity.ts`）两处。
+
 ## Windows 说明
 
-- **账号数据目录**：插件读取 `%APPDATA%\Trae CN` / `%APPDATA%\TRAE SOLO CN` 下的 `User\globalStorage\storage.json`（与安装目录无关）。目录名与 macOS 一致，无需额外配置；若目录名对不上，可用插件配置项 `authFile` + `edition` 直接指定完整路径。
-- **应用版本头**：插件从安装目录 `<LOCALAPPDATA>\Programs\<AppName>\resources\app\product.json` 读取 `appVersion`，随请求发送 `x-app-version` / `x-ide-version`；读不到时这些头不发送（与旧版行为一致）。
-- **Raw Chat 探测（已知限制）**：`model-cache` 依赖 `sqlite3` 命令行，Windows 默认未安装，Raw Chat 能力探测会失败并安全回退。Raw Chat 默认关闭，不影响主流程。
-- 排查指引见 `docs/WINDOWS_TOKEN_PROBE.md`。
+- **账号数据目录**：插件读取 `%APPDATA%\<目录名>\User\globalStorage\storage.json`（与**安装目录无关**——Electron 系应用的用户数据固定放 `%APPDATA%`，装到 D 盘也一样）。插件会**并列探测**多个目录拼写（`Trae CN` 与 `trae-cn`、`TRAE SOLO CN` 与 `trae-solo-cn`），命中任一即可；Windows 文件名不区分大小写，因此不会重复探测同一目录。
+- **应用版本头**：插件从安装目录 `<LOCALAPPDATA>\Programs\<安装目录名>\resources\app\product.json` 读取 `appVersion`（`LOCALAPPDATA` 缺失时回退 `<home>\AppData\Local`），随请求发送 `x-app-version` / `x-ide-version`；读不到时这些头不发送，不影响登录与聊天。
+- **设备指纹**：`x-device-type` 发 `windows`，`x-os-version` 为 `Windows <版本>`。机器 ID 取自数据目录的 `telemetry.machineId`（或同目录 `machineid`），该推导在 Windows 上成立。
+- **文件锁**：宿主 `dsh-atomic-write` 原生处理 Windows 的独占创建语义（`EPERM` / `EBUSY` 重试），无需插件侧适配。
+- **Raw Chat 探测（已知限制）**：`model-cache` 依赖 `sqlite3` 命令行，Windows 默认未安装，该探测会失败并**安全回退**。Raw Chat 默认关闭，不影响主流程。
+- **权限位**：写凭据副本时传 `mode: 0o600` / `dirMode: 0o700`，Windows 忽略 POSIX 权限位——不报错，属已知且无害。
+
+> **未验证项（欢迎回报）**：Windows 上 Trae 数据目录的**实际名称**尚未在真机确认过。插件用 `product.json` 的 `win32DirName` 作依据（macOS 包实测为 `Trae CN` / `TRAE SOLO CN`），并额外探测 Linux 侧使用的 `applicationName` 拼写（`trae-cn` / `trae-solo-cn`）作为兜底。若你的目录名两者都不是，请按 [`docs/WINDOWS_TOKEN_PROBE.md`](https://github.com/dingminhua/dsh-connect-trae/blob/main/docs/WINDOWS_TOKEN_PROBE.md) 回报目录名（**该文档只要目录名与 key 名，不要 token**）；在确认前也可用 `authFile` + `edition` 直接指定完整路径。
 
 ## 开发
 

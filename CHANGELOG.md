@@ -1,5 +1,33 @@
 # Changelog
 
+## 2.3.1
+
+### Bug Fixes
+
+- **Windows 上只探测单一目录名，且这条路径从未在真机验证过**（"项目要支持 Windows"）。Trae 是 VS Code 系 Electron 应用，其每用户数据目录由安装器注册的产品名决定；插件此前在 Windows 上只按 macOS 的名字（`Trae CN` / `TRAE SOLO CN`）各探一条路径，猜错就直接「未登录」，而 `docs/WINDOWS_TOKEN_PROBE.md` 自己就写着「目录名是从 macOS 抄过来的，Windows 上实际名称未经确认」——即这条主路径从未验证，且失败时用户只看到「未登录」。
+  - **依据（2026-09-26 实测 macOS 包）**：`product.json` 的 `win32DirName` 才是 Windows 侧目录名的权威字段——`Trae CN` 为 `Trae CN`（`applicationName: trae-cn`）、`TRAE SOLO CN` 为 `TRAE SOLO CN`（`applicationName: trae-solo-cn`）。因此 macOS 拼写大概率正确，但同一产品族在 Linux 用的是小写 `applicationName` 拼写，Windows 实际写哪个未验证。
+  - **修法**：新增 `traeWindowsAppNames()`，Windows 侧改为**多候选并列探测**（`Trae CN` + `trae-cn`、`TRAE SOLO CN` + `trae-solo-cn`），与 Linux 侧既有的 `LINUX_APP_NAMES` 处理方式对齐；`src/identity.ts` 读 `product.json` 也共用同一份拼写表，避免「一个文件认这个名字、另一个不认」的不对称。**不再列出仅大小写不同的重复项**——Windows 文件系统不区分大小写，`trae cn` 与 `Trae CN` 是同一个目录，列两遍只会让探测清单和卡片上的「已检查的路径」重复一倍。
+  - **明确未解决的部分**：Windows 真机上的实际目录名**仍然没有验证**（本机为 macOS，无 Windows 环境）。多候选只是把「猜错即失败」降级为「多一次失败的 `readFile`」，并不是验证。`docs/WINDOWS_TOKEN_PROBE.md` 保留为待真机回报的清单，并把「第二步：确认数据目录名」标为仍需执行。
+  - **回归测试**（+2 例，全仓 319 → 322）：`paths.spec.ts`「探测 Windows 两种拼写」「不列出仅大小写不同的重复项」；`identity.spec.ts`「备用拼写（`trae-solo-cn`）下也能读到 `product.json`」。变异验证：`paths.ts` 退回单一目录名 → 1 条失败；`identity.ts` 退回单一拼写 → 1 条失败。
+
+### Docs
+
+- **`docs/WINDOWS_TOKEN_PROBE.md` 的「已知的其他 Windows 问题」整节已过期**：其中两条（`product.json` 硬编码 macOS 路径、`osVersion` 拼成 `win32 <release>`）**在代码里早已修复**，文档却仍写成未解决的缺陷——按它排查会把 Windows 用户引向错误方向。已复核并改写为「已处理 + 当前实现」，同时补上「Windows 安装/数据目录名仍未验证」这一条真实缺口，以及 `mode: 0o600` 在 Windows 被忽略属已知无害。
+- **README 明确 Windows 支持，并把「以后都要考虑 Windows」固化为开发约定**（"我们的项目要支持 Windows 的" / "之后都要考虑对 Windows 的影响"）。
+  - README（中英双语）新增**平台支持表**（macOS ✅ 完全支持 / Windows ✅ 支持 / Linux ✅ 支持），并在开头段落明示「支持 macOS、Windows 与 Linux」+ CI 双平台矩阵，让 Windows 支持成为对外可见的承诺而非隐含行为。
+  - 「Windows 说明」节**改写为与代码逐条对应**：账号目录（多候选拼写探测 + 与安装目录无关）、应用版本头（含 `LOCALAPPDATA` 回退）、设备指纹（`x-device-type: windows`、`Windows <release>`）、文件锁（宿主原生处理）、Raw Chat 的 `sqlite3` 限制、权限位被忽略。**每条都核对了代码位置后写入**。
+  - **删掉一句未经验证的断言**：原文写「目录名与 macOS 一致，**无需额外配置**」——而 `docs/WINDOWS_TOKEN_PROBE.md` 自己就说该目录名从未在真机确认。这正是本项目反复强调的「不得把未验证项写成既成事实」，故改为「未验证项（欢迎回报）」小节，说明依据是 `product.json` 的 `win32DirName`、兜底是 `applicationName` 拼写，并给出回报路径与 `authFile` 临时绕法。
+  - `DEVELOPMENT.md` 新增「**多平台要求（Windows 为长期支持目标）**」一节：给出平台相关面/无关面的分区表（路径解析与设备指纹为相关面，其余共用），以及 6 条改动强制检查项——新增路径必须带平台分支且多候选、不得用仅大小写不同的重复候选、新增外部命令依赖须确认 Windows 行为并登记限制、CI 必须在 `windows-latest` 通过、平台结论必须区分已验证/未验证、文档同步。这条约定使「考虑 Windows 影响」成为可执行的检查项而非口头要求。
+  - **顺带修掉一处链接会在 npm 页 404 的问题**：本次新增的「未验证项」指引用户去看 `docs/WINDOWS_TOKEN_PROBE.md`，但 `package.json` 的 `files` 白名单（`RELEASING.md` 有明确记载，属有意的包体控制）只放行 `docs/assets/` 下那张截图，**所有 `docs/*.md` 都不进 npm 包**——写成相对 Markdown 链接会在 npm 页面上 404。既有引用（`docs/IMPLEMENTATION_PLAN.md` 等）用的是反引号纯文本故不受影响，本次改为指向 GitHub 的绝对链接（实测 HTTP 200）。**未改动 `files` 白名单**：扩大发布会改变包体策略，属需另行定夺的取舍。
+
+### Bug Fixes（续）
+
+- **切换账号后无法领取签到：把「本机已签到」误判成「该账号已领取」**（用户上报）。2.3.0 的卡片与路由把 `checked_in` 与 `did_checked_in` **一并**当作「今日已领取」，于是切换账号后新账号显示「今日已领取」、按钮置灰、点不动。
+  - **根因（2026-09-26 实测，两个 CN 账号 + 同一台机器 + 同一北京日）**：两个字段判定维度不同——`checked_in` 是**账号**口径（该账号今天的奖励包已存在），`did_checked_in` 是**设备**口径（这台机器的今日名额已用掉，由 `x-device-id` 决定，与是哪个账号用的无关）。切换账号后正是后者：设备名额已用，而当前账号**没有拿到任何奖励**——此时说「今日已领取」把「没领到」说成了「已领到」。（详见 `docs/USAGE_API_RESEARCH.md` 新增的「决定性修正」一节，含四组请求头对照表。）
+  - **实测要点**：账号 A（当天已领取）与账号 B（当天未领取，无 `checkin_20260926_*` 奖励包）带**同一真实设备号**读状态，两者都返回 `did_checked_in:true`；不带该头、带合成号、或带本机另一安装的设备号，两者都返回 `false`；同一合成号连读三次也不会变 `true`（所以它不是「读过就算」的标记）。账号 B 带真实设备号 `claim` → `{"code":9095,"message":"当前设备今日已经签到，请明日再来哦～"}`，**未发放**，且 `total/consumed` 前后逐字节相同（`1900 / 1522.85`）。官方 NLS 文案 `2345 -> 该设备今日已参与签到` 亦为设备口径。
+  - **修法**：`checked_in` 成为唯一的「今日已领取」（账号口径）判据——已领取才直接返回 `alreadyCheckedIn` 且不发请求；`did_checked_in` 且未领取时，路由返回新的 `deviceCheckedIn: true`（不再谎报 `alreadyCheckedIn`），卡片保持按钮禁用但改说「本机今日的签到已用掉」并说明可换设备 / 明天再来；上游以 `9095` 拒绝时（窗口竞争）同样按 `deviceCheckedIn` 处理，**不当成失败**——那是一条上游规则，不是插件故障。
+  - **回归测试**（+4 例，全仓 316 → 319）：路由侧「设备已签但账号未领 → 不发请求且返回 `deviceCheckedIn:true` / `alreadyCheckedIn:false` / `code:9095`」「上游 9095 → 按设备已满上报而非错误」，卡片侧「设备已签不显示『今日已领取』且显示设备说明」「路由回 9095 时显示设备说明而非『签到失败』」。做过**变异验证**：把路由的 `checkedIn || didCheckedIn` 复原 → 1 条失败；把卡片的两个字段合并 → 1 条失败；删掉路由的设备守卫（照发请求）→ 1 条失败。
+
 ## 2.3.0 (2026-09-25)
 
 ### Breaking Changes
@@ -93,8 +121,8 @@
   - **领取前的守卫比上游更强**：路由 `POST /plugins/dsh-connect-trae/checkin` 仅接受 POST、仅接受回环来源、仅服务 `cn` 区域，并且**先读状态**——已领取（`checked_in` 或 `did_checked_in` 任一为真）就直接返回 `alreadyCheckedIn` 且**根本不发领取请求**；活动关闭答 409。国际版直接答 404 并说明原因，而不是把上游的 HTML 404 当成网络故障抛给用户。
   - **已实测上游按北京自然日幂等**：重复领取仍回 `code: 0`，而权益总额（`total=1600, consumed=390.8`）逐字节不变，**不会重复发放**。插件仍然自行守卫——「不会重复发放」是上游的行为，不是插件可以依赖的保证。
   - **业务拒绝不当成故障**：`claimed: false` + 原始业务码与 message 原样回给卡片并显示出来，而不是包成 500。否则用户只会看到「领取失败」，而丢掉唯一能解释原因的 `9004`。
-  - **对齐官方客户端的状态判定**：`checked_in` 与 `did_checked_in` 是**两个独立字段**，官方在「今日已领取」上同时看后者（即使状态读回 `checked_in: false` 也保持按钮禁用）。插件在**卡片与路由两侧都**按同一规则判定，`extra_credits` 也一并展示，避免把当天实际到账的 200 说成 150。
-  - 卡片新增 8 条真实点击测试（`tests/card-checkin.spec.tsx`，渲染**真组件**、`fireEvent.click` 真按钮、断言真发出去的请求），`usage.spec.ts` 补 6 条、`web-status.spec.ts` 补 7 条，共 21 条新测试（全仓 261 → 282）。做过**变异验证**：去掉路由的 `did_checked_in` 守卫 → 2 条失败；去掉卡片的同款判定 → 1 条失败；把卡片的 `POST` 改成 `GET` → 1 条失败；删掉「已领取则不发请求」的守卫 → 2 条失败。
+  - **对齐官方客户端的状态判定**：`checked_in` 与 `did_checked_in` 是两个独立字段，官方在「今日已领取」判定上也参考后者，插件据此保持按钮禁用。~~插件在卡片与路由两侧都按同一规则判定~~ —— **注：这里的口径在 2.3.1 被修正**。当时把两者一并当作「今日已领取」是**错的**：`did_checked_in` 实际是**设备**口径（`x-device-id`），不是账号口径，切换账号后会谎报「已领取」。以 2.3.1 为准；`extra_credits` 的展示（避免把当天实际到账的 200 说成 150）保持不变。
+  - 卡片新增 8 条真实点击测试（`tests/card-checkin.spec.tsx`，渲染**真组件**、`fireEvent.click` 真按钮、断言真发出去的请求），`usage.spec.ts` 补 6 条、`web-status.spec.ts` 补 7 条，共 21 条新测试（全仓 261 → 282）。做过**变异验证**：去掉路由的 `did_checked_in` 守卫 → 2 条失败；去掉卡片的同款判定 → 1 条失败；把卡片的 `POST` 改成 `GET` → 1 条失败；删掉「已领取则不发请求」的守卫 → 2 条失败。（其中针对 `did_checked_in` 的两条断言在 2.3.1 按其真实语义重写。）
   - 取证与接口契约：`docs/USAGE_API_RESEARCH.md` 新增「每日签到领取」一节（含决定性请求头对照表、幂等性实测表、区域限制与官方字段语义）。
 
 ## 2.0.6 (2026-09-22)

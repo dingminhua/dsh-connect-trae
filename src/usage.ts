@@ -85,15 +85,32 @@ export interface TraeUsageSnapshot {
 }
 
 export interface TraeCheckinStatus {
+  /**
+   * Whether the account's REWARD PACK for today already exists. This is the
+   * account-wide answer and it is the one that decides whether there is
+   * anything left to claim: a day with `checkedIn: true` has already been paid
+   * out, whichever device produced it.
+   */
   checkedIn: boolean
   /** Reward for one check-in, as reported by the upstream (`credits`). */
   credits: number
   enabled: boolean
   /**
-   * Whether today's reward was claimed in a previous session. The upstream
-   * reports `did_checked_in` separately from `checked_in`: the app uses the
-   * former to keep the claim button disabled for the rest of the Beijing day
-   * even when the status read happens to report `checked_in: false`.
+   * Whether THIS device's claim for today was already recorded. The upstream
+   * keys this on the `x-device-id` the request carries — not on the account —
+   * so it answers `true` for the device that claimed and `false` for the same
+   * account and day read from any other device.
+   *
+   * Measured 2026-09-26 on a live CN account whose claim had succeeded minutes
+   * earlier: `did_checked_in` was `true` with the claiming device id and
+   * `false` with the header omitted, with a synthetic id, and with another
+   * install's id. Repeating the read never flips it, so it is not "have I seen
+   * you before" state either — only an actual claim sets it.
+   *
+   * It is therefore NOT a "today is done" signal on its own (claiming again
+   * answers the upstream's own 9095 "该设备今日已参与签到" refusal); it is
+   * evidence that this exact device is already accounted for, which is what
+   * makes a claim safe to skip.
    */
   didCheckedIn: boolean
   /** Bonus credit granted on top of the base reward, when the upstream reports one. */
@@ -306,6 +323,12 @@ export class TraeUsageClient {
   /**
    * Daily check-in status. Read-only, and answered with or without the device
    * header — the claim is what needs it.
+   *
+   * The read DOES carry the header whenever this installation has one, and
+   * that is deliberate rather than incidental: `did_checked_in` is answered
+   * per device, so omitting the header would make a device that already claimed
+   * today look identical to one that never has (measured 2026-09-26, see
+   * {@link TraeCheckinStatus.didCheckedIn}).
    */
   async checkinStatus(signal?: AbortSignal): Promise<TraeCheckinStatus> {
     await this.requireCnRegion('check-in status')

@@ -48,6 +48,45 @@ const LINUX_APP_NAMES: Readonly<Record<TraeEdition, readonly string[]>> = {
   'solo-sg': ['trae-solo', 'TRAE SOLO'],
 }
 
+/**
+ * Windows desktop config directory names.
+ *
+ * Trae is a VS Code-family Electron app, and that family names its per-user
+ * data directory from the installer-registered product name — which on Windows
+ * is `product.json`'s `win32DirName`, NOT the macOS bundle spelling. Measured
+ * from the shipped bundles (2026-09-26):
+ *
+ *   Trae CN      -> win32DirName = "Trae CN"       (applicationName trae-cn)
+ *   TRAE SOLO CN -> win32DirName = "TRAE SOLO CN"  (applicationName trae-solo-cn)
+ *
+ * So the macOS spellings happen to be right here, and `win32DirName` is the
+ * authority that says so. The lowercase `applicationName` spellings
+ * (`trae-cn`, `trae-solo-cn`) are probed as well because the same family uses
+ * them for the Linux config directory, and which of the two a given installer
+ * writes has never been confirmed on a real Windows host
+ * (docs/WINDOWS_TOKEN_PROBE.md). Windows file systems are case-insensitive, so
+ * listing `trae cn` beside `Trae CN` would be the same directory twice — only
+ * genuinely different spellings are listed.
+ */
+const WINDOWS_APP_NAMES: Readonly<Record<TraeEdition, readonly string[]>> = {
+  cn: ['Trae CN', 'trae-cn'],
+  sg: ['Trae'],
+  solo: ['TRAE SOLO CN', 'trae-solo-cn'],
+  'solo-sg': ['TRAE SOLO'],
+}
+
+/**
+ * One edition's plausible Windows directory spellings, in probe order.
+ *
+ * Exported so the identity reader and the credential scanner probe the SAME
+ * names: the two resolve different files (the install's `product.json` vs the
+ * per-user `storage.json`) but they describe one installation, and a spelling
+ * that works for one but not the other is a bug rather than a preference.
+ */
+export function traeWindowsAppNames(edition: TraeEdition): readonly string[] {
+  return WINDOWS_APP_NAMES[edition]
+}
+
 export function traeStorageCandidates(
   platform: NodeJS.Platform = process.platform,
   home: string = homedir(),
@@ -64,7 +103,7 @@ export function traeStorageCandidates(
     } else if (platform === 'win32') {
       roots = [env.APPDATA, join(home, 'AppData', 'Roaming')].filter((value, index, all): value is string =>
         typeof value === 'string' && value !== '' && all.indexOf(value) === index)
-      appNames = [app]
+      appNames = WINDOWS_APP_NAMES[edition]
     } else if (platform === 'linux') {
       roots = [env.XDG_CONFIG_HOME || join(home, '.config')]
       appNames = LINUX_APP_NAMES[edition]

@@ -114,4 +114,8 @@ export const TRAE_CARD_CSS = `
 .dsm-trae-checkin-label{color:var(--dsw-alias-label-primary,#e6e6e6);font-size:13px;line-height:18px;font-weight:600}
 .dsm-trae-checkin-hint{color:var(--dsw-alias-label-tertiary,#9aa0a8);font-size:12px;line-height:17px}
 .dsm-trae-checkin-button{flex:none}
+/* The "this machine already used today's check-in" note is INFORMATIONAL, not
+   an error: it is Trae's one-per-device-per-day rule, and the day is simply
+   spent. Rendering it in the error colour would read as a plugin fault. */
+.dsm-trae-checkin-note{margin:8px 0 0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#c6c9d0)}
 `

@@ -243,10 +243,10 @@ describe('TraeCredentialStore with a CLI-only sign-in', () => {
     // writes a globalStorage/storage.json. Before CLI candidates existed the
     // store found nothing and the plugin reported "not signed in" forever.
     const dir = await temp(); const token = join(dir, 'trae-jwt-token')
-    await writeFile(token, `${cliJwtContent('4162118908394475', Math.floor((Date.now() + 86_400_000) / 1000))}\n`)
+    await writeFile(token, `${cliJwtContent('999000111222333', Math.floor((Date.now() + 86_400_000) / 1000))}\n`)
     const store = new TraeCredentialStore({ storagePath: token, edition: 'cn', ownPath: join(dir, 'own'), refresh: async () => { throw new Error('unused') } })
     const credential = await store.resolve()
-    expect(credential).toMatchObject({ userId: '4162118908394475', source: 'cli', edition: 'cn' })
+    expect(credential).toMatchObject({ userId: '999000111222333', source: 'cli', edition: 'cn' })
     // The CLI token has no host claim, so the CN host is supplied rather than an
     // empty string that would become an unusable base URL.
     expect(credential.host).toBe('https://api.trae.cn')

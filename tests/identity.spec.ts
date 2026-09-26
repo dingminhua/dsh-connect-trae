@@ -13,11 +13,17 @@ describe('Trae persisted identity', () => {
     const storage = join(root, 'User', 'globalStorage', 'storage.json')
     await mkdir(join(root, 'User', 'globalStorage'), { recursive: true })
     await writeFile(join(root, 'machineid'), 'machine-stable')
-    await writeFile(storage, JSON.stringify({ 'telemetry.devDeviceId': 'device-stable', 'telemetry.machineId': 'telemetry-machine', 'iCubeAuthInfo://icube-dc:221464824136636': 'encrypted', iCubeLastVersion: '2.3.1' }))
+    // A synthetic 15-digit icube-dc id: the fixture must exercise the exact
+    // shape Trae writes (`iCubeAuthInfo://icube-dc:<digits>` → digits become
+    // x-device-id) without publishing a real machine's id. The real value this
+    // test originally used is a stable installation identifier tied to the
+    // author's Trae account, so it does not belong in a public repository.
+    const deviceId = '999000111222333'
+    await writeFile(storage, JSON.stringify({ 'telemetry.devDeviceId': 'device-stable', 'telemetry.machineId': 'telemetry-machine', [`iCubeAuthInfo://icube-dc:${deviceId}`]: 'encrypted', iCubeLastVersion: '2.3.1' }))
     const first = await readTraeIdentity({ edition: 'cn', path: storage, source: 'desktop' }, { platform: 'darwin', home: root, env: {} })
     const second = await readTraeIdentity({ edition: 'cn', path: storage, source: 'desktop' }, { platform: 'darwin', home: root, env: {} })
     expect(first).toEqual(second)
-    expect(first).toMatchObject({ machineId: 'telemetry-machine', deviceId: '221464824136636', buildVersion: '2.3.1', platform: 'darwin' })
+    expect(first).toMatchObject({ machineId: 'telemetry-machine', deviceId, buildVersion: '2.3.1', platform: 'darwin' })
     // darwin install: no win32/windows-specific device type.
     expect(identityHeaders(first)['x-device-type']).toBe('mac')
   })
@@ -58,6 +64,24 @@ describe('Trae persisted identity', () => {
     const value = await readTraeIdentity({ edition: 'solo', path: storage, source: 'desktop' }, { platform: 'win32', home: root, env: {} })
     expect(value.appVersion).toBe('0.1.57')
     expect(value.platform).toBe('win32')
+  })
+
+  it('finds product.json under the alternate Windows install spelling', async () => {
+    // The install directory name on Windows has never been confirmed on a real
+    // host, so both the `win32DirName` spelling from product.json ("TRAE SOLO
+    // CN") and the lowercase `applicationName` spelling the same app family
+    // uses on Linux ("trae-solo-cn") are probed. A machine whose installer
+    // wrote the lowercase name must still resolve its app version — otherwise
+    // x-app-version / x-ide-version silently go missing from every request.
+    const root = await mkdtemp(join(tmpdir(), 'trae-win-')); cleanup.push(root)
+    const storage = join(root, 'User', 'globalStorage', 'storage.json')
+    await mkdir(join(root, 'User', 'globalStorage'), { recursive: true })
+    await writeFile(storage, JSON.stringify({ 'telemetry.devDeviceId': 'device-stable', 'telemetry.machineId': 'telemetry-machine' }))
+    const productDir = join(root, 'local', 'Programs', 'trae-solo-cn', 'resources', 'app')
+    await mkdir(productDir, { recursive: true })
+    await writeFile(join(productDir, 'product.json'), JSON.stringify({ appVersion: '0.1.99' }))
+    const value = await readTraeIdentity({ edition: 'solo', path: storage, source: 'desktop' }, { platform: 'win32', home: root, env: { LOCALAPPDATA: join(root, 'local') } })
+    expect(value.appVersion).toBe('0.1.99')
   })
 
   it('does not read product.json on linux and leaves appVersion undefined', async () => {

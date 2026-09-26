@@ -43,8 +43,8 @@ describe('Trae CLI token parsing', () => {
     `${Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url')}.${Buffer.from(JSON.stringify(payload)).toString('base64url')}.signature`
 
   it('reads the bare JWT a CLI login writes', () => {
-    const token = jwt({ data: { user_id: '4162118908394475', type: 'user' }, iss: 'trae', exp: 1789864873 })
-    expect(parseTraeCliToken(token)).toEqual({ accessToken: token, userId: '4162118908394475', expiresAtMs: 1789864873000 })
+    const token = jwt({ data: { user_id: '999000111222333', type: 'user' }, iss: 'trae', exp: 1789864873 })
+    expect(parseTraeCliToken(token)).toEqual({ accessToken: token, userId: '999000111222333', expiresAtMs: 1789864873000 })
   })
 
   it('accepts a JSON envelope in case a future CLI wraps the token', () => {

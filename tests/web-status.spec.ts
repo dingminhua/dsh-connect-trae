@@ -438,7 +438,7 @@ describe('registerTraeUsageRoute region dispatch', () => {
       })
     })
 
-    it('never reaches the upstream claim when today is already claimed', async () => {
+    it('treats an ACCOUNT-claimed day as done and never reaches the claim', async () => {
       const claims: number[] = []
       const client = checkinClient({
         statuses: [{ checked_in: true, code: 0, credits: 150, did_checked_in: true, enable: true }],
@@ -452,20 +452,48 @@ describe('registerTraeUsageRoute region dispatch', () => {
       expect(body()).toMatchObject({ alreadyCheckedIn: true, checkin: { checkedIn: true, didCheckedIn: true } })
     })
 
-    it('treats a previously claimed day (did_checked_in) as done too', async () => {
-      // The app keeps the button disabled off `did_checked_in` even when the
-      // status read reports `checked_in: false`; claiming again there would be
-      // a wasted request against a day the upstream already granted.
+    it('does NOT read a device-claimed day as "this account claimed"', async () => {
+      // Measured 2026-09-26: `did_checked_in` is keyed on `x-device-id`, not on
+      // the account. After switching accounts on one machine the status reads
+      // `checked_in: false, did_checked_in: true` — the device spent its
+      // check-in, the account was never rewarded. Answering
+      // `alreadyCheckedIn: true` there was a shipped bug: it told the user
+      // "claimed today" and hid that the new account got nothing.
       const claims: number[] = []
       const client = checkinClient({
         statuses: [{ checked_in: false, code: 0, credits: 150, did_checked_in: true, enable: true }],
         onClaim: () => { claims.push(1) },
       })
       const route = await mountCheckin(client)
-      const { res, status } = response()
+      const { res, status, body } = response()
       await route.handler({ method: 'POST', url: TRAE_CHECKIN_PATH, headers: {} }, res)
       expect(status()).toBe(200)
+      // No claim is sent — it could only be refused (9095) — but the answer
+      // must say WHY, and it must not claim the account was already paid.
       expect(claims).toEqual([])
+      expect(body()).toMatchObject({
+        claimed: false,
+        alreadyCheckedIn: false,
+        deviceCheckedIn: true,
+        code: 9095,
+        checkin: { checkedIn: false, didCheckedIn: true },
+      })
+    })
+
+    it('reports an upstream 9095 refusal as a spent device, not a failure', async () => {
+      // The device raced us: another window or the Trae app itself claimed
+      // between the guard read and the claim. 9095 is the upstream's own
+      // "该设备今日已参与签到", so it must surface as `deviceCheckedIn` rather
+      // than as a generic error the user would read as a plugin fault.
+      const client = checkinClient({
+        statuses: [{ checked_in: false, code: 0, credits: 150, did_checked_in: false, enable: true }],
+        claim: async () => ({ claimed: false, code: 9095, message: '当前设备今日已经签到，请明日再来哦～' }),
+      })
+      const route = await mountCheckin(client)
+      const { res, status, body } = response()
+      await route.handler({ method: 'POST', url: TRAE_CHECKIN_PATH, headers: {} }, res)
+      expect(status()).toBe(200)
+      expect(body()).toMatchObject({ claimed: false, alreadyCheckedIn: false, deviceCheckedIn: true, code: 9095 })
     })
 
     it('refuses with 409 and never claims when the activity is disabled', async () => {

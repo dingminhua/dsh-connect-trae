@@ -79,11 +79,22 @@ export interface TraeWebModel {
 /**
  * Daily check-in state rendered below the credit stats.
  *
- * `didCheckedIn` is not redundant with `checkedIn`: the upstream reports them
- * separately, and the official client keeps the claim button disabled for the
- * rest of the Beijing day off `did_checked_in` even when a status read comes
- * back `checked_in: false`. The card mirrors that rule so a stale-looking
- * status cannot invite a pointless second claim.
+ * The two booleans answer DIFFERENT questions and must never be collapsed into
+ * one "done" flag — doing that was a shipped bug (see CHANGELOG 2.3.1):
+ *
+ *  - `checkedIn` is ACCOUNT-level: today's reward pack exists for this account,
+ *    so there is nothing left to claim and the balance already includes it.
+ *  - `didCheckedIn` is DEVICE-level: this MACHINE already spent its one
+ *    check-in for the day, whichever account spent it. The upstream keys it on
+ *    the `x-device-id` in the request and answers it per device, not per
+ *    account (measured 2026-09-26: the same account and Beijing day answered
+ *    `false` with the header omitted, with a synthetic id, and with another
+ *    install's id, and `true` for the device that actually claimed).
+ *
+ * So `didCheckedIn && !checkedIn` is the "switched account" case: the device's
+ * daily check-in is used up, but THIS account was never rewarded. Claiming
+ * again is refused upstream (business code 9095, "该设备今日已参与签到"), so
+ * the card disables the button — but it must say that, not "claimed today".
  */
 export interface TraeWebCheckin {
   checkedIn: boolean
@@ -97,8 +108,19 @@ export interface TraeWebCheckin {
 export interface TraeWebCheckinClaim {
   /** False when the upstream answered a non-zero business code (e.g. 9004). */
   claimed: boolean
-  /** True when today was already claimed, so nothing was sent upstream. */
+  /**
+   * True only when THIS ACCOUNT's reward for today already exists, so nothing
+   * was sent upstream. Distinct from {@link TraeWebCheckinClaim.deviceCheckedIn}:
+   * a device that already claimed for another account leaves this false.
+   */
   alreadyCheckedIn: boolean
+  /**
+   * True when today's check-in was already spent on this DEVICE (by this or
+   * another account), so no claim was sent or the upstream refused it with
+   * 9095. Not an error: it is the truthful answer to "can this account claim
+   * here today?" — no, and the reason is the machine, not the account.
+   */
+  deviceCheckedIn?: boolean
   code?: number
   message?: string
   /** The refreshed check-in state, present whenever the claim path ran. */

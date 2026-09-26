@@ -18,6 +18,35 @@ describe('Trae storage paths', () => {
     expect(traeStorageCandidates('linux', '/home/test', { XDG_CONFIG_HOME: '/cfg' })[0]?.path).toBe(join('/cfg', 'trae-cn', 'User', 'globalStorage', 'storage.json'))
   })
 
+  it('probes both Windows spellings, since the real one is unverified', () => {
+    // Trae is a VS Code-family Electron app: the per-user data directory is
+    // named from the installer-registered product name, and `product.json`
+    // carries it as `win32DirName` (measured 2026-09-26: "Trae CN" / "TRAE SOLO
+    // CN", with `applicationName` being the lowercase trae-cn / trae-solo-cn
+    // that the same family uses on Linux). Which one a given Windows installer
+    // writes has never been confirmed on a real host — and the repo's own
+    // docs/WINDOWS_TOKEN_PROBE.md says so — so every plausible spelling is
+    // probed rather than one guess: a wrong guess costs one failed readFile, a
+    // missing one costs the user their sign-in.
+    const paths = traeStorageCandidates('win32', 'C:/home', { APPDATA: 'C:/Roaming' })
+      .filter(item => item.source === 'desktop' && item.edition === 'cn')
+      .map(item => item.path)
+    expect(paths).toContain(join('C:/Roaming', 'Trae CN', 'User', 'globalStorage', 'storage.json'))
+    expect(paths).toContain(join('C:/Roaming', 'trae-cn', 'User', 'globalStorage', 'storage.json'))
+  })
+
+  it('does not list the same Windows directory twice under different casing', () => {
+    // Windows file systems are case-insensitive, so "Trae CN" and "trae cn" are
+    // one directory: listing both would only duplicate every probe and every
+    // "paths checked" row on the signed-out card.
+    for (const platform of ['win32', 'darwin'] as const) {
+      const desktop = traeStorageCandidates(platform, 'C:/home', { APPDATA: 'C:/Roaming' })
+        .filter(item => item.source === 'desktop')
+      const names = desktop.map(item => item.path.toLowerCase())
+      expect(new Set(names).size).toBe(names.length)
+    }
+  })
+
   it('probes the macOS spelling of Linux config directories as well', () => {
     // The real Linux directory name is unverified on a real host, so both the
     // lowercase Electron spelling and the macOS spelling must be probed. Guessing

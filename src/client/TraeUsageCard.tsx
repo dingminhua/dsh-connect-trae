@@ -197,6 +197,14 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
   /** Last claim refusal, shown until the next successful refresh. */
   const [claimError, setClaimError] = useState<string | undefined>(undefined)
   /**
+   * Whether this MACHINE has spent today's check-in while the selected account
+   * has not been paid — the "switched account" state. Kept separate from
+   * `claimError` because it is not a failure: it is the upstream's one-per-
+   * device-per-day rule, and rendering it through the "签到失败：…" line would
+   * present a normal rule as a plugin fault.
+   */
+  const [deviceSpentNotice, setDeviceSpentNotice] = useState(false)
+  /**
    * A refused or unpersisted settings write, surfaced instead of silently
    * reverting. On 0.1.7 a rejected write resolves normally, so without this
    * the control would flip and then quietly snap back on the next snapshot.
@@ -271,7 +279,10 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
    * it came from — carrying it onto the other tab would attribute an
    * international account's problem to the CN one (or the reverse).
    */
-  useEffect(() => { setClaimError(undefined) }, [activeRegion])
+  useEffect(() => {
+    setClaimError(undefined)
+    setDeviceSpentNotice(false)
+  }, [activeRegion])
 
   useEffect(() => {
     if (!open || !activeRegionOn || status.status !== 'signed-in') return
@@ -334,13 +345,21 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
    * (it stops an obviously pointless click), not the protection.
    *
    * A refusal is not thrown away: the route answers `claimed: false` with the
-   * upstream's business code and message, and the card shows it. The upstream
-   * also reports success for an already-claimed day, so `alreadyCheckedIn`
-   * refreshes the state without pretending a new reward landed.
+   * upstream's business code and message, and the card shows it. Three answers
+   * are distinguished rather than collapsed into "failed":
+   *
+   *  - `alreadyCheckedIn` — this ACCOUNT was already paid today; show it as
+   *    claimed and refresh, never as an error.
+   *  - `deviceCheckedIn` (code 9095) — this MACHINE already spent today's
+   *    check-in, so this account cannot claim here today. That is the normal
+   *    outcome after switching accounts, and saying "check-in failed" would
+   *    blame the plugin for an upstream rule.
+   *  - anything else — a real refusal, reported verbatim.
    */
   const claimCheckin = async (): Promise<void> => {
     setClaiming(true)
     setClaimError(undefined)
+    setDeviceSpentNotice(false)
     try {
       const response = await fetch(withTraeRegion(TRAE_CHECKIN_PATH, activeRegion), {
         method: 'POST',
@@ -349,6 +368,13 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
       })
       const body = await response.json().catch(() => undefined) as (TraeWebCheckinClaim & { error?: string }) | undefined
       if (!response.ok) throw new Error(body?.error ?? `HTTP ${response.status}`)
+      if (body?.claimed === false && body.deviceCheckedIn === true) {
+        // Refresh through the usage route so the whole card (credits included)
+        // reflects the read-back state, then show the device explanation.
+        await refreshUsage(activeRegion)
+        if (mounted.current) setDeviceSpentNotice(true)
+        return
+      }
       if (body?.claimed === false && body.alreadyCheckedIn !== true) {
         throw new Error(body.message === undefined || body.message === ''
           ? t('row.checkinRefused', { code: String(body.code ?? '') })
@@ -719,37 +745,51 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
                     {status.creditsError === undefined ? null
                       : <p className="dsm-trae-usage-error">{t('row.creditsError', { message: status.creditsError })}</p>}
                     {status.checkin === undefined ? null : (() => {
-                      // `didCheckedIn` counts as done alongside `checkedIn`: the
-                      // upstream reports them separately, and the official app
-                      // keeps the button disabled for the rest of the day off
-                      // the former. Disabling on both means a status read that
-                      // happens to say `checked_in: false` cannot invite a
-                      // second, pointless claim.
-                      const done = status.checkin.checkedIn || status.checkin.didCheckedIn
+                      // The two flags are NOT the same condition (see
+                      // `TraeWebCheckin`): `checkedIn` is this ACCOUNT's reward
+                      // for today existing, `didCheckedIn` is this MACHINE
+                      // having spent its check-in — which after an account
+                      // switch is true for an account that was never rewarded.
+                      // Collapsing them made the card announce "今日已领取" (and
+                      // keep the button disabled) for the freshly switched
+                      // account, which is what the user reported. Show which of
+                      // the two it actually is.
+                      const accountClaimed = status.checkin.checkedIn
+                      // `deviceSpentNotice` covers the case the route only
+                      // learns about when a claim is attempted (the device was
+                      // spent between the status read and the claim); the
+                      // status-derived flag covers the steady state.
+                      const deviceSpent = !accountClaimed
+                        && (status.checkin.didCheckedIn || deviceSpentNotice)
                       const reward = formatNumber(status.checkin.credits)
                       const bonus = status.checkin.extraCredits === undefined
                         ? ''
                         : ` + ${formatNumber(status.checkin.extraCredits)}`
                       return (
-                        <div className="dsm-trae-checkin">
-                          <span className="dsm-trae-checkin-copy">
-                            <span className="dsm-trae-checkin-label">{t('row.checkinLabel')}</span>
-                            <span className="dsm-trae-checkin-hint">
-                              {t('row.checkinReward', { reward: `${reward}${bonus}` })}
-                              {done ? ` · ${t('row.checkinDoneHint')}` : ''}
+                        <>
+                          <div className="dsm-trae-checkin">
+                            <span className="dsm-trae-checkin-copy">
+                              <span className="dsm-trae-checkin-label">{t('row.checkinLabel')}</span>
+                              <span className="dsm-trae-checkin-hint">
+                                {t('row.checkinReward', { reward: `${reward}${bonus}` })}
+                                {accountClaimed ? ` · ${t('row.checkinDoneHint')}` : ''}
+                              </span>
                             </span>
-                          </span>
-                          <button
-                            type="button"
-                            className="dsm-btn dsm-btn-primary dsm-trae-checkin-button"
-                            disabled={!status.checkin.enabled || done || claiming}
-                            onClick={() => { void claimCheckin() }}
-                          >
-                            {claiming
-                              ? t('row.checkinClaiming')
-                              : done ? t('row.checkinClaimed') : t('row.checkinClaim')}
-                          </button>
-                        </div>
+                            <button
+                              type="button"
+                              className="dsm-btn dsm-btn-primary dsm-trae-checkin-button"
+                              disabled={!status.checkin.enabled || accountClaimed || deviceSpent || claiming}
+                              onClick={() => { void claimCheckin() }}
+                            >
+                              {claiming
+                                ? t('row.checkinClaiming')
+                                : accountClaimed ? t('row.checkinClaimed') : t('row.checkinClaim')}
+                            </button>
+                          </div>
+                          {deviceSpent
+                            ? <p className="dsm-trae-checkin-note" role="status">{t('row.checkinDeviceSpent')}</p>
+                            : null}
+                        </>
                       )
                     })()}
                     {status.checkin !== undefined && !status.checkin.enabled

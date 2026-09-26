@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { cpus, homedir, release } from 'node:os'
 import type { TraeEdition, TraeStorageCandidate } from './paths.ts'
+import { traeWindowsAppNames } from './paths.ts'
 
 export interface TraeIdentity {
   edition: TraeEdition
@@ -55,9 +56,12 @@ export async function readTraeIdentity(candidate: TraeStorageCandidate, options:
   const deviceId = dcDevice ?? devDevice ?? createHash('sha256').update(machineId).digest('hex').slice(0, 32)
   const buildVersion = nonEmpty(storage['iCubeLastVersion'])
   // product.json holds the app version that the real client sends as
-  // x-app-version / x-ide-version. Every edition's install name is mapped so
-  // an international account also resolves its app version; the file lives
-  // under the app bundle on macOS but under LOCALAPPDATA\Programs on Windows.
+  // x-app-version / x-ide-version. On macOS the file sits inside the `.app`
+  // bundle, whose name is the product name; on Windows it sits under
+  // `%LOCALAPPDATA%\Programs\<install dir>\resources\app`, where the install
+  // directory name is the installer's choice and has never been confirmed on a
+  // real host — hence the same spelling list the credential scanner uses
+  // (`traeWindowsAppNames`), so both halves of one installation agree.
   // Failures here must not break identity resolution, so each path is tried in
   // order and non-existent candidates are simply skipped.
   const APP_NAMES_BY_EDITION: Readonly<Record<TraeEdition, string>> = {
@@ -76,7 +80,9 @@ export async function readTraeIdentity(candidate: TraeStorageCandidate, options:
         .filter((value): value is string => typeof value === 'string' && value !== '')
         .filter((value, index, all) => all.indexOf(value) === index)
       for (const root of localRoots) {
-        productPaths.push(join(root, 'Programs', appName, 'resources', 'app', 'product.json'))
+        for (const spelling of traeWindowsAppNames(candidate.edition)) {
+          productPaths.push(join(root, 'Programs', spelling, 'resources', 'app', 'product.json'))
+        }
       }
     }
   }
