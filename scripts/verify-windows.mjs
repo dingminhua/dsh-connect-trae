@@ -19,7 +19,7 @@
  * 隐私逻辑最怕「两个地方各写一版，改了一处漏了另一处」。
  */
 
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
 import { existsSync } from 'node:fs'
 
@@ -37,7 +37,11 @@ const here = dirname(fileURLToPath(import.meta.url))
  */
 async function loadPlugin() {
   const local = join(here, '..', 'lib', 'index.js')
-  if (existsSync(local)) return import(local)
+  // `import()` takes a URL, not a path. A bare `C:\...\lib\index.js` is parsed as
+  // the URL scheme `c:` and throws ERR_UNSUPPORTED_ESM_URL_SCHEME on Windows —
+  // i.e. exactly on the platform this script exists to verify, before a single
+  // check runs. pathToFileURL is the conversion that makes the local hit work.
+  if (existsSync(local)) return import(pathToFileURL(local).href)
   try {
     return await import('dsh-connect-trae')
   } catch (error) {
@@ -139,8 +143,23 @@ console.log('\n[2] 插件能否从中解出账号（跑真代码的诊断路径�
 // from its own path and nothing else.
 const OWN_SCRATCH = join(here, '..', '.verify-windows-unused.json')
 
-// Diagnose each candidate once so the report explains every path it tried, the
-// same way the plugin's own signed-out card does.
+// Walk the candidates in the SAME order section [1] printed, so the report
+// explains every path that was tried. Going through the store per candidate —
+// rather than rescanning with a bare store — keeps parsing and decryption
+// identical to the plugin's real path AND keeps every probe pinned to ONE path.
+//
+// That pinning is load-bearing, not tidiness: `TraeCredentialStore` with no
+// `storagePath` scans the HOST's own directories by `process.platform`, so on a
+// non-Windows host it would probe a different set than [1] listed and its
+// `accounts()` could resolve a credential from the developer's OWN machine —
+// which is exactly how a deliberately empty HOME once reported "解出 1 个账号".
+// Claiming Trae was found where none exists is the most misleading output this
+// script could produce, so each candidate is resolved from its own path only.
+//
+// This is ONE pass over the candidates. `accounts()` and `diagnose()` read the
+// same files, so probing twice would double the work for no extra information.
+let accounts = []
+let hitPath
 for (const candidate of candidates) {
   const probe = new plugin.TraeCredentialStore({
     storagePath: candidate.path,
@@ -148,32 +167,37 @@ for (const candidate of candidates) {
     ownPath: OWN_SCRATCH,
     refresh: async () => { throw new Error('verify-windows: refresh not needed') },
   })
+  const found = await probe.accounts().catch(() => [])
   const { failures } = await probe.diagnose()
-  for (const failure of failures) {
-    // 失败原因是安全信息（missing / unreadable / invalid），message 可能出现路径
-    console.log(`      ${failure.reason.padEnd(10)} [${failure.edition}] ${maskUserPath(failure.path)}`)
-    if (failure.message !== undefined) {
-      // 只打印错误类型，避免把任何密文内容带出来
-      console.log(`                 ${String(failure.message).slice(0, 120)}`)
-    }
+
+  // One line per CANDIDATE, not per failure. A store pinned to one path answers
+  // with that path probed as BOTH a desktop document and a CLI token file (an
+  // override's shape is not known ahead of time — see TraeCredentialStore
+  // .candidates()), so printing `failures` verbatim would list every path twice
+  // and, worse, would mark the very file that DID supply the account as
+  // `invalid` — once as "not a storage document", once as "not a CLI token".
+  // On a machine whose only credential was just found successfully, that reads
+  // like a defect. So the shapes are merged into one verdict per path, and a
+  // path that produced an account is reported as resolved.
+  const own = failures.filter(failure => failure.path === candidate.path)
+  const sourceLabel = candidate.source === 'cli' ? 'CLI' : '桌面'
+  if (found.length > 0) {
+    console.log(`      ${'已解出'.padEnd(10)} [${candidate.edition}] ${maskUserPath(candidate.path)}  (${sourceLabel})`)
+    if (accounts.length === 0) { accounts = found; hitPath = candidate }
+    continue
+  }
+  // Prefer the more specific reason: `missing` is what both shapes report for an
+  // absent file, so a non-missing reason means at least one shape read the file
+  // and rejected its contents — which is the informative case.
+  const specific = own.find(failure => failure.reason !== 'missing')
+  const reason = specific?.reason ?? own[0]?.reason ?? 'missing'
+  console.log(`      ${reason.padEnd(10)} [${candidate.edition}] ${maskUserPath(candidate.path)}  (${sourceLabel})`)
+  if (specific?.message !== undefined) {
+    // 只打印错误类型，避免把任何密文内容带出来
+    console.log(`                 ${String(specific.message).slice(0, 120)}`)
   }
 }
 
-// Try each candidate in the SAME order section [1] printed, and report the first
-// one that actually yields credentials. Going through the store per candidate
-// keeps parsing/decryption identical to the plugin's real path.
-let accounts = []
-let hitPath
-for (const candidate of candidates) {
-  const probe = new plugin.TraeCredentialStore({
-    storagePath: candidate.path,
-    edition: candidate.edition,
-    ownPath: join(here, '..', '.verify-windows-unused.json'),
-    refresh: async () => { throw new Error('verify-windows: refresh not needed') },
-  })
-  const found = await probe.accounts().catch(() => [])
-  if (found.length > 0) { accounts = found; hitPath = candidate; break }
-}
 // 账号名只报形态：本脚本的输出会被贴到公开 issue，而账号名往往含真实姓名或
 // 手机号（实测本机就有真实姓名与「用户<手机号>」两类）。形态足以判断「解出来了」。
 check('解出至少一个账号', accounts.length > 0,
