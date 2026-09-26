@@ -4,6 +4,13 @@
 
 ### Bug Fixes
 
+- **验证脚本在 Windows 上启动即崩，一条检查都跑不到**（在 Windows 真机上实测发现）：`scripts/verify-windows.mjs` 的 `loadPlugin()` 写的是 `import(join(here, '..', 'lib', 'index.js'))`，把**路径**当成 **URL** 传给了 `import()`。Node 把 `C:\...` 解析成 scheme 为 `c:` 的 URL，抛 `ERR_UNSUPPORTED_ESM_URL_SCHEME`（"On Windows, absolute paths must be valid file:// URLs"）——**恰好在这个脚本唯一存在的目的平台上崩**。修法：改用 `pathToFileURL(local).href`。
+  - **为什么 CI 没拦住**：`.github/workflows/ci.yml` 只跑 typecheck / test / build，**从不执行这个脚本**；而 `tests/verify-windows.spec.ts` 测的是 `src/`，脚本是个独立的 `.mjs` 入口——「代码正确」与「入口能跑起来」是两件事，这条缝隙正好够一个致命启动错误通过。这不是笔误而是覆盖盲区：对**以单文件入口形式交付**的产物，测它所调用的库不等于测它本身。
+  - **回归测试**（+1 例，全仓 337 → 338）：把脚本**复制到临时目录**并配一个桩 `lib/index.js`（令 `existsSync(local)` 为真，从而精确命中崩掉的那个分支），再以**子进程**执行它，断言 ① 不出现 `ERR_UNSUPPORTED_ESM_URL_SCHEME`、② 输出走到了「结论：」而非死在加载器里。用桩而非本仓 `lib/` 是刻意的：`lib/` 不进版本库，且 CI 在**测试之后**才构建，测试不能依赖产物已存在。
+  - **变异验证**：把脚本退回 `import(local)` → 该用例失败（`stdout` 为空）；确认两条 stderr 断言也真的有约束力（同一变异下 `stderr` 确实含该错误码），不是空转。
+- **`[2]` 段把「已成功解出账号的那个文件」报成 `invalid`**（同一轮真机演练发现）：`TraeCredentialStore` 绑定单个 `storagePath` 时，会把该路径**同时当作桌面 `storage.json` 和 CLI token 文件各探一次**（覆盖路径的形态事先不可知，见 `candidates()`），因此直接打印 `diagnose()` 的 `failures` 会导致：① 每条路径重复出现两遍；② **刚刚成功解出账号的那个文件**被列为 `invalid`——一次按「不是存储文档」、一次按「不是 CLI token」。一台**唯一凭证已被成功找到**的机器，报告读起来却像有故障。修法：两段合并为**一次遍历**（`accounts()` 与 `diagnose()` 读同一批文件，探两遍纯属重复劳动），按路径**合并成一个结论**，命中账号的路径记为「已解出」；失败原因优先取更具体的一项（`missing` 是两种形态对不存在的文件的共同答案，非 `missing` 才说明读到了内容但被拒）。
+  - 实测修正前后：`invalid [solo] ...TRAE SOLO CN\...` + 每行重复两遍 → `已解出 [solo] ...TRAE SOLO CN\...  (桌面)`，与「解出至少一个账号」的结论一致。
+
 - **Windows 上只探测单一目录名，且这条路径从未在真机验证过**（"项目要支持 Windows"）。Trae 是 VS Code 系 Electron 应用，其每用户数据目录由安装器注册的产品名决定；插件此前在 Windows 上只按 macOS 的名字（`Trae CN` / `TRAE SOLO CN`）各探一条路径，猜错就直接「未登录」，而 `docs/WINDOWS_TOKEN_PROBE.md` 自己就写着「目录名是从 macOS 抄过来的，Windows 上实际名称未经确认」——即这条主路径从未验证，且失败时用户只看到「未登录」。
   - **依据（2026-09-26 实测 macOS 包）**：`product.json` 的 `win32DirName` 才是 Windows 侧目录名的权威字段——`Trae CN` 为 `Trae CN`（`applicationName: trae-cn`）、`TRAE SOLO CN` 为 `TRAE SOLO CN`（`applicationName: trae-solo-cn`）。因此 macOS 拼写大概率正确，但同一产品族在 Linux 用的是小写 `applicationName` 拼写，Windows 实际写哪个未验证。
   - **修法**：新增 `traeWindowsAppNames()`，Windows 侧改为**多候选并列探测**（`Trae CN` + `trae-cn`、`TRAE SOLO CN` + `trae-solo-cn`），与 Linux 侧既有的 `LINUX_APP_NAMES` 处理方式对齐；`src/identity.ts` 读 `product.json` 也共用同一份拼写表，避免「一个文件认这个名字、另一个不认」的不对称。**不再列出仅大小写不同的重复项**——Windows 文件系统不区分大小写，`trae cn` 与 `Trae CN` 是同一个目录，列两遍只会让探测清单和卡片上的「已检查的路径」重复一倍。
@@ -35,6 +42,12 @@
 
 ### Docs
 
+- **Windows 真机验证取得首个通过结果，README / 验证指引的「未验证项」措辞随之收敛**：此前 README（中英双语）与 `docs/WINDOWS_VERIFY_GUIDE.md` 都以「Windows 上 Trae 数据目录的实际名称尚未在真机确认过」为前提写成，而现在已有真机证据，把这句话留着就是反向的失真（本项目对「未验证项不得写成既成事实」有明确要求，反过来把**已验证项**写成未验证同样会误导）。
+  - **实测结果**（Windows 10.0.22621 + TRAE SOLO CN，`node scripts/verify-windows.mjs` 退出码 0）：命中 `%APPDATA%\TRAE SOLO CN\User\globalStorage\storage.json`；解出 1 个账号（`solo`/`cn`）；`x-device-type: windows`；`x-os-version: Windows 10.0.22621`；`x-device-id` 为 16 位纯数字（来自数据目录，**非**兜底哈希）；`x-app-version: 0.1.56`（取自 `%LOCALAPPDATA%\Programs\TRAE SOLO CN\resources\app\product.json`）。
+  - **确认的是**：`product.json` 的 `win32DirName` 作为 Windows 目录名依据**是对的**——`TRAE SOLO CN` 确实是真机上的实际目录名；安装路径推导与设备指纹四个字段也都成立。即「Windows 上插件读得到 Trae 登录」由真机证据支持，不再是推断。
+  - **仍然未验证的是**：`Trae CN` / `trae-cn`（中国版）两个拼写——那台机器只装了 SOLO 版。README 与验证指引都**明确保留**这一条并说明「它在此机器上不存在只反映本机没装该版本，不代表拼写有误」，避免读者把「本机没命中」误读成「拼写错了」。
+  - 因此平台支持表的 Windows 行由「目录名见下方『未验证项』」改为「**已在一台真机通过验证**」，并新增「真机验证结果」小节逐项列出实测值；`docs/WINDOWS_VERIFY_GUIDE.md` 删去「本机（macOS）无法执行这一步」的旧前提，改为状态节 + 实测输出样例；`docs/WINDOWS_TOKEN_PROBE.md` 文首改用状态更新说明，并在第二节与「已知问题」逐条标注哪些已由真机确认。
+  - `docs/WINDOWS_VERIFY_GUIDE.md` 的样例输出**改为真实输出的形态**（含 `[2]` 段一行一个候选的写法与退出码 0/1/2 的含义），此前的样例是示意性的，与实际输出格式已有偏差。
 - **`docs/WINDOWS_TOKEN_PROBE.md` 的「已知的其他 Windows 问题」整节已过期**：其中两条（`product.json` 硬编码 macOS 路径、`osVersion` 拼成 `win32 <release>`）**在代码里早已修复**，文档却仍写成未解决的缺陷——按它排查会把 Windows 用户引向错误方向。已复核并改写为「已处理 + 当前实现」，同时补上「Windows 安装/数据目录名仍未验证」这一条真实缺口，以及 `mode: 0o600` 在 Windows 被忽略属已知无害。
   - 该文档**改为「先跑脚本」**：手工五步降级为「脚本跑不起来时的备选路径」，并把第二步（数据目录名）更新为当前的**多候选拼写**清单与依据，明确「这一条是本次要查的核心」。
 - **README 明确 Windows 支持，并把「以后都要考虑 Windows」固化为开发约定**（"我们的项目要支持 Windows 的" / "之后都要考虑对 Windows 的影响"）。

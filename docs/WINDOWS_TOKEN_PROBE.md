@@ -1,8 +1,15 @@
 # Windows 环境排查备忘：Trae 登录探测
 
 > **这份文档是给在 Windows 机器上执行排查的人或 AI 看的。**
-> 作者（macOS）无法访问 Windows 真机，以下信息全部来自代码静态分析，
-> 未经 Windows 实机验证。请执行后把结果回报，或回填本文档。
+>
+> **状态更新（2026-09-26）**：已有一台真机跑通验证——Windows 10.0.22621 装
+> **TRAE SOLO CN**，`%APPDATA%\TRAE SOLO CN\User\globalStorage\storage.json`
+> 确实存在且能解出账号，设备指纹四项全部正确。因此**「TRAE SOLO CN」这个目录名
+> 已由真机确认**。仍未经真机确认的是 **`Trae CN` / `trae-cn`**（中国版）这两个
+> 拼写——那台机器上没装中国版。详见 `docs/WINDOWS_VERIFY_GUIDE.md`。
+>
+> 下面第二～五步仍然适用于**其它情形**（装的是中国版、目录名仍对不上、
+> 或加密 header 变化）。
 
 ## 先做这一步：跑验证脚本（推荐）
 
@@ -70,7 +77,10 @@ node 版本不符）时使用。
 **为什么列出两种拼写**：Trae 是 VS Code 系 Electron 应用，其每用户数据目录由安装器
 注册的产品名决定。macOS 包 `product.json` 里的 `win32DirName` 是 `Trae CN` /
 `TRAE SOLO CN`，而同一产品族在 Linux 用的是小写 `applicationName`（`trae-cn` /
-`trae-solo-cn`）。**Windows 上实际写哪个从未在真机确认**——这就是本次要查的重点。
+`trae-solo-cn`）。
+
+**真机进度**：`TRAE SOLO CN` 这个拼写**已在真机确认**（2026-09-26，见文首状态更新），
+说明 `win32DirName` 作依据是对的。`Trae CN` / `trae-cn`（中国版）**仍未经真机确认**。
 多探一个的成本只是一次失败的 `readFile`，漏探则用户直接看不到登录。
 
 ### 操作
@@ -198,17 +208,21 @@ $bytes = [System.Convert]::FromBase64String($v)
   `<LOCALAPPDATA>\Programs\<安装目录名>\resources\app\product.json`
   （`LOCALAPPDATA` 缺失时回退 `<home>\AppData\Local`）。读不到仍只是被 catch 掉、
   `appVersion` 为空，不影响登录与聊天。
-  **但其中「安装目录名」这一项仍是未验证的**——见下面新增的一条。
+  **且已在真机确认可用**：那台机器的 `TRAE SOLO CN\resources\app\product.json`
+  被正确读到，`x-app-version: 0.1.56`。
 - ~~`osVersion` 拼出来是 `win32 <release>` 而不是 `Windows <release>`~~
   **已处理**：现为 `Windows <release>`，`x-device-type` 也发 `windows`。
+  **且已在真机确认**：实测发出 `x-device-type: windows`、`x-os-version: Windows 10.0.22621`。
 - `src/paths.ts` 现在为 Windows 探测**多个目录拼写**（`Trae CN` 与 `trae-cn`、
   `TRAE SOLO CN` 与 `trae-solo-cn`）。依据是 `product.json` 的 `win32DirName`
   字段（macOS 包实测：`Trae CN` / `TRAE SOLO CN`），另一个是 VS Code 系在 Linux
-  上的 `applicationName` 拼写。**两者哪个才是 Windows 真机上的实际目录名，
-  仍未在 Windows 上验证过**——这正是上面第二步要查的东西。
+  上的 `applicationName` 拼写。
+  **真机进度**：`TRAE SOLO CN` 已在真机确认命中（2026-09-26），即 `win32DirName`
+  作依据是对的；`Trae CN` / `trae-cn` **仍未经真机确认**（那台机器没装中国版）。
   多候选的意义在于：猜错只多一次失败的 `readFile`，漏猜则用户直接看不到登录。
 - 机器 ID 是从数据目录里的 `telemetry.machineId` 或 `<数据目录>/machineid` 读的，
-  这个推导在 Windows 上是成立的，不受上面几条影响。
+  这个推导在 Windows 上是成立的。**真机实测**：`x-device-id` 为 16 位纯数字，
+  来自数据目录而非兜底哈希（兜底是 32 位十六进制）。
 - `src/auth.ts` 写插件自有凭据副本时传 `mode: 0o600` / `dirMode: 0o700`。
   Windows 忽略 POSIX 权限位，该参数不报错也无效果，属已知且无害。
 

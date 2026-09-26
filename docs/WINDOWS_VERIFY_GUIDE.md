@@ -1,13 +1,33 @@
 # Windows 真机验证指引
 
 > 给需要在 Windows 上确认「dsh-connect-trae 到底能不能读到 Trae 登录」的人。
-> 本机（macOS）无法执行这一步，所以这份指引的存在本身就是那个未验证项的产物。
->
-> 对应 README 的「未验证项（欢迎回报）」与 `docs/WINDOWS_TOKEN_PROBE.md`。
+> 对应 README 的「Windows 说明」与 `docs/WINDOWS_TOKEN_PROBE.md`。
 
-## 为什么必须真机验证
+## 状态：已有一台真机通过（2026-09-26）
 
-三件事已经做到了，但它们合起来**仍然不等于**「Windows 上可用」：
+本项**不再完全没有真机证据**。一台 Windows 10.0.22621（装 TRAE SOLO CN）上跑
+`node scripts/verify-windows.mjs` 结果是**全部通过**（退出码 0）：
+
+| 检查项 | 实测结果 |
+| --- | --- |
+| 目录候选 | 命中 `%APPDATA%\TRAE SOLO CN\User\globalStorage\storage.json` |
+| 账号解析 | 解出 1 个账号（`solo` / `cn`） |
+| `x-device-type` | `windows` |
+| `x-os-version` | `Windows 10.0.22621` |
+| `x-device-id` | 16 位纯数字（来自数据目录，非兜底哈希） |
+| `x-app-version` | `0.1.56`（取自安装目录的 `product.json`） |
+
+**结论**：`product.json` 的 `win32DirName` 作为目录名依据是对的；安装路径推导与
+设备指纹各字段在真机上也成立。也就是「Windows 上插件读得到 Trae 登录」已有真机
+证据，不再是推断。
+
+**仍然缺的**：那台机器只装了 TRAE SOLO CN，所以 `Trae CN` / `trae-cn` 两个拼写
+**仍未经真机确认**。如果你装的是 **Trae 中国版**（或国际版 / CLI），非常欢迎照下面
+跑一遍并把输出贴到 issue。
+
+## 为什么真机验证不可省
+
+三件事各自成立，但合起来**仍然不等于**「Windows 上可用」：
 
 | 已有证据 | 它证明了什么 | 它**不能**证明什么 |
 | --- | --- | --- |
@@ -15,7 +35,7 @@
 | 单元测试覆盖 win32 分支 | 给定输入时逻辑正确 | 输入来自真实文件系统 |
 | `win32DirName` 给出目录名依据 | 拼写有出处，不是猜的 | 安装器**实际**写了哪个名字 |
 
-所以缺的只有一环：**把真机上的真实文件交给真代码**。下面这一步就是做这件事。
+所以关键的一环始终是：**把真机上的真实文件交给真代码**。
 
 ---
 
@@ -48,31 +68,49 @@ Get-ChildItem -Path "$env:USERPROFILE\.dsh\profiles" -Directory |
 
 ### 它会输出什么
 
+下面是**真机实测**（2026-09-26，Windows 10.0.22621 + TRAE SOLO CN）的完整形态，
+顺序与措辞都按实际输出：
+
 ```text
 [1] 插件在 Windows 上会探测哪些路径
-    [有] cn       C:\Users\<user>\AppData\Roaming\Trae CN\User\globalStorage\storage.json
+    [  ] cn       C:\Users\<user>\AppData\Roaming\Trae CN\User\globalStorage\storage.json
     [  ] cn       C:\Users\<user>\AppData\Roaming\trae-cn\User\globalStorage\storage.json
-    ...
+    [  ] sg       C:\Users\<user>\AppData\Roaming\Trae\User\globalStorage\storage.json
+    [有] solo     C:\Users\<user>\AppData\Roaming\TRAE SOLO CN\User\globalStorage\storage.json
+    [  ] solo     C:\Users\<user>\AppData\Roaming\trae-solo-cn\User\globalStorage\storage.json
+    [  ] solo-sg  C:\Users\<user>\AppData\Roaming\TRAE SOLO\User\globalStorage\storage.json
+    [  ] cn       C:\Users\<user>\.trae-cn\trae-jwt-token  (CLI)
+    [  ] sg       C:\Users\<user>\.trae\trae-jwt-token  (CLI)
   [OK  ] 至少找到一个 storage.json 或 CLI token — 1 个桌面 + 0 个 CLI
 
-[2] 插件能否从中解出账号
-  [OK  ] 解出至少一个账号 — 7 字符 (cn/cn)
+[2] 插件能否从中解出账号（跑真代码的诊断路径）
+      missing    [cn] C:\Users\<user>\AppData\Roaming\Trae CN\User\globalStorage\storage.json  (桌面)
+      ...
+      已解出        [solo] C:\Users\<user>\AppData\Roaming\TRAE SOLO CN\User\globalStorage\storage.json  (桌面)
+      ...
+  [OK  ] 解出至少一个账号 — 12 字符 (solo/cn)  ← C:\Users\<user>\AppData\Roaming\TRAE SOLO CN\...\storage.json
 
 [3] 设备指纹（这些会作为请求头发给 Trae）
     x-device-type : windows
-    x-os-version  : Windows 10.0.22631
-    x-device-id   : 15 位，纯数字
-    x-app-version : 3.3.100
-  [OK  ] x-device-type 为 windows
-  ...
+    x-os-version  : Windows 10.0.22621
+    x-device-id   : 16 位，纯数字
+    x-app-version : 0.1.56
+  [OK  ] x-device-type 为 windows — windows
+  [OK  ] x-os-version 以 Windows 开头 — Windows 10.0.22621
+  [OK  ] x-device-id 非空 — 16 位，纯数字
+  [OK  ] 读到了 x-app-version — 0.1.56
 
 结论：全部通过 ✅
 ```
 
+`[2]` 的**每条路径只出现一行**，且真正解出账号的那条会标成「已解出」。
+（早先的版本会把同一路径打印两遍，并把**已经成功解出账号的那个文件**同时报成
+`invalid`——因为它把它既当 `storage.json` 又当 CLI token 各探了一次。现已合并为
+一行一个结论。）
+
 ### 怎么读结论
 
-- **全部通过** → 这台机器上插件能正常读到登录。**请把输出贴到 issue**（见下），
-  这条未验证项就可以关闭。
+- **全部通过** → 这台机器上插件能正常读到登录。**请把输出贴到 issue**（见下）。
 - **`[1]` 找到 0 个** → 目录名与插件的假设不符。这是**最有价值的一种失败**：
   把输出贴出来，我们就能按真实目录名补上探测。
   临时可用 `authFile` + `edition` 指定完整路径救急（见文末）。
@@ -80,6 +118,10 @@ Get-ChildItem -Path "$env:USERPROFILE\.dsh\profiles" -Directory |
   请按 `docs/WINDOWS_TOKEN_PROBE.md` 的「第五步」补一次 header 字节验证。
 - **只有 `x-app-version` 一行显示「未发送」** → 安装目录名不在探测列表里。
   **不影响登录与聊天**，但请贴出来，我们会补上这个名字。
+
+退出码也参与判定，便于自动化：`0` = 全部通过，`1` = 有真实失败，
+`2` = 未通过但**全部失败都只是「不是在 Windows 上跑」**（在 macOS / Linux 上跑脚本
+时的必然结果，不算机器的错）。
 
 ---
 

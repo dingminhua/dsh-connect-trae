@@ -115,7 +115,7 @@ npm install dsh-connect-trae
 | 平台 | 状态 | 说明 |
 | --- | --- | --- |
 | **macOS** | ✅ 完全支持 | 开发与验证环境；目录名均经真机确认 |
-| **Windows** | ✅ 支持 | CI 跑 `windows-latest`；账号目录、应用版本头、锁行为均有专门处理。目录名见下方「未验证项」 |
+| **Windows** | ✅ 支持 | CI 跑 `windows-latest`；账号目录、应用版本头、锁行为均有专门处理。**已在一台真机（Windows 10.0.22621 + TRAE SOLO CN）通过验证**，见下方 |
 | **Linux** | ✅ 支持 | 含 WSL2 + Trae CLI 场景（issue #5）；目录名按多候选探测 |
 
 三个平台共享同一套逻辑：账号读取、解密、区域判定、签到与用量查询均与平台无关，平台差异只集中在**路径解析**（`src/paths.ts`）与**设备指纹**（`src/identity.ts`）两处。
@@ -129,7 +129,24 @@ npm install dsh-connect-trae
 - **Raw Chat 探测（已知限制）**：`model-cache` 依赖 `sqlite3` 命令行，Windows 默认未安装，该探测会失败并**安全回退**。Raw Chat 默认关闭，不影响主流程。
 - **权限位**：写凭据副本时传 `mode: 0o600` / `dirMode: 0o700`，Windows 忽略 POSIX 权限位——不报错，属已知且无害。
 
-> **未验证项（欢迎回报）**：Windows 上 Trae 数据目录的**实际名称**尚未在真机确认过。**一条命令即可验证并回报**：`node scripts/verify-windows.mjs` —— 它用插件自身的构建产物列出在这台机器上探测的每条路径、能否解出账号、以及设备指纹，输出**已脱敏**（用户名替换为 `<user>`，账号名与设备号只给长度），可直接贴进 issue。插件用 `product.json` 的 `win32DirName` 作依据（macOS 包实测为 `Trae CN` / `TRAE SOLO CN`），并额外探测 Linux 侧使用的 `applicationName` 拼写（`trae-cn` / `trae-solo-cn`）作为兜底。**完整的验证步骤与结论判读见 [`docs/WINDOWS_VERIFY_GUIDE.md`](https://github.com/dingminhua/dsh-connect-trae/blob/main/docs/WINDOWS_VERIFY_GUIDE.md)**；手工逐步排查见 [`docs/WINDOWS_TOKEN_PROBE.md`](https://github.com/dingminhua/dsh-connect-trae/blob/main/docs/WINDOWS_TOKEN_PROBE.md)（**只要目录名与 key 名，不要 token**）。在确认前也可用 `authFile` + `edition` 直接指定完整路径。
+### 真机验证结果（2026-09-26，Windows 10.0.22621 + TRAE SOLO CN）
+
+`node scripts/verify-windows.mjs` 实测**全部通过**（退出码 0）：
+
+| 检查项 | 实测结果 |
+| --- | --- |
+| 目录探测 | 命中 `%APPDATA%\TRAE SOLO CN\User\globalStorage\storage.json`（其余候选为 missing） |
+| 账号解析 | 解出 1 个账号，`solo` / `cn` 区域 |
+| `x-device-type` | `windows` ✅ |
+| `x-os-version` | `Windows 10.0.22621` ✅ |
+| `x-device-id` | 16 位纯数字（来自数据目录，非兜底哈希）✅ |
+| `x-app-version` | `0.1.56`，取自 `%LOCALAPPDATA%\Programs\TRAE SOLO CN\resources\app\product.json` ✅ |
+
+**这确认了什么**：`win32DirName` 作依据是**正确**的——`TRAE SOLO CN` 这个拼写确实是 Windows 真机上的实际目录名，且 `product.json` 的安装路径推导与设备指纹各字段都成立。即「Windows 上插件读得到 Trae 登录」已由真机证据支持，不再是推断。
+
+> **仍然未验证的部分**：本机只装了 TRAE SOLO CN，因此 `Trae CN` / `trae-cn` 这两个拼写**仍未经真机确认**——但它们在此机器上不存在只反映「本机没装这个版本」，不代表拼写有误。装了 Trae 中国版的 Windows 用户仍欢迎跑一次上面的命令回报。
+
+> **安装 Trae 中国版或别的情形？一条命令即可回报**：`node scripts/verify-windows.mjs` —— 它用插件自身的构建产物列出在这台机器上探测的每条路径、能否解出账号、以及设备指纹，输出**已脱敏**（用户名替换为 `<user>`，账号名与设备号只给长度），可直接贴进 issue。**完整的验证步骤与结论判读见 [`docs/WINDOWS_VERIFY_GUIDE.md`](https://github.com/dingminhua/dsh-connect-trae/blob/main/docs/WINDOWS_VERIFY_GUIDE.md)**；手工逐步排查见 [`docs/WINDOWS_TOKEN_PROBE.md`](https://github.com/dingminhua/dsh-connect-trae/blob/main/docs/WINDOWS_TOKEN_PROBE.md)（**只要目录名与 key 名，不要 token**）。若目录名仍对不上，可用 `authFile` + `edition` 直接指定完整路径救急。
 
 ## 开发
 
