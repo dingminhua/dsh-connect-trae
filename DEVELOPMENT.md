@@ -79,6 +79,8 @@ DshProject/
 2. **不得用仅大小写不同的重复候选**：Windows 文件系统不区分大小写，`trae cn` 与 `Trae CN` 是同一个目录。
 3. **新增对外部可执行文件或 POSIX 专有能力的依赖**（`sqlite3`、权限位、符号链接等）必须：确认 Windows 行为 + 提供失败兜底 + 在 README「Windows 说明」登记为已知限制。
 4. **CI 必须在 `windows-latest` 上通过**（`.github/workflows/ci.yml` 已配置 `ubuntu-latest` + `windows-latest` 双平台矩阵）。新增测试若只覆盖 POSIX 语义，等于没有验证 Windows。
+   - **Windows runner 明显更慢，首个用例承担冷启动**：`vitest.config.ts` 的 `testTimeout` 已相应设为 20s（实测首个用例可达 9.4s）。**出现超时先分清是冷启动还是回归**：只有每个文件的第一个用例慢、同文件其余用例在毫秒级 → 冷启动；原本很快的用例在**所有**平台都变慢 → 真实回归。**不得靠放宽断言来消除超时。**
+   - **时间相关断言要留足余量**：Windows 上 `setTimeout` 与文件系统调用的抖动比 macOS 大，涉及真实时钟的测试不要贴着边界写。
 5. **平台相关结论必须区分「已验证」与「未验证」**：macOS 可本机验证，Windows / Linux 目录名等未在真机确认的项，一律在 README 与 `docs/WINDOWS_TOKEN_PROBE.md` 标注为**未验证项**，不得写成既成事实。
 6. **文档同步**：新增平台差异时同步更新 README「平台支持」表与「Windows 说明」，以及 `docs/WINDOWS_TOKEN_PROBE.md` 的排查步骤。
 
