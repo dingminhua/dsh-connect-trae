@@ -65,8 +65,12 @@ async function loadPlugin() {
 
 const ok = (yes) => (yes ? 'OK  ' : 'FAIL')
 let failures = 0
+const failedLabels = []
 function check(label, passed, detail = '') {
-  if (!passed) failures += 1
+  if (!passed) {
+    failures += 1
+    failedLabels.push(label)
+  }
   console.log(`  [${ok(passed)}] ${label}${detail === '' ? '' : ` — ${detail}`}`)
 }
 
@@ -248,10 +252,28 @@ if (accounts.length > 0) {
 }
 
 // ---------------------------------------------------------------- 4. 结论
+//
+// 退出码反映「这台机器是否真的可用」，以便脚本能进自动化：
+//   0 = 全部通过
+//   1 = 有真实失败
+//   2 = 未通过，但失败全部来自「不是在 Windows 上跑」——不算机器的错
+//
+// 区分 0/2 很重要：本脚本检查的是「Windows 上能不能读到 Trae」，所以在
+// macOS / Linux 上跑，失败是必然的——那里既没有 %APPDATA%\Trae CN，平台断言
+// 也不成立。一律返回 1 会让 CI 或批量巡检把这种预期失败当成真问题；一律返回 0
+// 又让脚本无法用于判断。故非 Windows 主机上的失败统一记为「不适用」(2)。
+const platformOnly = failures > 0 && process.platform !== 'win32'
+
 console.log(`\n${'='.repeat(72)}`)
 if (failures === 0) {
   console.log('结论：全部通过 ✅')
   console.log('  这台机器上的插件路径与设备指纹均正常。')
+  console.log('  请把上面完整输出贴到 issue，即可关闭「Windows 未验证」这一项：')
+  console.log('  https://github.com/dingminhua/dsh-connect-trae/issues')
+} else if (platformOnly) {
+  console.log('结论：未通过，但只因为当前不是 Windows（预期）')
+  console.log('  平台相关的断言在非 Windows 主机上必然失败，这不代表任何东西坏了。')
+  console.log('  本报告只有在该脚本于 Windows 真机上运行时才具有验收意义。')
 } else {
   console.log(`结论：${failures} 项未通过 ❌`)
   if (process.platform !== 'win32') {
@@ -262,3 +284,4 @@ if (failures === 0) {
   console.log('  https://github.com/dingminhua/dsh-connect-trae/issues')
 }
 console.log('='.repeat(72))
+process.exit(failures === 0 ? 0 : platformOnly ? 2 : 1)
