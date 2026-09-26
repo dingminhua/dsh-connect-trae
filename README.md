@@ -144,6 +144,26 @@ npm install dsh-connect-trae
 
 **这确认了什么**：`win32DirName` 作依据是**正确**的——`TRAE SOLO CN` 这个拼写确实是 Windows 真机上的实际目录名，且 `product.json` 的安装路径推导与设备指纹各字段都成立。即「Windows 上插件读得到 Trae 登录」已由真机证据支持，不再是推断。
 
+#### 脚本之外的运行路径（同一台真机，2026-09-26）
+
+上表四项只覆盖**路径探测与设备指纹**，不等于「整个插件在 Windows 上跑得通」。因此另外单独实测了插件的主流程（直接调用 `lib/` 的导出，即产品代码本身）：
+
+| 运行路径 | 实测结果 |
+| --- | --- |
+| `TraeCredentialStore.resolve()` | ✅ 返回凭据，host `https://api.trae.cn`，token 有效期正常解析 |
+| `identityHeaders()` 全部请求头 | ✅ 10 个头全部生成（`x-device-id` / `x-machine-id` / `x-device-cpu` / `x-ide-version-code` 等） |
+| 用量查询（只读，不消耗积分） | ✅ 拿到 9 个积分包，总额 2050 / 已用 1522.85 |
+| 模型目录拉取（只读） | ✅ 拉到 **42 个模型** |
+| 原子写 `writeFileAtomic` | ✅ 写入 + 回读一致 |
+| 并发文件锁 `withFileLock` | ✅ 8 个并发写串行化正确，**无丢失更新**（Windows 独占创建语义由宿主处理，验证成立） |
+| `SSE` 解码 | ✅ 代码按 `\r?\n` 切分，CRLF 与分块均支持 |
+
+也就是说：登录、身份、用量、模型目录、并发写入这些**主流程在 Windows 上均实测可用**。
+
+> **已知限制（本机实测确认其行为）**：`model-cache` 依赖 `sqlite3` 命令行，本机未安装，实测抛 `ENOENT`（`spawn sqlite3 ENOENT`），调用方 `.catch(() => undefined)` 正确兜底——**不影响主流程**，Raw Chat 默认关闭。
+>
+> 另外该模块的 `state.vscdb` 路径在 Windows 上**硬编码了 `Trae CN` 单一拼写**，而 `paths.ts` 会多候选探测 `Trae CN` / `trae-cn`。当前因为 `sqlite3` 在本机不存在、该路径必然失败并兜底，所以**这条不一致尚未暴露**；但它是一处真实的精度缺口（装了 `sqlite3` 且目录拼写为小写时会读不到缓存），已记录待修。
+
 > **仍然未验证的部分**：本机只装了 TRAE SOLO CN，因此 `Trae CN` / `trae-cn` 这两个拼写**仍未经真机确认**——但它们在此机器上不存在只反映「本机没装这个版本」，不代表拼写有误。装了 Trae 中国版的 Windows 用户仍欢迎跑一次上面的命令回报。
 
 > **安装 Trae 中国版或别的情形？一条命令即可回报**：`node scripts/verify-windows.mjs` —— 它用插件自身的构建产物列出在这台机器上探测的每条路径、能否解出账号、以及设备指纹，输出**已脱敏**（用户名替换为 `<user>`，账号名与设备号只给长度），可直接贴进 issue。**完整的验证步骤与结论判读见 [`docs/WINDOWS_VERIFY_GUIDE.md`](https://github.com/dingminhua/dsh-connect-trae/blob/main/docs/WINDOWS_VERIFY_GUIDE.md)**；手工逐步排查见 [`docs/WINDOWS_TOKEN_PROBE.md`](https://github.com/dingminhua/dsh-connect-trae/blob/main/docs/WINDOWS_TOKEN_PROBE.md)（**只要目录名与 key 名，不要 token**）。若目录名仍对不上，可用 `authFile` + `edition` 直接指定完整路径救急。

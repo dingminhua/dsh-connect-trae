@@ -48,6 +48,11 @@
   - **仍然未验证的是**：`Trae CN` / `trae-cn`（中国版）两个拼写——那台机器只装了 SOLO 版。README 与验证指引都**明确保留**这一条并说明「它在此机器上不存在只反映本机没装该版本，不代表拼写有误」，避免读者把「本机没命中」误读成「拼写错了」。
   - 因此平台支持表的 Windows 行由「目录名见下方『未验证项』」改为「**已在一台真机通过验证**」，并新增「真机验证结果」小节逐项列出实测值；`docs/WINDOWS_VERIFY_GUIDE.md` 删去「本机（macOS）无法执行这一步」的旧前提，改为状态节 + 实测输出样例；`docs/WINDOWS_TOKEN_PROBE.md` 文首改用状态更新说明，并在第二节与「已知问题」逐条标注哪些已由真机确认。
   - `docs/WINDOWS_VERIFY_GUIDE.md` 的样例输出**改为真实输出的形态**（含 `[2]` 段一行一个候选的写法与退出码 0/1/2 的含义），此前的样例是示意性的，与实际输出格式已有偏差。
+- **验证脚本的检查范围被明确划出，并补跑脚本之外的主流程实测**：`verify-windows.mjs` 的六项**只覆盖路径探测与设备指纹**，把它读成「整个插件在 Windows 上没问题」是过度外推。因此同一台真机上另外直接调用 `lib/` 导出跑了主流程：
+  - `TraeCredentialStore.resolve()` ✅ 返回凭据（host `https://api.trae.cn`）；`identityHeaders()` ✅ 10 个请求头全部生成；只读用量查询 ✅ 9 个积分包（总额 2050 / 已用 1522.85）；只读模型目录 ✅ **42 个模型**；`writeFileAtomic` ✅ 写入回读一致；并发 `withFileLock` ✅ **8 并发串行化且无丢失更新**（此前 README 只写「宿主原生处理 Windows 独占创建语义」，现改为**实测成立**）；`SSE` 解码 ✅ 按 `\r?\n` 切分，CRLF 与分块均支持。
+  - **实测确认了一处已知限制的真实行为**：`model-cache` 的 `sqlite3` 在本机不存在，抛 `ENOENT`（`spawn sqlite3 ENOENT`），调用方 `.catch(() => undefined)` 正确兜底，主流程不受影响——README 原写「会失败并安全回退」，现补上错误码作为依据。
+  - **顺带发现一处尚未暴露的真实精度缺口**：`src/model-cache.ts` 在 Windows 上把 `state.vscdb` 路径**硬编码为单一拼写 `Trae CN`**（`paths.ts` 是多候选 `Trae CN` / `trae-cn`），且该模块自己重算了一遍目录而没复用 `traeStorageCandidates`。当前因为 `sqlite3` 缺失、该路径必然失败并兜底，所以**不可观测**；但装了 `sqlite3` 且目录拼写为小写时会读不到缓存。**未在本轮修改代码**，已在 README 与验证指引登记为待修缺口（避免「发现了但不说」）。
+  - 以上「脚本之外」的实测结果同时写入 README（中英）与 `docs/WINDOWS_VERIFY_GUIDE.md`，与脚本自身那六项**分表列出**，不让读者混淆两者的证据强度。
 - **`docs/WINDOWS_TOKEN_PROBE.md` 的「已知的其他 Windows 问题」整节已过期**：其中两条（`product.json` 硬编码 macOS 路径、`osVersion` 拼成 `win32 <release>`）**在代码里早已修复**，文档却仍写成未解决的缺陷——按它排查会把 Windows 用户引向错误方向。已复核并改写为「已处理 + 当前实现」，同时补上「Windows 安装/数据目录名仍未验证」这一条真实缺口，以及 `mode: 0o600` 在 Windows 被忽略属已知无害。
   - 该文档**改为「先跑脚本」**：手工五步降级为「脚本跑不起来时的备选路径」，并把第二步（数据目录名）更新为当前的**多候选拼写**清单与依据，明确「这一条是本次要查的核心」。
 - **README 明确 Windows 支持，并把「以后都要考虑 Windows」固化为开发约定**（"我们的项目要支持 Windows 的" / "之后都要考虑对 Windows 的影响"）。
