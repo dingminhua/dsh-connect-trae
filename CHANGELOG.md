@@ -12,6 +12,11 @@
 
 ### Tests
 
+- **Windows 真机验证脚本的三处可用性缺陷**（在真正按「Windows 用户拉代码 → 跑脚本」的流程演练时发现，全部是脚本自身的问题）：
+  - **空机器误报「解出 1 个账号」**（最严重）：`TraeCredentialStore` 不传 `storagePath` 时会按 `process.platform` 扫描**宿主**目录，于是在一个刻意清空的 HOME 上，脚本从开发者本机解出了凭证——即「断言在一台没有任何 Trae 的机器上找到了 Trae」。这是本脚本可能产出的最误导性结果，因为它恰好会被读成「Windows 能用了」。修法：每个候选都**绑定到它自己的路径**，绝不回退到宿主扫描；并新增 4 条回归测试（`tests/verify-windows.spec.ts`）锁死该性质，变异验证：让 store 忽略固定路径 → 2 条失败。
+  - **`[1]` 与 `[2]` 可能描述不同机器**：`[1]` 列的是 win32 候选，`[2]` 却扫宿主平台目录。现在两段同源，且 `[2]` 逐候选诊断并给出**命中路径**归属。
+  - **未构建时的报错不可用**：`lib/` 不进版本库，拉代码后直接跑脚本会撞 `ERR_MODULE_NOT_FOUND` 堆栈。现在明确提示「这是源码 checkout、需要先 `pnpm install && pnpm run build`」，并以退出码 1 结束（实测）。
+- **CLI-only 场景的两处误判**：① 身份解析误把 CLI token 当 `storage.json` 解析而抛 JSON 错——`resolveTraeIdentity` 的 CLI 兜底**只在文件不存在时**触发，故 CLI 候选改用 `readTraeCliIdentity` 直连；② `x-app-version` 缺失被计为失败，但那只是少一个请求头（登录/聊天/签到均不受影响），会让一台完全可用的机器报「未通过」，现改为 `[INFO]`，并对 CLI 候选改用不同措辞（CLI 从 `ide_version.json` 取版本，而非 `product.json`）。
 - **修复 Windows CI 的冷启动超时抖动**（CI #60 失败，同一份代码在 #59 / #61 通过）。`windows-latest` 上每个测试文件的**第一个**用例会吃到一次性的模块转换成本，超过 vitest 默认的 5000ms：
   - 实测（#60，该次仅改 `.md`，代码与通过的那次逐字节相同）：`identity.spec.ts` 首个用例 5179ms 超时、同文件后续用例 6–60ms；`card-checkin.spec.tsx` 首个用例 9435ms 超时、后续 50–196ms；该次总计 `transform 17.71s / import 24.28s`。
   - **判定为抖动而非缺陷的依据**：只有每个文件的第一个用例受影响，同文件其余用例均在毫秒级；且同一份代码在前后两次 CI 均通过。

@@ -25,11 +25,42 @@ import { existsSync } from 'node:fs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 
-/** 定位插件入口：优先脚本同级的构建产物，其次已安装的 npm 包。 */
-function loadPlugin() {
+/**
+ * Locate the plugin entry point: this checkout's build output first, then an
+ * installed copy.
+ *
+ * `lib/` is gitignored, so a fresh clone has no build output at all. That is the
+ * expected first state after `git clone`, and the failure it produces must be an
+ * instruction rather than a raw `ERR_MODULE_NOT_FOUND` stack — a user following
+ * the README should never have to read a Node resolution trace to learn they
+ * need to build.
+ */
+async function loadPlugin() {
   const local = join(here, '..', 'lib', 'index.js')
   if (existsSync(local)) return import(local)
-  return import('dsh-connect-trae')
+  try {
+    return await import('dsh-connect-trae')
+  } catch (error) {
+    const fromCheckout = existsSync(join(here, '..', 'src', 'index.ts'))
+    console.error('')
+    console.error('无法加载插件代码。')
+    console.error('')
+    if (fromCheckout) {
+      console.error('当前目录看起来是一份源码 checkout，但缺少构建产物 lib/。')
+      console.error('lib/ 不进版本库（见 .gitignore），所以拉取代码后必须先构建：')
+      console.error('')
+      console.error('    pnpm install')
+      console.error('    pnpm run build      # 或 npm install && npm run build')
+      console.error('')
+      console.error('然后再运行本脚本。')
+    } else {
+      console.error('既没有找到同级的 lib/index.js，也无法从已安装的包解析 dsh-connect-trae。')
+      console.error('请在本插件目录内运行，或先安装：dsh plugin --profile desktop add dsh-connect-trae')
+    }
+    console.error('')
+    console.error(`（原始错误：${error instanceof Error ? error.message : String(error)}）`)
+    process.exit(1)
+  }
 }
 
 const ok = (yes) => (yes ? 'OK  ' : 'FAIL')
@@ -91,37 +122,89 @@ check('至少找到一个 storage.json 或 CLI token', foundDesktop.length + fou
 // ---------------------------------------------------------------- 2. 账号识别
 console.log('\n[2] 插件能否从中解出账号（跑真代码的诊断路径）')
 
-const store = new plugin.TraeCredentialStore({
-  refresh: async () => { throw new Error('verify-windows: refresh not needed') },
-})
-const diagnosed = await store.diagnose()
-console.log(`    探测了 ${diagnosed.tried.length} 条候选，其中 ${diagnosed.failures.length} 条失败：`)
-for (const failure of diagnosed.failures) {
-  // 失败原因是安全信息（missing / unreadable / invalid），message 可能出现路径
-  console.log(`      ${failure.reason.padEnd(10)} [${failure.edition}] ${maskUserPath(failure.path)}`)
-  if (failure.message !== undefined) {
-    // 只打印错误类型，避免把任何密文内容带出来
-    console.log(`                 ${String(failure.message).slice(0, 120)}`)
+// Walk the candidates in the SAME order section [1] printed, and report the
+// first that actually yields credentials.
+//
+// Every store is pinned to ONE explicit path. That is load-bearing, not tidiness:
+// `TraeCredentialStore` with no `storagePath` scans the HOST's own directories
+// by `process.platform`, so on a non-Windows host it would probe a different set
+// than [1] listed and its `accounts()` could resolve a credential from the
+// developer's OWN machine — which is exactly how a deliberately empty HOME once
+// reported "解出 1 个账号". Claiming Trae was found where none exists is the most
+// misleading output this script could produce, so each candidate is resolved
+// from its own path and nothing else.
+const OWN_SCRATCH = join(here, '..', '.verify-windows-unused.json')
+
+// Diagnose each candidate once so the report explains every path it tried, the
+// same way the plugin's own signed-out card does.
+for (const candidate of candidates) {
+  const probe = new plugin.TraeCredentialStore({
+    storagePath: candidate.path,
+    edition: candidate.edition,
+    ownPath: OWN_SCRATCH,
+    refresh: async () => { throw new Error('verify-windows: refresh not needed') },
+  })
+  const { failures } = await probe.diagnose()
+  for (const failure of failures) {
+    // 失败原因是安全信息（missing / unreadable / invalid），message 可能出现路径
+    console.log(`      ${failure.reason.padEnd(10)} [${failure.edition}] ${maskUserPath(failure.path)}`)
+    if (failure.message !== undefined) {
+      // 只打印错误类型，避免把任何密文内容带出来
+      console.log(`                 ${String(failure.message).slice(0, 120)}`)
+    }
   }
 }
 
-const accounts = await store.accounts()
+// Try each candidate in the SAME order section [1] printed, and report the first
+// one that actually yields credentials. Going through the store per candidate
+// keeps parsing/decryption identical to the plugin's real path.
+let accounts = []
+let hitPath
+for (const candidate of candidates) {
+  const probe = new plugin.TraeCredentialStore({
+    storagePath: candidate.path,
+    edition: candidate.edition,
+    ownPath: join(here, '..', '.verify-windows-unused.json'),
+    refresh: async () => { throw new Error('verify-windows: refresh not needed') },
+  })
+  const found = await probe.accounts().catch(() => [])
+  if (found.length > 0) { accounts = found; hitPath = candidate; break }
+}
 // 账号名只报形态：本脚本的输出会被贴到公开 issue，而账号名往往含真实姓名或
 // 手机号（实测本机就有真实姓名与「用户<手机号>」两类）。形态足以判断「解出来了」。
 check('解出至少一个账号', accounts.length > 0,
   accounts.length === 0
-    ? '目录找到了但解不出账号 —— 多半是加密 header 变了，见下'
-    : accounts.map((a) => `${describeNameShape(a.accountName)} (${a.edition}/${a.region})`).join(', '))
+    ? (foundDesktop.length + foundCli.length > 0
+      ? '找到了登录文件但解不出账号 —— 多半是加密 header 变了，见下'
+      : '没有任何登录文件，因而不可能解出账号（与上一项一致）')
+    : `${accounts.map((a) => `${describeNameShape(a.accountName)} (${a.edition}/${a.region})`).join(', ')}  ← ${maskUserPath(hitPath.path)}`)
 
 // ---------------------------------------------------------------- 3. 身份头
 console.log('\n[3] 设备指纹（这些会作为请求头发给 Trae）')
 
 if (accounts.length > 0) {
   try {
-    const { resolveTraeIdentity, identityHeaders } = plugin
-    const first = candidates.find((item) => existsSync(item.path) && item.source === 'desktop')
-    if (first !== undefined) {
-      const identity = await resolveTraeIdentity([first], first.edition)
+    const { resolveTraeIdentity, readTraeCliIdentity, identityHeaders } = plugin
+    // 桌面候选优先；没有则回退 CLI 候选（WSL2 / traecli 的常见形态）。
+    // 两条路都走 resolveTraeIdentity——它本来就把 CLI 兜底封装在内，这里只是
+    // 把它指向正确的候选，而不是自己重写一遍回退逻辑。
+    const desktopCandidate = candidates.find((item) => existsSync(item.path) && item.source === 'desktop')
+    const cliCandidate = candidates.find((item) => existsSync(item.path) && item.source === 'cli')
+    const picked = desktopCandidate ?? cliCandidate
+    if (picked === undefined) {
+      console.log('    （跳过：没有可读的候选文件）')
+    } else {
+      // 两条路必须分开调用，不能一律交给 resolveTraeIdentity：
+      // 它的 CLI 兜底只在「桌面文件**不存在**」时触发，而这里的情况是「桌面候选
+      // 存在但其实是 CLI token 文件」。把它当 storage.json 解析会抛 JSON 错，
+      // 那个错误不是 STORAGE_MISSING_PREFIX，于是兜底不生效、直接冒出来。
+      let identity
+      if (desktopCandidate === undefined) {
+        console.log('    （本机只命中 CLI 候选：设备指纹走 CLI 的确定性标识，属受支持场景）')
+        identity = await readTraeCliIdentity(picked.edition)
+      } else {
+        identity = await resolveTraeIdentity([picked], picked.edition)
+      }
       const headers = identityHeaders(identity)
       console.log(`    x-device-type : ${headers['x-device-type']}`)
       console.log(`    x-os-version  : ${headers['x-os-version']}`)
@@ -131,7 +214,7 @@ if (accounts.length > 0) {
       const deviceId = String(headers['x-device-id'] ?? '')
       const deviceShape = describeIdShape(deviceId)
       console.log(`    x-device-id   : ${deviceShape}`)
-      console.log(`    x-app-version : ${headers['x-app-version'] ?? '(未发送 —— product.json 没读到)'}`)
+      console.log(`    x-app-version : ${headers['x-app-version'] ?? (desktopCandidate === undefined ? '(未发送 —— CLI 候选未提供)' : '(未发送 —— product.json 没读到)')}`)
       // 这两条断言的是「本机就是 Windows」。在别的平台上跑脚本时它们必然失败，
       // 那是预期结果而非缺陷，故补一句说明，避免读者误判成兼容性问题。
       const onWindows = process.platform === 'win32'
@@ -139,14 +222,29 @@ if (accounts.length > 0) {
       check('x-device-type 为 windows', headers['x-device-type'] === 'windows', `${String(headers['x-device-type'])}${platformNote}`)
       check('x-os-version 以 Windows 开头', String(headers['x-os-version']).startsWith('Windows'), `${String(headers['x-os-version'])}${platformNote}`)
       check('x-device-id 非空', deviceId !== '', deviceId === '' ? '设备号为空，签到与聊天都会受影响' : deviceShape)
-      check('读到了 x-app-version', headers['x-app-version'] !== undefined,
-        headers['x-app-version'] === undefined ? 'product.json 路径可能不对（不影响主流程，但请回报）' : String(headers['x-app-version']))
+      // 桌面版从 product.json 取 appVersion，CLI 从 ide_version.json 取。所以
+      // 「没读到」对 CLI 候选是另一件事，不能按桌面版的结论去报——否则 CLI
+      // 用户会被引去查一个根本不存在的 product.json。
+      const appVersionNote = headers['x-app-version'] === undefined
+        ? (desktopCandidate === undefined
+          ? 'CLI 候选未提供版本，不影响主流程'
+          : 'product.json 路径可能不对（不影响主流程，但请回报）')
+        : String(headers['x-app-version'])
+      // 这一项**不算失败**：缺 x-app-version 只是少一个请求头，登录、聊天与
+      // 签到都不受影响（已在上游验证过）。把它计入 failures 会让一份完全可用
+      // 的机器报「未通过」，那正是最容易被误读成「Windows 不支持」的结果。
+      if (headers['x-app-version'] === undefined) {
+        console.log(`    [INFO] 未发送 x-app-version — ${appVersionNote}`)
+      } else {
+        check('读到了 x-app-version', true, appVersionNote)
+      }
     }
   } catch (error) {
     check('解析设备指纹', false, String(error).slice(0, 160))
   }
 } else {
-  console.log('    （跳过：上一步没有解出账号）')
+  console.log('    （跳过：上一步没有解出账号，无法解析设备指纹）')
+  console.log('    这一节的结论取决于 [1] 和 [2]：先把登录文件找到并解出账号，再回来看这里。')
 }
 
 // ---------------------------------------------------------------- 4. 结论
