@@ -1,19 +1,40 @@
-# Windows 环境排查备忘：Trae Token 探测
+# Windows 环境排查备忘：Trae 登录探测
 
-> **这份文档是给在 Windows 机器上执行排查的 AI 看的。**
+> **这份文档是给在 Windows 机器上执行排查的人或 AI 看的。**
 > 作者（macOS）无法访问 Windows 真机，以下信息全部来自代码静态分析，
-> 未经 Windows 实机验证。请执行后把「需要你回报的结果」回填本文档，
-> 或把结果直接告诉作者。
+> 未经 Windows 实机验证。请执行后把结果回报，或回填本文档。
 
-## 背景
+## 先做这一步：跑验证脚本（推荐）
 
-`dsh-connect-trae` 是一个 DSH 插件，它**不接受用户手填 token**，
-而是直接读取本机 Trae 客户端登录后写入的数据文件，从中解密出 token。
+**一条命令给出结论，且输出已脱敏、可直接贴到公开 issue：**
 
-如果插件显示「未登录」，需要判断具体是下面哪一环断的。
-目前 UI 上只能看到「未登录」三个字，**看不出失败原因**。
+```powershell
+# 在插件目录下（或本仓 clone 后）
+node scripts/verify-windows.mjs
+```
+
+脚本会：
+
+1. 用**插件自己的构建产物**（不是重写一份逻辑）列出它在这台机器上会探测的
+   每一条路径，并标注**文件是否存在**；
+2. 跑真实的账号解析，报告解出了几个账号（账号名只给「几个字符」）；
+3. 打印即将发给 Trae 的设备指纹（设备号只给「几位、是否纯数字」）；
+4. 给出**全部通过 / 几项未通过**的结论。
+
+**它不会打印 token、refreshToken、密文原文、真实账号名、设备号或你的 Windows
+用户名**（用户名替换为 `<user>`，目录名保留——那正是要查的东西）。因此输出可以
+直接贴进 issue，无需自己删改。
+
+脚本报「全部通过」即说明：这台机器上的 Trae 登录文件，插件确实读得到。
+
+> 若脚本因缺少导出而中止，说明用的是旧版本构建产物，先 `pnpm run build`。
 
 ---
+
+## 若脚本报错，或你想手动逐步核对
+
+以下五步覆盖脚本内部的同一套检查，适合**脚本本身跑不起来**（例如插件装不上、
+node 版本不符）时使用。
 
 ## 第一步：确认你的 Trae 是哪个版本
 
@@ -30,21 +51,27 @@
 
 ## 第二步：确认数据目录名（本次排查的核心）
 
-插件在 Windows 上会去找这两个文件：
+插件在 Windows 上会**并列探测**这些路径（命中任一即可）：
 
 ```
 %APPDATA%\Trae CN\User\globalStorage\storage.json
+%APPDATA%\trae-cn\User\globalStorage\storage.json
 %APPDATA%\TRAE SOLO CN\User\globalStorage\storage.json
+%APPDATA%\trae-solo-cn\User\globalStorage\storage.json
 ```
 
 其中 `%APPDATA%` 通常是 `C:\Users\<你的用户名>\AppData\Roaming`。
+（另外还会回退探测 `<用户目录>\AppData\Roaming\...`，用于 `%APPDATA%` 未设置的场合。）
 
 > ⚠️ **注意：这和 Trae 的安装目录无关。**
 > Electron 应用（VS Code 系）的用户数据固定放 `%APPDATA%`，
 > 无论你把程序装在 C 盘还是 D 盘。请不要去 `Program Files` 里找。
 
-**目录名 `Trae CN` / `TRAE SOLO CN` 是从 macOS 抄过来的，
-Windows 上的实际名称未经确认 —— 这就是本次要查的重点。**
+**为什么列出两种拼写**：Trae 是 VS Code 系 Electron 应用，其每用户数据目录由安装器
+注册的产品名决定。macOS 包 `product.json` 里的 `win32DirName` 是 `Trae CN` /
+`TRAE SOLO CN`，而同一产品族在 Linux 用的是小写 `applicationName`（`trae-cn` /
+`trae-solo-cn`）。**Windows 上实际写哪个从未在真机确认**——这就是本次要查的重点。
+多探一个的成本只是一次失败的 `readFile`，漏探则用户直接看不到登录。
 
 ### 操作
 
@@ -142,15 +169,22 @@ $bytes = [System.Convert]::FromBase64String($v)
 
 ## 需要你回报的结果
 
-请把下面这些贴回来（**注意：不要贴 `iCubeAuthInfo://icube.cloudide` 的 value，
-那是 token。目录名、key 名、header 字节都可以贴**）：
+**首选：直接贴 `node scripts/verify-windows.mjs` 的完整输出。**它已脱敏，无需删改。
+
+若走手动流程，请贴回下面这些（**注意：不要贴
+`iCubeAuthInfo://icube.cloudide` 的 value，那是 token。目录名、key 名、header
+字节都可以贴**）：
 
 1. 你的 Trae 版本：中国版 / 国际版 / SOLO 中国版 / 不知道
 2. 第二步 PowerShell 的输出（`%APPDATA%` 下所有带 trae 的目录名）
+   —— **这一条最关键**：它决定插件是否需要增加新的目录拼写
 3. 第三步的输出（哪些 FOUND，哪些 MISSING）
 4. 第四步：`iCubeAuthInfo://icube.cloudide` 是否为 True，以及那几个 key 的检查结果
 5. 第五步：`length:` 和 `header:` 两行
 6. 插件卡片上显示的具体状态（「未登录」？还是别的？）
+
+**贴之前请自行删除路径里的 Windows 用户名**（`C:\Users\<你的名字>\` → 改为
+`C:\Users\<user>\`）；`verify-windows.mjs` 已自动做这件事，手动流程需要你自己做。
 
 ---
 

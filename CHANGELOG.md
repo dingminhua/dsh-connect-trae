@@ -10,15 +10,27 @@
   - **明确未解决的部分**：Windows 真机上的实际目录名**仍然没有验证**（本机为 macOS，无 Windows 环境）。多候选只是把「猜错即失败」降级为「多一次失败的 `readFile`」，并不是验证。`docs/WINDOWS_TOKEN_PROBE.md` 保留为待真机回报的清单，并把「第二步：确认数据目录名」标为仍需执行。
   - **回归测试**（+2 例，全仓 319 → 322）：`paths.spec.ts`「探测 Windows 两种拼写」「不列出仅大小写不同的重复项」；`identity.spec.ts`「备用拼写（`trae-solo-cn`）下也能读到 `product.json`」。变异验证：`paths.ts` 退回单一目录名 → 1 条失败；`identity.ts` 退回单一拼写 → 1 条失败。
 
+### Features
+
+- **Windows 真机验证脚本 `scripts/verify-windows.mjs`**：把「Windows 上到底能不能读到 Trae 登录」从一串手工步骤变成**一条命令给出结论**。
+  - **跑的是插件自己的构建产物**（`lib/`），不是重写一份逻辑——单元测试只能证明「代码在 Windows 上不崩」，因为 CI 的 windows-latest 上并没有装 Trae；真机验证要回答的是「这台机器上的 Trae 登录文件，插件读不读得到」，只有把真机文件交给真代码才成立。
+  - 报告四项：① 它在这台机器上探测的**每条路径 + 文件是否存在**；② 真实账号解析解出了几个账号；③ 即将发给 Trae 的设备指纹（`x-device-type` / `x-os-version` / `x-device-id` / `x-app-version`）；④ 全部通过 / 几项未通过的结论。
+  - **输出默认脱敏，可直接贴公开 issue**：Windows 用户名替换为 `<user>`（`C:\Users\<真名>\...`）、账号名与设备号只报**形态**（长度 / 是否纯数字）。脱敏而非全删是关键——`Trae CN` vs `trae-cn` 这个目录拼写正是报告唯一要查的东西，抹掉它报告就没价值。
+  - 脱敏规则抽到 `src/redact.ts`（`maskUserPath` / `describeNameShape` / `describeIdShape`）并由脚本从插件导出中取用，避免「两处各写一版、改一处漏一处」。**+11 条单元测试**，既断言敏感值必须消失，也断言目录拼写/形态信息必须保留（只测「名字没了」的话，一个恒返回 `<redacted>` 的实现在测试下也会通过）。
+  - 随 npm 包分发（`files` 白名单新增该单文件 8.8KB）：README 指引用户运行它，不随包则 npm 用户根本执行不了这一步。
+  - **非 Windows 平台会显式说明**：脚本在 macOS / Linux 上也能跑，但会标注「当前平台非 Windows，平台相关的失败属预期」，避免被误读成兼容性缺陷。
+
 ### Docs
 
 - **`docs/WINDOWS_TOKEN_PROBE.md` 的「已知的其他 Windows 问题」整节已过期**：其中两条（`product.json` 硬编码 macOS 路径、`osVersion` 拼成 `win32 <release>`）**在代码里早已修复**，文档却仍写成未解决的缺陷——按它排查会把 Windows 用户引向错误方向。已复核并改写为「已处理 + 当前实现」，同时补上「Windows 安装/数据目录名仍未验证」这一条真实缺口，以及 `mode: 0o600` 在 Windows 被忽略属已知无害。
+  - 该文档**改为「先跑脚本」**：手工五步降级为「脚本跑不起来时的备选路径」，并把第二步（数据目录名）更新为当前的**多候选拼写**清单与依据，明确「这一条是本次要查的核心」。
 - **README 明确 Windows 支持，并把「以后都要考虑 Windows」固化为开发约定**（"我们的项目要支持 Windows 的" / "之后都要考虑对 Windows 的影响"）。
   - README（中英双语）新增**平台支持表**（macOS ✅ 完全支持 / Windows ✅ 支持 / Linux ✅ 支持），并在开头段落明示「支持 macOS、Windows 与 Linux」+ CI 双平台矩阵，让 Windows 支持成为对外可见的承诺而非隐含行为。
   - 「Windows 说明」节**改写为与代码逐条对应**：账号目录（多候选拼写探测 + 与安装目录无关）、应用版本头（含 `LOCALAPPDATA` 回退）、设备指纹（`x-device-type: windows`、`Windows <release>`）、文件锁（宿主原生处理）、Raw Chat 的 `sqlite3` 限制、权限位被忽略。**每条都核对了代码位置后写入**。
   - **删掉一句未经验证的断言**：原文写「目录名与 macOS 一致，**无需额外配置**」——而 `docs/WINDOWS_TOKEN_PROBE.md` 自己就说该目录名从未在真机确认。这正是本项目反复强调的「不得把未验证项写成既成事实」，故改为「未验证项（欢迎回报）」小节，说明依据是 `product.json` 的 `win32DirName`、兜底是 `applicationName` 拼写，并给出回报路径与 `authFile` 临时绕法。
   - `DEVELOPMENT.md` 新增「**多平台要求（Windows 为长期支持目标）**」一节：给出平台相关面/无关面的分区表（路径解析与设备指纹为相关面，其余共用），以及 6 条改动强制检查项——新增路径必须带平台分支且多候选、不得用仅大小写不同的重复候选、新增外部命令依赖须确认 Windows 行为并登记限制、CI 必须在 `windows-latest` 通过、平台结论必须区分已验证/未验证、文档同步。这条约定使「考虑 Windows 影响」成为可执行的检查项而非口头要求。
-  - **顺带修掉一处链接会在 npm 页 404 的问题**：本次新增的「未验证项」指引用户去看 `docs/WINDOWS_TOKEN_PROBE.md`，但 `package.json` 的 `files` 白名单（`RELEASING.md` 有明确记载，属有意的包体控制）只放行 `docs/assets/` 下那张截图，**所有 `docs/*.md` 都不进 npm 包**——写成相对 Markdown 链接会在 npm 页面上 404。既有引用（`docs/IMPLEMENTATION_PLAN.md` 等）用的是反引号纯文本故不受影响，本次改为指向 GitHub 的绝对链接（实测 HTTP 200）。**未改动 `files` 白名单**：扩大发布会改变包体策略，属需另行定夺的取舍。
+  - **顺带修掉一处链接会在 npm 页 404 的问题**：本次新增的「未验证项」指引用户去看 `docs/WINDOWS_TOKEN_PROBE.md`，但 `package.json` 的 `files` 白名单（`RELEASING.md` 有明确记载，属有意的包体控制）只放行 `docs/assets/` 下那张截图，**所有 `docs/*.md` 都不进 npm 包**——写成相对 Markdown 链接会在 npm 页面上 404。既有引用（`docs/IMPLEMENTATION_PLAN.md` 等）用的是反引号纯文本故不受影响，本次改为指向 GitHub 的绝对链接（实测 HTTP 200）。
+  - `RELEASING.md` 的打包内容清单同步更新（新增 `scripts/verify-windows.mjs`），并记下两条纪律：该脚本必须随包（否则用户无法执行验证步骤）、`docs/*.md` 不进包故 README 引用必须用绝对链接。
 
 ### Bug Fixes（续）
 

@@ -129,7 +129,7 @@ npm install dsh-connect-trae
 - **Raw Chat 探测（已知限制）**：`model-cache` 依赖 `sqlite3` 命令行，Windows 默认未安装，该探测会失败并**安全回退**。Raw Chat 默认关闭，不影响主流程。
 - **权限位**：写凭据副本时传 `mode: 0o600` / `dirMode: 0o700`，Windows 忽略 POSIX 权限位——不报错，属已知且无害。
 
-> **未验证项（欢迎回报）**：Windows 上 Trae 数据目录的**实际名称**尚未在真机确认过。插件用 `product.json` 的 `win32DirName` 作依据（macOS 包实测为 `Trae CN` / `TRAE SOLO CN`），并额外探测 Linux 侧使用的 `applicationName` 拼写（`trae-cn` / `trae-solo-cn`）作为兜底。若你的目录名两者都不是，请按 [`docs/WINDOWS_TOKEN_PROBE.md`](https://github.com/dingminhua/dsh-connect-trae/blob/main/docs/WINDOWS_TOKEN_PROBE.md) 回报目录名（**该文档只要目录名与 key 名，不要 token**）；在确认前也可用 `authFile` + `edition` 直接指定完整路径。
+> **未验证项（欢迎回报）**：Windows 上 Trae 数据目录的**实际名称**尚未在真机确认过。**一条命令即可验证并回报**：`node scripts/verify-windows.mjs` —— 它用插件自身的构建产物列出在这台机器上探测的每条路径、能否解出账号、以及设备指纹，输出**已脱敏**（用户名替换为 `<user>`，账号名与设备号只给长度），可直接贴进 issue。插件用 `product.json` 的 `win32DirName` 作依据（macOS 包实测为 `Trae CN` / `TRAE SOLO CN`），并额外探测 Linux 侧使用的 `applicationName` 拼写（`trae-cn` / `trae-solo-cn`）作为兜底。若你的目录名两者都不是，请按 [`docs/WINDOWS_TOKEN_PROBE.md`](https://github.com/dingminhua/dsh-connect-trae/blob/main/docs/WINDOWS_TOKEN_PROBE.md) 回报目录名（**该文档只要目录名与 key 名，不要 token**）；在确认前也可用 `authFile` + `edition` 直接指定完整路径。
 
 ## 开发
 

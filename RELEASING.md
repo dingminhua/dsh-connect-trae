@@ -61,7 +61,10 @@ git push origin vX.Y.Z
 npm publish
 ```
 
-**打包内容**：`package.json` 的 `files` 字段已限定只发布 `lib/`、`docs/assets/dsh-connect-trae-usage-card.png`、`screenshots.json`、`cordis.patch.yml`、`README.md`、`README.en.md`、`CHANGELOG.md`、`THIRD_PARTY_NOTICES.md`、`LICENSE`，`tests/` 和 `node_modules/` 不会进入发布包。
+**打包内容**：`package.json` 的 `files` 字段已限定只发布 `lib/`、`docs/assets/dsh-connect-trae-usage-card.png`、`scripts/verify-windows.mjs`、`screenshots.json`、`cordis.patch.yml`、`README.md`、`README.en.md`、`CHANGELOG.md`、`THIRD_PARTY_NOTICES.md`、`LICENSE`，`tests/` 和 `node_modules/` 不会进入发布包。
+
+> `scripts/verify-windows.mjs` 是有意随包分发的：README 指引 Windows 用户运行它做真机验证，不随包则 npm 用户无法执行该步骤。它是自包含的单文件，只依赖 `lib/` 的导出。
+> 注意 `docs/*.md`（含 `WINDOWS_TOKEN_PROBE.md`）**不进包**，因此 README 中引用它们的链接必须用 GitHub 绝对地址，否则在 npm 页面会 404。
 
 **发布前检查**（可选但推荐）：
 
