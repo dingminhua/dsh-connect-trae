@@ -17,6 +17,15 @@
   - **明确未解决的部分**：Windows 真机上的实际目录名**仍然没有验证**（本机为 macOS，无 Windows 环境）。多候选只是把「猜错即失败」降级为「多一次失败的 `readFile`」，并不是验证。`docs/WINDOWS_TOKEN_PROBE.md` 保留为待真机回报的清单，并把「第二步：确认数据目录名」标为仍需执行。
   - **回归测试**（+2 例，全仓 319 → 322）：`paths.spec.ts`「探测 Windows 两种拼写」「不列出仅大小写不同的重复项」；`identity.spec.ts`「备用拼写（`trae-solo-cn`）下也能读到 `product.json`」。变异验证：`paths.ts` 退回单一目录名 → 1 条失败；`identity.ts` 退回单一拼写 → 1 条失败。
 
+- **`src/model-cache.ts` 的缓存路径与凭据路径各自为政，在真机上指向一个不存在的目录**（Windows 真机适配检查时发现，属**潜伏缺陷**）：
+  - **症状**：该模块把 `state.vscdb` 路径**硬编码为单一拼写 `Trae CN`**（macOS 与 Windows 两分支都写死这一个名字），而 `paths.ts` 早已是**多候选拼写**探测（`Trae CN` / `trae-cn`、`TRAE SOLO CN` / `trae-solo-cn`）。它**自己重算了一遍目录**，没有复用 `traeStorageCandidates`——即 2.3.1 修「多候选」时只修了登录路径，漏了这个兄弟模块。
+  - **真机证据**（Windows 10.0.22621 + TRAE SOLO CN）：真实数据目录是 `TRAE SOLO CN`，而旧代码拼出的是 `%APPDATA%\Trae CN\User\globalStorage\state.vscdb` —— **该文件根本不存在**（实测 `existsSync` 为 false，而 `TRAE SOLO CN\...\state.vscdb` 存在）。**即便装了 `sqlite3` 也读不到**，与「装了 `sqlite3` 且小写拼写才失效」的初步判断相比，实际失效面**更大**：只要装的不是目录名恰好为 `Trae CN` 的版本就一定失败。
+  - **为什么一直没被发现**：Windows 上 `sqlite3` 通常不存在，该调用**必然**先抛 `ENOENT`；调用方 `.catch(() => undefined)` 兜底后功能退化为「无缓存」，于是**一个错误的路径被另一个看似合理的错误（依赖缺失）掩盖**。这类「两个错误互相掩护」的情形，单看错误码永远排查不到——只有把期望的路径与磁盘实际路径对照才暴露。
+  - **修法**：不再拼写目录，改为**从凭据路径推导**——`state.vscdb` 与 `storage.json` 同在 `globalStorage`，故同一个候选目录既管登录也管缓存；`traeStateDatabaseCandidates()` 复用 `traeStorageCandidates()`（单一事实来源），`raw-resolver.ts` 把命中的候选传下去。**明确带 `candidate` 时只看该 edition**：多版本共存时读另一个安装的数据库会拿到**别的账号**的模型表。选择顺序是「先看存在的，都不存在才用最可能的那条」，这样 `sqlite3` 缺失时调用方仍能看到**真实**失败，而不是被换成一个猜出来的错误。
+  - **回归测试**（+7 例，全仓 338 → 345）：① 每个凭据候选的兄弟 `state.vscdb` 都必须可探测（**断言「与凭据表同源」而非硬编码期望字符串**——跟着写死拼写的测试会与 bug 一致地通过）；② Windows 上必须能找到 `TRAE SOLO CN`（旧的写死实现永远够不到）；③ 带 `candidate` 时它排第一且不越出自己的 edition；④ 大小写不同不重复列；⑤ macOS / Linux 也从各自凭据表推导；⑥ **选中的路径真的传给了执行器**（用注入的 `runSqlite` 断言 argv，否则「列表正确但查错条目」无法被发现）；⑦ 全都不存在时仍发起一次查询以暴露真实失败。
+  - **变异验证**：把实现退回「硬编码单一拼写」→ **9 条中 5 条失败**；恢复后全绿。（首版变异脚本因文件是 CRLF 而静默未生效，导致测试「通过」——已加断言令变异未落地时**直接报错**，否则这种假阴性会被误读成「测试抓不到这个 bug」。）
+  - **顺带修掉一个测试自身的问题**：⑥ 首版用 `path.includes('Library/Application Support')` 断言 macOS 路径，而 `join()` 在 Windows 上产出反斜杠——该测试在作者机器（macOS）通过而会在 CI 的 `windows-latest` 上失败。现先归一化分隔符再断言，这正是本项目「Windows 必须真机/win runner 验证」这条约定要防的错。
+
 ### Tests
 
 - **Windows 真机验证脚本的三处可用性缺陷**（在真正按「Windows 用户拉代码 → 跑脚本」的流程演练时发现，全部是脚本自身的问题）：
@@ -51,7 +60,7 @@
 - **验证脚本的检查范围被明确划出，并补跑脚本之外的主流程实测**：`verify-windows.mjs` 的六项**只覆盖路径探测与设备指纹**，把它读成「整个插件在 Windows 上没问题」是过度外推。因此同一台真机上另外直接调用 `lib/` 导出跑了主流程：
   - `TraeCredentialStore.resolve()` ✅ 返回凭据（host `https://api.trae.cn`）；`identityHeaders()` ✅ 10 个请求头全部生成；只读用量查询 ✅ 9 个积分包（总额 2050 / 已用 1522.85）；只读模型目录 ✅ **42 个模型**；`writeFileAtomic` ✅ 写入回读一致；并发 `withFileLock` ✅ **8 并发串行化且无丢失更新**（此前 README 只写「宿主原生处理 Windows 独占创建语义」，现改为**实测成立**）；`SSE` 解码 ✅ 按 `\r?\n` 切分，CRLF 与分块均支持。
   - **实测确认了一处已知限制的真实行为**：`model-cache` 的 `sqlite3` 在本机不存在，抛 `ENOENT`（`spawn sqlite3 ENOENT`），调用方 `.catch(() => undefined)` 正确兜底，主流程不受影响——README 原写「会失败并安全回退」，现补上错误码作为依据。
-  - **顺带发现一处尚未暴露的真实精度缺口**：`src/model-cache.ts` 在 Windows 上把 `state.vscdb` 路径**硬编码为单一拼写 `Trae CN`**（`paths.ts` 是多候选 `Trae CN` / `trae-cn`），且该模块自己重算了一遍目录而没复用 `traeStorageCandidates`。当前因为 `sqlite3` 缺失、该路径必然失败并兜底，所以**不可观测**；但装了 `sqlite3` 且目录拼写为小写时会读不到缓存。**未在本轮修改代码**，已在 README 与验证指引登记为待修缺口（避免「发现了但不说」）。
+  - **顺带发现并修掉一处真实精度缺口**（详见下方 Bug Fixes）：`src/model-cache.ts` 在 Windows 上把 `state.vscdb` 路径**硬编码为单一拼写 `Trae CN`**（`paths.ts` 是多候选 `Trae CN` / `trae-cn`），且该模块自己重算了一遍目录而没复用 `traeStorageCandidates`。本机真实目录名是 `TRAE SOLO CN`，旧代码指向的 `...\Trae CN\...\state.vscdb` **根本不存在**；只因 `sqlite3` 缺失、该调用必然失败并兜底，才把一个**错误的路径**藏在「依赖缺失」这个看似合理的错误后面。
   - 以上「脚本之外」的实测结果同时写入 README（中英）与 `docs/WINDOWS_VERIFY_GUIDE.md`，与脚本自身那六项**分表列出**，不让读者混淆两者的证据强度。
 - **`docs/WINDOWS_TOKEN_PROBE.md` 的「已知的其他 Windows 问题」整节已过期**：其中两条（`product.json` 硬编码 macOS 路径、`osVersion` 拼成 `win32 <release>`）**在代码里早已修复**，文档却仍写成未解决的缺陷——按它排查会把 Windows 用户引向错误方向。已复核并改写为「已处理 + 当前实现」，同时补上「Windows 安装/数据目录名仍未验证」这一条真实缺口，以及 `mode: 0o600` 在 Windows 被忽略属已知无害。
   - 该文档**改为「先跑脚本」**：手工五步降级为「脚本跑不起来时的备选路径」，并把第二步（数据目录名）更新为当前的**多候选拼写**清单与依据，明确「这一条是本次要查的核心」。

@@ -37,9 +37,15 @@
 | `SSE` 解码 | ✅ 按 `\r?\n` 切分，CRLF 支持 |
 
 **已知限制**：`model-cache` 依赖 `sqlite3`（本机没有），实测抛 `ENOENT` 并正确
-兜底，不影响主流程。该模块在 Windows 上**硬编码了 `Trae CN` 单一拼写**，而
-`paths.ts` 是多候选——当前因 `sqlite3` 缺失而必然失败兜底，所以尚未暴露，
-但属真实精度缺口，已记录待修。
+兜底，不影响主流程。
+
+**同轮发现并修掉的一处缺口**：该模块原先把 `state.vscdb` 路径**硬编码为 `Trae CN`
+单一拼写**，而 `paths.ts` 是多候选；且它自行重算目录而未复用
+`traeStorageCandidates`。本机真实目录名是 `TRAE SOLO CN`，旧代码指向的
+`...\Trae CN\...\state.vscdb` **并不存在**——只因 `sqlite3` 缺失、该调用必然失败
+兜底，才把一个错误的路径藏在「依赖缺失」这个看似合理的错误后面。
+现改为**从凭据路径推导**（`state.vscdb` 与 `storage.json` 同在 `globalStorage`），
+真机复测已能正确选中 `%APPDATA%\TRAE SOLO CN\User\globalStorage\state.vscdb`。
 
 **仍然缺的**：那台机器只装了 TRAE SOLO CN，所以 `Trae CN` / `trae-cn` 两个拼写
 **仍未经真机确认**。如果你装的是 **Trae 中国版**（或国际版 / CLI），非常欢迎照下面

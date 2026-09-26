@@ -14,8 +14,12 @@ export async function resolveTraeRawRuntime(store: TraeCredentialStore, modelNam
   const candidate = store.candidates().find(item => item.edition === credential.edition)
   if (candidate === undefined) throw new Error(`no Trae ${credential.edition} storage candidate for Raw Chat identity`)
   const identity = await readTraeIdentity(candidate)
+  // The cache is read from the SAME candidate the credential came from:
+  // `state.vscdb` is a sibling of that candidate's `storage.json`, so passing
+  // the candidate is what keeps a multi-edition machine from reading another
+  // installation's model map.
   const cached = credential.edition === 'cn'
-    ? await readTraeCachedModel('solo_agent', modelName, credential.userId).catch(() => undefined)
+    ? await readTraeCachedModel('solo_agent', modelName, credential.userId, { candidate }).catch(() => undefined)
     : undefined
   return {
     identity,

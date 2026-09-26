@@ -162,7 +162,9 @@ npm install dsh-connect-trae
 
 > **已知限制（本机实测确认其行为）**：`model-cache` 依赖 `sqlite3` 命令行，本机未安装，实测抛 `ENOENT`（`spawn sqlite3 ENOENT`），调用方 `.catch(() => undefined)` 正确兜底——**不影响主流程**，Raw Chat 默认关闭。
 >
-> 另外该模块的 `state.vscdb` 路径在 Windows 上**硬编码了 `Trae CN` 单一拼写**，而 `paths.ts` 会多候选探测 `Trae CN` / `trae-cn`。当前因为 `sqlite3` 在本机不存在、该路径必然失败并兜底，所以**这条不一致尚未暴露**；但它是一处真实的精度缺口（装了 `sqlite3` 且目录拼写为小写时会读不到缓存），已记录待修。
+> **该模块的目录拼写缺口已修复**（同轮发现并修掉）：它原先把 `state.vscdb` 路径**硬编码为 `Trae CN` 单一拼写**，而 `paths.ts` 是多候选，且它自己重算了一遍目录而没复用 `traeStorageCandidates`。在本机（真实目录名为 `TRAE SOLO CN`）上，旧代码指向的 `...\Trae CN\...\state.vscdb` **根本不存在**；只因 `sqlite3` 缺失、该调用必然失败并兜底，才把一个**错误的路径**藏在了另一个看似合理的错误（依赖缺失）后面。
+>
+> 修法是让缓存路径**从凭据路径推导**——`state.vscdb` 与 `storage.json` 同在 `globalStorage`，因而同一个候选目录既管登录也管缓存；`raw-resolver` 现在把命中的候选传下去，多版本共存时不会读到另一个安装的模型表。真机复测：新代码正确选中 `%APPDATA%\TRAE SOLO CN\User\globalStorage\state.vscdb`（存在），旧代码只找 `Trae CN`（不存在）。
 
 > **仍然未验证的部分**：本机只装了 TRAE SOLO CN，因此 `Trae CN` / `trae-cn` 这两个拼写**仍未经真机确认**——但它们在此机器上不存在只反映「本机没装这个版本」，不代表拼写有误。装了 Trae 中国版的 Windows 用户仍欢迎跑一次上面的命令回报。
 
