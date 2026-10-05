@@ -61,15 +61,24 @@ export interface TraeSoloRemoteCatalogOptions {
  *
  * The gateway groups its directory by function and reports a model's capacity
  * per group, with the group order varying between calls. Keeping the strongest
- * row makes the published window deterministic:
+ * row makes the published window deterministic. The comparison is
+ * LEXICOGRAPHIC and must be applied all the way down, or ordering leaks back in
+ * at the next field:
  *
  *  1. a row with a Max tier beats one without (`maxContextWindow` is only set
  *     when the group reported `max_mode: true` with a positive max);
  *  2. two Max rows: the larger max wins;
- *  3. no Max on either side: the wider dev window wins.
+ *  3. max equal (or absent on both): the WIDER dev window wins;
+ *  4. both equal: keep the incumbent, so the model order stays the gateway's.
  *
- * Ties keep the incumbent, so the first row seen still decides equal cases and
- * the model order stays the one the gateway sent.
+ * Step 3 is not an afterthought. With equal `max` the first version of this
+ * function stopped and kept the incumbent, which left the dev window decided by
+ * arrival order — measured 2026-10-05: `glm-5.2` came back as `dev=116000` when
+ * `chat_v3` won and `dev=200000` when `solo_agent_remote` did, both with
+ * `max=1000000` (9 of 30 CN models behaved that way, reported by JiewiW on
+ * Windows). A budgeted model still resolved to 1M either way, but the DEFAULT
+ * window of an unbudgeted model — what DSH shows and compresses against — was
+ * a coin flip, which is the same defect this function exists to remove.
  */
 export function preferStrongerRow(
   candidate: TraeDiscoveredModel,
@@ -78,11 +87,12 @@ export function preferStrongerRow(
   if (incumbent === undefined) return candidate
   const candidateMax = candidate.maxContextWindow
   const incumbentMax = incumbent.maxContextWindow
-  if (candidateMax !== undefined || incumbentMax !== undefined) {
-    if (incumbentMax === undefined) return candidate
-    if (candidateMax === undefined) return incumbent
+  if (candidateMax !== undefined && incumbentMax === undefined) return candidate
+  if (candidateMax === undefined && incumbentMax !== undefined) return incumbent
+  if (candidateMax !== undefined && incumbentMax !== undefined && candidateMax !== incumbentMax) {
     return candidateMax > incumbentMax ? candidate : incumbent
   }
+  // Equal Max (or neither advertises one): the wider dev window wins.
   return (candidate.contextWindow ?? 0) > (incumbent.contextWindow ?? 0) ? candidate : incumbent
 }
 

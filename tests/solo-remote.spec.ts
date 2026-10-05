@@ -147,6 +147,28 @@ describe('cross-group dedupe keeps the most capable row (issue #23)', () => {
     expect(preferStrongerRow(narrowDev, wideDev)).toBe(wideDev)
   })
 
+  it('breaks an equal-Max tie on the wider dev window, not on arrival order', () => {
+    // Reported by JiewiW on Windows after 2.7.1: `glm-5.2` carries max=1000000
+    // in several groups whose dev window differs (chat_v3 116000 vs
+    // solo_agent_remote 200000). Stopping at "equal max → keep incumbent" left
+    // the DEFAULT window of an unbudgeted model decided by whichever group
+    // answered first. The rule must compare dev at that point too.
+    const narrowDev = row({ contextWindow: 116000, maxContextWindow: 1000000 })
+    const wideDev = row({ contextWindow: 200000, maxContextWindow: 1000000 })
+    expect(preferStrongerRow(wideDev, narrowDev)).toBe(wideDev)
+    expect(preferStrongerRow(narrowDev, wideDev)).toBe(wideDev)
+  })
+
+  it('still prefers a Max row over a wider dev row without one', () => {
+    // The Max tier outranks raw dev width: a group that advertises no Max at
+    // all must not win on a bigger dev number, or applying the user's 1M budget
+    // becomes impossible for that model.
+    const maxRow = row({ contextWindow: 116000, maxContextWindow: 1000000 })
+    const wideNoMax = row({ contextWindow: 256000 })
+    expect(preferStrongerRow(maxRow, wideNoMax)).toBe(maxRow)
+    expect(preferStrongerRow(wideNoMax, maxRow)).toBe(maxRow)
+  })
+
   it('keeps the incumbent on an exact tie, so the gateway order still decides equal rows', () => {
     // Both the dev-window tie AND the equal-Max tie matter: with `>=` instead of
     // `>` the later row would win, which makes the picked row depend on arrival
@@ -164,7 +186,9 @@ describe('cross-group dedupe keeps the most capable row (issue #23)', () => {
     const groups = {
       builder_v3: [{ name: 'Doubao-Seed-2.1-Pro', display_name: 'Seed-2.1-Pro', multimodal: true, max_mode: false, context_window_tokens: { dev: 116000, max: 0 } }],
       solo_work_remote: [{ name: 'Doubao-Seed-2.1-Pro', display_name: 'Seed-2.1-Pro-0915', multimodal: true, max_mode: false, context_window_tokens: { dev: 256000, max: 0 } }],
-      chat_v3: [{ name: 'Doubao-Seed-2.1-Pro', display_name: 'Seed-2.1-Pro-0915', multimodal: true, max_mode: true, context_window_tokens: { dev: 256000, max: 1000000 } }],
+      // Equal Max with a NARROWER dev window: with an equal-max tie broken on
+      // arrival order the dev value leaked the group order back into the result.
+      chat_v3: [{ name: 'Doubao-Seed-2.1-Pro', display_name: 'Seed-2.1-Pro-0915', multimodal: true, max_mode: true, context_window_tokens: { dev: 116000, max: 1000000 } }],
     }
     const names = Object.keys(groups)
     const permutations: string[][] = []
@@ -182,6 +206,10 @@ describe('cross-group dedupe keeps the most capable row (issue #23)', () => {
       observed.push(`${String(models[0]?.contextWindow)}/${String(models[0]?.maxContextWindow)}`)
     }
     expect(permutations).toHaveLength(6)
-    expect(new Set(observed)).toEqual(new Set(['256000/1000000']))
+    // Every order must land on the SAME row: the Max tier wins over the wider
+    // dev window of the no-Max group (116000/1000000 — chat_v3's row), because a
+    // model without `maxContextWindow` can never honour the user's 1M budget.
+    // The point of the assertion is the single-element set, not the value.
+    expect(new Set(observed)).toEqual(new Set(['116000/1000000']))
   })
 })
