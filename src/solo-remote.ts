@@ -56,6 +56,37 @@ export interface TraeSoloRemoteCatalogOptions {
 }
 
 /**
+ * Of two rows for the SAME model id, the one that advertises the stronger
+ * capacity (issue #23).
+ *
+ * The gateway groups its directory by function and reports a model's capacity
+ * per group, with the group order varying between calls. Keeping the strongest
+ * row makes the published window deterministic:
+ *
+ *  1. a row with a Max tier beats one without (`maxContextWindow` is only set
+ *     when the group reported `max_mode: true` with a positive max);
+ *  2. two Max rows: the larger max wins;
+ *  3. no Max on either side: the wider dev window wins.
+ *
+ * Ties keep the incumbent, so the first row seen still decides equal cases and
+ * the model order stays the one the gateway sent.
+ */
+export function preferStrongerRow(
+  candidate: TraeDiscoveredModel,
+  incumbent: TraeDiscoveredModel | undefined,
+): TraeDiscoveredModel {
+  if (incumbent === undefined) return candidate
+  const candidateMax = candidate.maxContextWindow
+  const incumbentMax = incumbent.maxContextWindow
+  if (candidateMax !== undefined || incumbentMax !== undefined) {
+    if (incumbentMax === undefined) return candidate
+    if (candidateMax === undefined) return incumbent
+    return candidateMax > incumbentMax ? candidate : incumbent
+  }
+  return (candidate.contextWindow ?? 0) > (incumbent.contextWindow ?? 0) ? candidate : incumbent
+}
+
+/**
  * Region-scoped request dressing. The CN portal is `solo.trae.cn` with the
  * CN locale headers; the international directory lives on the shared
  * `coresg-normal.trae.ai` gateway and was verified (2026-09-15) with the
@@ -115,19 +146,34 @@ export class TraeSoloRemoteCatalogClient {
     // is what decides whether it is actually callable. Restricting this to
     // `solo_agent_remote` dropped the nine models issue #19 was opened about.
     //
-    // First listing wins so a model present in several groups is emitted once,
-    // keeping the gateway's own group order (solo_agent_remote first in the ai
-    // answer) stable for rows that appear in both.
-    const seen = new Set<string>()
-    const models: TraeDiscoveredModel[] = []
+    // A model appears in SEVERAL groups and the groups disagree about its
+    // capacity, so dedupe keeps the MOST CAPABLE row rather than the first one
+    // (issue #23). "First wins" assumed the group order was stable; measured
+    // 2026-10-05 on a live CN credential it is not — five calls returned five
+    // different orders — so the published window became a coin flip:
+    // `Doubao-Seed-2.1-Pro` came back as `116000`/no-Max (`builder_v3`), or
+    // `256000`/no-Max (`solo_work_*`), or `256000`/`1000000` (`chat_v3`,
+    // `solo_agent*`) depending on which group answered first. The Max tier is
+    // the one users enable in the IDE, and `applyContextBudgets` can only raise
+    // a window to `maxContextWindow` — so losing that field silently capped
+    // every configured 1M model at 256K or less, and DSH compressed far earlier
+    // than the chosen budget implied.
+    //
+    // Ordering rule: a row advertising a Max tier beats one that does not, a
+    // larger Max wins over a smaller one, and with no Max on either side the
+    // wider dev window wins. Every row for one id carries the same
+    // `multimodal` / `reasoning` / credit facts (verified the same day), so
+    // choosing on capacity loses no capability. The result no longer depends on
+    // the gateway's group order.
+    const byId = new Map<string, TraeDiscoveredModel>()
     for (const group of groups) {
       for (const raw of group.models ?? []) {
         const model = parseTraeRemoteModel(raw)
-        if (model === undefined || seen.has(model.id)) continue
-        seen.add(model.id)
-        models.push(model)
+        if (model === undefined) continue
+        byId.set(model.id, preferStrongerRow(model, byId.get(model.id)))
       }
     }
+    const models = [...byId.values()]
     if (models.length === 0) throw new Error('SOLO remote models response contained no models')
     return models
   }

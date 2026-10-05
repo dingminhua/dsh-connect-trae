@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
-import { TraeSoloRemoteCatalogClient } from '../src/solo-remote.ts'
+import { preferStrongerRow, TraeSoloRemoteCatalogClient } from '../src/solo-remote.ts'
+import type { TraeDiscoveredModel } from '../src/model-metadata.ts'
 import type { TraeCredential } from '../src/auth.ts'
 
 const credential: TraeCredential = { accessToken: 'token', userId: 'uid', host: 'https://host', expiresAtMs: Date.now() + 1000, edition: 'solo', source: 'desktop' }
@@ -113,5 +114,74 @@ describe('region-scoped directory gateway', () => {
     expect(url).toContain('solo_coder')
     expect(url).toContain('chat_v3')
     expect(url).toContain('solo_work_lite')
+  })
+})
+
+/**
+ * Issue #23: the gateway groups its directory by function, the SAME model id
+ * appears in several groups with DIFFERENT capacity, and the group order varies
+ * between calls (measured 2026-10-05: five calls, five orders). Dedupe must
+ * therefore not depend on which group answered first, or the published window
+ * becomes a coin flip and a configured 1M model silently caps at 256K.
+ */
+describe('cross-group dedupe keeps the most capable row (issue #23)', () => {
+  const row = (over: Partial<TraeDiscoveredModel>): TraeDiscoveredModel => ({
+    id: 'Doubao-Seed-2.1-Pro', name: 'Seed-2.1-Pro', multimodal: true, reasoningSupported: false, ...over,
+  })
+
+  it('prefers a Max tier over a row without one, whichever order they arrive in', () => {
+    const withMax = row({ contextWindow: 256000, maxContextWindow: 1000000 })
+    const withoutMax = row({ contextWindow: 116000 })
+    expect(preferStrongerRow(withMax, withoutMax)).toBe(withMax)
+    expect(preferStrongerRow(withoutMax, withMax)).toBe(withMax)
+  })
+
+  it('prefers the larger Max, and then the wider dev window', () => {
+    const bigMax = row({ contextWindow: 200000, maxContextWindow: 1000000 })
+    const smallMax = row({ contextWindow: 256000, maxContextWindow: 512000 })
+    expect(preferStrongerRow(bigMax, smallMax)).toBe(bigMax)
+    expect(preferStrongerRow(smallMax, bigMax)).toBe(bigMax)
+    const wideDev = row({ contextWindow: 256000 })
+    const narrowDev = row({ contextWindow: 116000 })
+    expect(preferStrongerRow(wideDev, narrowDev)).toBe(wideDev)
+    expect(preferStrongerRow(narrowDev, wideDev)).toBe(wideDev)
+  })
+
+  it('keeps the incumbent on an exact tie, so the gateway order still decides equal rows', () => {
+    // Both the dev-window tie AND the equal-Max tie matter: with `>=` instead of
+    // `>` the later row would win, which makes the picked row depend on arrival
+    // order even when capacities are identical (the same class of bug as #23).
+    const firstDev = row({ name: 'First', contextWindow: 256000 })
+    const secondDev = row({ name: 'Second', contextWindow: 256000 })
+    expect(preferStrongerRow(secondDev, firstDev)).toBe(firstDev)
+    const firstMax = row({ name: 'FirstMax', contextWindow: 256000, maxContextWindow: 1000000 })
+    const secondMax = row({ name: 'SecondMax', contextWindow: 256000, maxContextWindow: 1000000 })
+    expect(preferStrongerRow(secondMax, firstMax)).toBe(firstMax)
+  })
+
+  it('produces the same catalog for every group order', async () => {
+    // The three real disagreement shapes, in all six orders.
+    const groups = {
+      builder_v3: [{ name: 'Doubao-Seed-2.1-Pro', display_name: 'Seed-2.1-Pro', multimodal: true, max_mode: false, context_window_tokens: { dev: 116000, max: 0 } }],
+      solo_work_remote: [{ name: 'Doubao-Seed-2.1-Pro', display_name: 'Seed-2.1-Pro-0915', multimodal: true, max_mode: false, context_window_tokens: { dev: 256000, max: 0 } }],
+      chat_v3: [{ name: 'Doubao-Seed-2.1-Pro', display_name: 'Seed-2.1-Pro-0915', multimodal: true, max_mode: true, context_window_tokens: { dev: 256000, max: 1000000 } }],
+    }
+    const names = Object.keys(groups)
+    const permutations: string[][] = []
+    for (const a of names) for (const b of names) for (const c of names) {
+      if (new Set([a, b, c]).size === 3) permutations.push([a, b, c])
+    }
+    const observed: string[] = []
+    for (const order of permutations) {
+      const fetchImpl = vi.fn(async () => new Response(JSON.stringify({
+        code: 0,
+        data: { list: order.map(fn => ({ function: fn, models: groups[fn as keyof typeof groups] })) },
+      }), { status: 200 }))
+      const client = new TraeSoloRemoteCatalogClient({ credential: async () => credential, fetchImpl: fetchImpl as unknown as typeof fetch })
+      const models = await client.fetchModels()
+      observed.push(`${String(models[0]?.contextWindow)}/${String(models[0]?.maxContextWindow)}`)
+    }
+    expect(permutations).toHaveLength(6)
+    expect(new Set(observed)).toEqual(new Set(['256000/1000000']))
   })
 })
