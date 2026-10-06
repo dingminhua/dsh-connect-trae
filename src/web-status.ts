@@ -25,7 +25,7 @@ import {
   TRAE_MODELS_TEST_PATH,
   TRAE_USAGE_PATH,
 } from './status-paths.ts'
-import type { TraeWebCheckin, TraeWebCredits, TraeWebUsage } from './status-paths.ts'
+import type { TraeWebAccount, TraeWebCheckin, TraeWebCreditAlternative, TraeWebCredits, TraeWebUsage } from './status-paths.ts'
 
 export { TRAE_USAGE_PATH } from './status-paths.ts'
 export type { TraeWebUsage } from './status-paths.ts'
@@ -52,6 +52,12 @@ export interface TraeUsageRouteOptions {
   store(region: TraeRegion): TraeCredentialStore
   /** The region-scoped usage client (CN work credits / international pay status). */
   client(region: TraeRegion): TraeUsageClient
+  /**
+   * CN credit balances of an account OTHER than the bound one, read without
+   * changing which account is bound (issue #25). Optional: when absent the
+   * exhausted-account hint is simply not offered.
+   */
+  creditsOfAccount?(region: TraeRegion, accountId: string): Promise<TraeWebCredits | undefined>
   /** The requested region's last-refreshed raw directory (one entry per upstream model). */
   displayModels(region: TraeRegion): readonly TraeModelInfo[]
   /** The user's model selection in the requested region, stored as model id (= Trae name). */
@@ -93,6 +99,8 @@ function json(res: ServerResponse, status: number, body: unknown): void {
  * models, which is a user-chosen set rather than the whole directory.
  */
 export const TRAE_MODELS_TEST_LIMIT = 64
+/** Bound on how many OTHER accounts one status read may probe (issue #25). */
+const TRAE_CREDIT_ALTERNATIVE_LIMIT = 8
 
 /**
  * Read the ids to test from a POST body.
@@ -140,8 +148,15 @@ function loopbackOrigin(req: IncomingMessage): boolean {
   }
 }
 
-/** Map the credit snapshot to the card's compact credit document. */
-function toCredits(snapshot: { summary: { totalAmount: number; consumedAmount: number }; packs: { displayDesc: string; availableEndpoint?: number; consumedCredits?: number; creditsLimit?: number }[] }): TraeWebCredits {
+/**
+ * Map the credit snapshot to the card's compact credit document.
+ *
+ * Exported so the "is another account usable?" probe (issue #25) derives its
+ * two buckets through the SAME endpoint classification the bound account uses
+ * — a second implementation of the Work/general split would be free to disagree
+ * with the number shown next to it.
+ */
+export function toCredits(snapshot: { summary: { totalAmount: number; consumedAmount: number }; packs: { displayDesc: string; availableEndpoint?: number; consumedCredits?: number; creditsLimit?: number }[] }): TraeWebCredits {
   const { totalAmount, consumedAmount } = snapshot.summary
   const credit = (value: number): number => Math.round(value * 10_000) / 10_000
   const accounts = snapshot.packs.map(pack => ({
@@ -256,16 +271,62 @@ export async function traeWebUsage(deps: TraeUsageRouteOptions, region: TraeRegi
     client.snapshot(),
     client.checkinStatus(),
   ])
+  const credits = snapshotResult.status === 'fulfilled' ? toCredits(snapshotResult.value) : undefined
+  // Only when the BOUND account is actually empty do the other accounts get
+  // read (issue #25). A healthy account must not pay for extra upstream calls.
+  const exhausted = credits !== undefined && credits.workAvailable <= 0 && credits.generalAvailable <= 0
+  const alternatives = exhausted ? await creditAlternatives(deps, region, accounts) : undefined
   return {
     status: 'signed-in',
     ...account,
-    ...snapshotResult.status === 'fulfilled'
-      ? { credits: toCredits(snapshotResult.value) }
-      : { creditsError: safeMessage(snapshotResult.reason) },
+    ...credits === undefined
+      ? { creditsError: snapshotResult.status === 'rejected' ? safeMessage(snapshotResult.reason) : 'unknown' }
+      : { credits },
     ...checkinResult.status === 'fulfilled'
       ? { checkin: toCheckin(checkinResult.value) }
       : { checkinError: safeMessage(checkinResult.reason) },
+    ...alternatives === undefined ? {} : { alternatives },
   }
+}
+
+/**
+ * Other accounts on this machine that still have credit, when the bound one has
+ * none (issue #25).
+ *
+ * Only ever called for a bound account whose own credits came back at zero, so
+ * a healthy setup pays nothing for it. Each candidate is read through
+ * `creditsOfAccount`, which must not disturb the bound account; a candidate
+ * that fails is simply absent from the answer rather than reported as a broken
+ * account, because a stale token on an unrelated login is not this card's
+ * problem to explain. The list is capped so a machine with many stale
+ * credentials cannot turn one status read into a burst of upstream calls.
+ */
+async function creditAlternatives(
+  deps: TraeUsageRouteOptions,
+  region: TraeRegion,
+  accounts: readonly TraeWebAccount[],
+): Promise<TraeWebCreditAlternative[] | undefined> {
+  if (deps.creditsOfAccount === undefined) return undefined
+  const candidates = accounts
+    .filter(account => !account.selected && account.region === region)
+    .slice(0, TRAE_CREDIT_ALTERNATIVE_LIMIT)
+  if (candidates.length === 0) return undefined
+  const found = await Promise.all(candidates.map(async account => {
+    try {
+      const credits = await deps.creditsOfAccount!(region, account.id)
+      if (credits === undefined) return undefined
+      if (credits.workAvailable <= 0 && credits.generalAvailable <= 0) return undefined
+      return {
+        id: account.id,
+        accountName: account.accountName,
+        edition: account.edition,
+        workAvailable: credits.workAvailable,
+        generalAvailable: credits.generalAvailable,
+      }
+    } catch { return undefined }
+  }))
+  const alternatives = found.filter((entry): entry is TraeWebCreditAlternative => entry !== undefined)
+  return alternatives.length === 0 ? undefined : alternatives
 }
 
 /**

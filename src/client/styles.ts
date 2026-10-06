@@ -91,6 +91,12 @@ export const TRAE_CARD_CSS = `
 /* The two head actions sit together; the probe one SPENDS quota, so it carries
    the hint tooltip rather than looking like its read-only sibling. */
 .dsm-trae-models-actions{display:flex;align-items:center;gap:8px;flex:none}
+.dsm-trae-usage-alternative{display:flex;align-items:flex-start;gap:10px;margin-top:10px;padding:10px 12px;border:1px solid var(--dsw-alias-state-warning-border,#7a5b12);border-radius:10px;background:var(--dsw-alias-state-warning-bg,#2a2313)}
+.dsm-trae-usage-alternative-text{margin:0;flex:1 1 auto;font-size:12px;line-height:18px;color:var(--dsw-alias-label-primary,#e6e6e6)}
+.dsm-trae-usage-switch-button{flex:0 0 auto;padding:5px 10px;border:1px solid var(--dsw-alias-border-l2,#3a3d45);border-radius:8px;background:var(--dsw-alias-bg-layer-3,#2c2f36);color:var(--dsw-alias-label-primary,#e6e6e6);font-size:12px;line-height:16px;cursor:pointer}
+.dsm-trae-usage-switch-button:hover:not(:disabled){background:var(--dsw-alias-bg-layer-4,#333740)}
+.dsm-trae-usage-switch-button:disabled{opacity:.5;cursor:not-allowed}
+.dsm-trae-usage-note{margin:8px 0 0;color:var(--dsw-alias-label-tertiary,#999);font-size:11px;line-height:16px}
 .dsm-trae-models-hint{margin:4px 0 0;color:var(--dsw-alias-label-tertiary,#999);font-size:11px;line-height:16px}
 /* Verdict badge. Only a real refusal is coloured as a warning; an unknown
    verdict stays neutral because an inconclusive probe is not evidence against

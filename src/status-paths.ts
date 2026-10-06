@@ -192,6 +192,23 @@ export interface TraeWebAccount {
   selected: boolean
 }
 
+/**
+ * Another account on this machine that still has credit, surfaced only while
+ * the BOUND account is exhausted (issue #25).
+ *
+ * The account switch is persisted, so a user whose bound account ran out sees
+ * a permanently zeroed card with no explanation. This carries just enough to
+ * name the alternative in the UI — identity plus the two CN credit buckets —
+ * and is only ever produced by a read-only upstream call.
+ */
+export interface TraeWebCreditAlternative {
+  id: string
+  accountName: string
+  edition: TraeWebAccount['edition']
+  workAvailable: number
+  generalAvailable: number
+}
+
 /** One probed candidate path and why it did not yield an account. */
 export interface TraeWebSearchPath {
   path: string
@@ -393,6 +410,13 @@ export type TraeWebUsage =
     }
     credits?: TraeWebCredits
     creditsError?: string
+    /**
+     * Present only when the bound account is out of credit AND another account
+     * on this machine has some (issue #25). The card then offers a one-click
+     * switch instead of leaving a permanently empty panel. Absent in every
+     * other case so a healthy account never pays for the extra read.
+     */
+    alternatives?: readonly TraeWebCreditAlternative[]
     /**
      * Daily check-in state (CN only). Absent on the international region,
      * whose check-in surface does not exist — probed 2026-09-24: the

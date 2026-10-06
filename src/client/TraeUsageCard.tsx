@@ -257,6 +257,16 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
   /** Last claim refusal, shown until the next successful refresh. */
   const [claimError, setClaimError] = useState<string | undefined>(undefined)
   /**
+   * Outcome of the last "refresh accounts" press (issue #25).
+   *
+   * The rescan answers 200 with a fresh account list whether or not anything
+   * changed, and the selection is PERSISTED, so a rescan of a machine whose
+   * bound account is still the one it was yesterday looks identical to a
+   * failure. Reporting the outcome is the difference between "it did nothing"
+   * and "it found the same 2 accounts, still on X".
+   */
+  const [rescanNote, setRescanNote] = useState<string | undefined>(undefined)
+  /**
    * Whether this MACHINE has spent today's check-in while the selected account
    * has not been paid — the "switched account" state. Kept separate from
    * `claimError` because it is not a failure: it is the upstream's one-per-
@@ -361,19 +371,32 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
       const response = await fetch(withTraeRegion(TRAE_ACCOUNTS_REFRESH_PATH, activeRegion), {
         method: 'POST', headers: { accept: 'application/json' }, credentials: 'same-origin',
       })
-      const body = await response.json() as { accounts?: { id: string; selected: boolean }[] }
+      const body = await response.json() as { accounts?: { id: string; selected: boolean; accountName?: string }[] }
       if (!response.ok || !Array.isArray(body.accounts)) throw new Error(`HTTP ${response.status}`)
-      const selected = body.accounts.find(account => account.selected)?.id
+      const selected = body.accounts.find(account => account.selected)
       const configured = configuredAccountsOf(settingsScope?.getSnapshot().value)
-      if (selected !== undefined && selected !== configured[activeRegion] && settingsScope !== undefined
-        && settingsScope.getSnapshot().writable === true) {
+      const followed = selected !== undefined && selected.id !== configured[activeRegion] && settingsScope !== undefined
+        && settingsScope.getSnapshot().writable === true
+      if (followed && settingsScope !== undefined) {
         await writeSettingsField(settingsScope, 'accounts',
-          { ...configured, [activeRegion]: selected },
-          readBack => configuredAccountsOf(readBack)[activeRegion] === selected)
+          { ...configured, [activeRegion]: selected!.id },
+          readBack => configuredAccountsOf(readBack)[activeRegion] === selected!.id)
       }
       await refreshUsage(activeRegion)
+      if (mounted.current) {
+        setRescanNote(body.accounts.length === 0
+          ? t('row.accountsRefreshedNone')
+          : t('row.accountsRefreshed', {
+            count: String(body.accounts.length),
+            selected: followed ? '' : ` · ${t('row.accountsKept')} ${selected?.accountName ?? selected?.id ?? '—'}`,
+          }))
+      }
     } catch (error: unknown) {
-      if (mounted.current) setWriteError(error instanceof Error ? error.message : t('row.requestFailed'))
+      if (mounted.current) {
+        const message = error instanceof Error ? error.message : t('row.requestFailed')
+        setRescanNote(t('row.accountsRescanFailed', { message }))
+        setWriteError(message)
+      }
     } finally {
       if (mounted.current) setBusy(false)
     }
@@ -828,9 +851,40 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
                         disabled={switchingAccount || settingsScope?.getSnapshot().writable !== true}
                         onChange={event => { void switchAccount(event.currentTarget.value) }}
                       >
-                        {status.accounts.map(account => <option key={account.id} value={account.id}>{account.accountName} · {account.region === 'ai' ? t('row.regionAi') : t('row.regionCn')} · {account.edition}</option>)}
+                        {/* The raw `edition` token ("solo") told the user nothing
+                            about WHICH product the credential came from, which is
+                            exactly what made a leftover TRAE SOLO CN login
+                            indistinguishable from the Trae CN one they thought
+                            they were bound to (issue #25). Spell the product out
+                            and keep the region as the second axis. */}
+                        {status.accounts.map(account => <option key={account.id} value={account.id}>{account.accountName} · {account.region === 'ai' ? t('row.regionAi') : t('row.regionCn')} · {t(`row.edition${account.edition === 'cn' ? 'Cn' : account.edition === 'sg' ? 'Sg' : account.edition === 'solo' ? 'Solo' : 'SoloSg'}`)}</option>)}
                       </select>
                     </div>
+                    {status.status === 'signed-in' && status.alternatives !== undefined && status.alternatives.length > 0
+                      ? <div className="dsm-trae-usage-alternative" role="status">
+                        <p className="dsm-trae-usage-alternative-text">
+                          {t('row.creditsExhausted', { account: status.accountName })}
+                          {' '}
+                          {t('row.creditsAlternative', {
+                            accounts: status.alternatives
+                              .map(alt => `${alt.accountName}（${t(`row.edition${alt.edition === 'cn' ? 'Cn' : alt.edition === 'sg' ? 'Sg' : alt.edition === 'solo' ? 'Solo' : 'SoloSg'}`)}：${formatNumber(alt.workAvailable + alt.generalAvailable)}）`)
+                              .join('、'),
+                          })}
+                        </p>
+                        <button
+                          type="button"
+                          className="dsm-trae-usage-switch-button"
+                          disabled={switchingAccount || settingsScope?.getSnapshot()?.writable !== true}
+                          onClick={() => {
+                            const target = status.alternatives?.[0]
+                            if (target !== undefined) void switchAccount(target.id)
+                          }}
+                        >
+                          {t('row.creditsAlternativeSwitch')}
+                        </button>
+                      </div>
+                      : null}
+                    {rescanNote === undefined ? null : <p className="dsm-trae-usage-note" role="status">{rescanNote}</p>}
                   </section>
                 : null}
               {status.status === 'signed-in'

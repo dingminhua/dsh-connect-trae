@@ -12,6 +12,7 @@ import {
   TRAE_PROVIDER_DISPLAY_NAMES,
   TRAE_PROVIDERS,
 } from './adapter.ts'
+import type { TraeWebCredits } from './status-paths.ts'
 import type { TraeAdapter } from './adapter.ts'
 import { TraeCredentialStore } from './auth.ts'
 import { applyImageSelection, deriveCatalog, discoveredCatalog, FALLBACK_TRAE_MODELS, fallbackModelsFor, mergeTraeModelSources, sanitizeCatalog, TraeCatalog, traeInputModalities, traeModelDisplayName, type TraeModelInfo } from './catalog.ts'
@@ -32,7 +33,7 @@ import type { TraeRawDiagnostic } from './raw-diagnostic.ts'
 import { TraeDelegatingUpstreamClient } from './delegating-upstream.ts'
 import { probeModelsSequentially } from './model-probe.ts'
 import { TraeUsageClient } from './usage.ts'
-import { registerTraeUsageRoute } from './web-status.ts'
+import { registerTraeUsageRoute, toCredits } from './web-status.ts'
 import { unwrapVolatile } from './status-paths.ts'
 
 export {
@@ -336,6 +337,12 @@ interface TraeRegionStack {
   shim: TraeShim
   delegating: TraeDelegatingUpstreamClient
   usageClient: TraeUsageClient
+  /**
+   * CN credit balance of an account other than the bound one, read without
+   * rebinding the store (issue #25). Throws when that account's token is
+   * unusable; callers treat a throw as "no answer for this account".
+   */
+  creditsOfAccount(accountId: string): Promise<TraeWebCredits | undefined>
   /** Re-read this region's live directory from the upstream. */
   discoverModels(signal?: AbortSignal): Promise<readonly TraeModelInfo[]>
   /** Test the given model ids for availability (one real minimal call each). */
@@ -613,6 +620,23 @@ export function apply(ctx: Context, config: Config): void {
       shim,
       delegating,
       usageClient,
+      /**
+       * Credit balance of one named account, WITHOUT rebinding the store
+       * (issue #25). The card asks this only after it saw the bound account
+       * come back empty, so it can point at a login that still works.
+       *
+       * A throwaway client is used on purpose: the shared `usageClient` reads
+       * `store.resolve()`, which is bound to the selected account, and calling
+       * `selectAccount` to look at a neighbour would both race concurrent chat
+       * requests and persist a switch the user never made. A stale token simply
+       * fails here and the account is left out of the answer.
+       */
+      creditsOfAccount: async (accountId: string) => {
+        const credential = await store.credentialOf(accountId)
+        if (credential === undefined) return undefined
+        const snapshot = await new TraeUsageClient({ credential: async () => credential }).snapshot()
+        return toCredits(snapshot)
+      },
       discoverModels: async (signal?: AbortSignal): Promise<readonly TraeModelInfo[]> => {
         // The Remote /models directory is the model skeleton (display id, name,
         // context, credit, reasoning). get_detail_param only supplies the real
@@ -710,6 +734,10 @@ export function apply(ctx: Context, config: Config): void {
     discoverModels: (region, signal) => stacks[region].discoverModels(signal),
     probeModels: (region, ids) => stacks[region].probeModels(ids),
     rawDiagnostic: region => stacks[region].rawDiagnostic(),
+    // CN credit balance of an account that is NOT the bound one, read through a
+    // throwaway client so the store's selection (and every in-flight chat
+    // request using it) is left alone (issue #25).
+    creditsOfAccount: (region, accountId) => stacks[region].creditsOfAccount(accountId),
   }))
 
   /**

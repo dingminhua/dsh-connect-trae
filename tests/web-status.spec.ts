@@ -614,3 +614,134 @@ describe('registerTraeUsageRoute region dispatch', () => {
     })
   })
 })
+
+/**
+ * Issue #25: the bound account is persisted, so a user whose account ran out of
+ * credit sees a permanently empty panel with no explanation — and "refresh
+ * accounts" re-answers 200 with the same selection, looking like a failure.
+ */
+describe('traeWebUsage: exhausted bound account (issue #25)', () => {
+  const exhausted = (): Response => new Response(JSON.stringify({ code: 0, usage_summary: { total_amount: 100, consumed_amount: 100 }, user_entitlement_pack_list: [] }), { status: 200 })
+  // A funded CN account: one Work pack (available_endpoint 1) with 300 left.
+  // A factory, not a value: a Response body can only be read once and several
+  // tests below need their own.
+  const funded = (): Response => new Response(JSON.stringify({
+    code: 0,
+    usage_summary: { total_amount: 300, consumed_amount: 0 },
+    user_entitlement_pack_list: [{
+      display_desc: 'Work',
+      entitlement_base_info: { available_endpoint: 1, product_extra: { package_extra: { quota: { credits_limit: 300 } } } },
+      usage: { credits_amount: 0 },
+    }],
+  }), { status: 200 })
+  const checkin = (): Response => new Response(JSON.stringify({ code: 0, data: { checked_in: false, credits: 0, enable: true, extra_credits: 0 } }), { status: 200 })
+
+  function twoAccounts(): TraeUsageRouteOptions {
+    const deps = makeRoute()
+    deps.store = () => ({
+      async accounts() {
+        return [
+          { id: 'spent', accountName: 'LaoDing', edition: 'solo', region: 'cn', source: 'desktop', tokenExpiresAtMs: expiresAtMs, selected: true },
+          { id: 'usable', accountName: 'DMH', edition: 'cn', region: 'cn', source: 'desktop', tokenExpiresAtMs: expiresAtMs, selected: false },
+        ]
+      },
+      async status() { return { state: 'signed-in', edition: 'solo', expiresAtMs: expiresAtMs, source: 'desktop' } },
+      async resolve() { return credential },
+    }) as unknown as ReturnType<TraeUsageRouteOptions['store']>
+    return deps
+  }
+
+  it('offers the other funded account only while the bound one is empty', async () => {
+    const deps = twoAccounts()
+    const probed: string[] = []
+    deps.creditsOfAccount = async (_region, id) => {
+      probed.push(id)
+      return { total: 500, consumed: 0, available: 500, workAvailable: 300, generalAvailable: 0, accounts: [] }
+    }
+    deps.client = () => new TraeUsageClient({
+      credential: async () => credential,
+      baseUrl: 'https://api.trae.cn',
+      fetchImpl: (async (url: string) => String(url).includes('web_user_ent_usage') ? exhausted() : checkin()) as unknown as typeof fetch,
+    })
+    const result = await traeWebUsage(deps, 'cn')
+    expect(result.status).toBe('signed-in')
+    if (result.status !== 'signed-in') return
+    expect(result.credits?.workAvailable).toBe(0)
+    expect(result.alternatives).toEqual([
+      { id: 'usable', accountName: 'DMH', edition: 'cn', workAvailable: 300, generalAvailable: 0 },
+    ])
+    // Only the OTHER account is probed, never the bound one again.
+    expect(probed).toEqual(['usable'])
+  })
+
+  it('does not probe other accounts while the bound one still has credit', async () => {
+    const deps = twoAccounts()
+    let probed = 0
+    deps.creditsOfAccount = async () => { probed += 1; return undefined }
+    deps.client = () => new TraeUsageClient({
+      credential: async () => credential,
+      baseUrl: 'https://api.trae.cn',
+      fetchImpl: (async (url: string) => String(url).includes('web_user_ent_usage') ? funded() : checkin) as unknown as typeof fetch,
+    })
+    const result = await traeWebUsage(deps, 'cn')
+    expect(result.status).toBe('signed-in')
+    if (result.status !== 'signed-in') return
+    expect(result.credits?.workAvailable).toBe(300)
+    expect(result.alternatives).toBeUndefined()
+    expect(probed).toBe(0)
+  })
+
+  it('never offers an account that is empty as well, nor one from another region', async () => {
+    const deps = makeRoute()
+    deps.store = () => ({
+      async accounts() {
+        return [
+          { id: 'spent', accountName: 'LaoDing', edition: 'solo', region: 'cn', source: 'desktop', tokenExpiresAtMs: expiresAtMs, selected: true },
+          // Empty too: must not be offered as a way out.
+          { id: 'also-spent', accountName: 'Empty', edition: 'cn', region: 'cn', source: 'desktop', tokenExpiresAtMs: expiresAtMs, selected: false },
+          // Funded but on the OTHER region: its CN packs are not this card's
+          // business, and probing it would both waste a call and could report a
+          // number that does not apply to the CN tab.
+          { id: 'intl', accountName: 'Intl', edition: 'sg', region: 'ai', source: 'desktop', tokenExpiresAtMs: expiresAtMs, selected: false },
+        ]
+      },
+      async status() { return { state: 'signed-in', edition: 'solo', expiresAtMs: expiresAtMs, source: 'desktop' } },
+      async resolve() { return credential },
+    }) as unknown as ReturnType<TraeUsageRouteOptions['store']>
+    const probed: string[] = []
+    deps.creditsOfAccount = async (_region, id) => {
+      probed.push(id)
+      return id === 'also-spent'
+        ? { total: 0, consumed: 0, available: 0, workAvailable: 0, generalAvailable: 0, accounts: [] }
+        : { total: 900, consumed: 0, available: 900, workAvailable: 900, generalAvailable: 0, accounts: [] }
+    }
+    deps.client = () => new TraeUsageClient({
+      credential: async () => credential,
+      baseUrl: 'https://api.trae.cn',
+      fetchImpl: (async (url: string) => String(url).includes('web_user_ent_usage') ? exhausted() : checkin()) as unknown as typeof fetch,
+    })
+    const result = await traeWebUsage(deps, 'cn')
+    expect(result.status).toBe('signed-in')
+    if (result.status !== 'signed-in') return
+    // The ai account must not even be probed; the empty one is probed but not offered.
+    expect(probed).toEqual(['also-spent'])
+    expect(result.alternatives).toBeUndefined()
+  })
+
+  it('omits an alternative that is also empty, and survives a failing probe', async () => {
+    const deps = twoAccounts()
+    deps.creditsOfAccount = async (_region, id) => {
+      if (id === 'usable') throw new Error('stale token')
+      return undefined
+    }
+    deps.client = () => new TraeUsageClient({
+      credential: async () => credential,
+      baseUrl: 'https://api.trae.cn',
+      fetchImpl: (async (url: string) => String(url).includes('web_user_ent_usage') ? exhausted() : checkin()) as unknown as typeof fetch,
+    })
+    const result = await traeWebUsage(deps, 'cn')
+    expect(result.status).toBe('signed-in')
+    if (result.status !== 'signed-in') return
+    expect(result.alternatives).toBeUndefined()
+  })
+})

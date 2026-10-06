@@ -303,6 +303,27 @@ export class TraeCredentialStore {
     return selected
   }
 
+  /**
+   * The stored credential of one specific account, without changing which
+   * account this store is bound to (issue #25).
+   *
+   * The card needs to answer "the account I am bound to has run out of credits
+   * — is another account on this machine usable?" and {@link resolve} cannot
+   * help: it always returns the BOUND account, and switching the bound account
+   * just to read one number would race every in-flight chat request sharing
+   * this store, and would persist a selection the user never made.
+   *
+   * So this is a pure lookup: read-only, no refresh side effects (a stale token
+   * is returned as-is and the caller's request then fails honestly), and
+   * `accountId` is left untouched. An unknown id yields undefined rather than a
+   * fallback, for the same reason {@link current} refuses to fall back.
+   */
+  async credentialOf(accountId: string): Promise<TraeCredential | undefined> {
+    if (accountId === '') return undefined
+    const credentials = await this.readAll()
+    return credentials.find(credential => traeAccountId(credential) === accountId)
+  }
+
   async resolve(): Promise<TraeCredential> {
     const credential = await this.current()
     if (credential === undefined) throw new Error(`trae: no signed-in account found (${this.candidates().map(item => item.path).join(' or ')})`)
