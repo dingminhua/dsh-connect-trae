@@ -91,6 +91,7 @@ export const TRAE_CARD_CSS = `
 /* The two head actions sit together; the probe one SPENDS quota, so it carries
    the hint tooltip rather than looking like its read-only sibling. */
 .dsm-trae-models-actions{display:flex;align-items:center;gap:8px;flex:none}
+}
 .dsm-trae-usage-alternative{display:flex;align-items:flex-start;gap:10px;margin-top:10px;padding:10px 12px;border:1px solid var(--dsw-alias-state-warning-border,#7a5b12);border-radius:10px;background:var(--dsw-alias-state-warning-bg,#2a2313)}
 .dsm-trae-usage-alternative-text{margin:0;flex:1 1 auto;font-size:12px;line-height:18px;color:var(--dsw-alias-label-primary,#e6e6e6)}
 .dsm-trae-usage-switch-button{flex:0 0 auto;padding:5px 10px;border:1px solid var(--dsw-alias-border-l2,#3a3d45);border-radius:8px;background:var(--dsw-alias-bg-layer-3,#2c2f36);color:var(--dsw-alias-label-primary,#e6e6e6);font-size:12px;line-height:16px;cursor:pointer}
@@ -137,3 +138,20 @@ export const TRAE_CARD_CSS = `
    spent. Rendering it in the error colour would read as a plugin fault. */
 .dsm-trae-checkin-note{margin:8px 0 0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#c6c9d0)}
 `
+/**
+ * Sidebar credit line styles, injected by the sidebar component itself.
+ *
+ * Separate from the card bundle because the line lives in the shell's sidebar,
+ * not inside the plugin card; a card that is closed still shows this.
+ */
+export const TRAE_SIDEBAR_CSS = `
+.dsm-trae-sidebar-points{display:flex;align-items:center;gap:8px;padding:4px 2px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#c6c9d0)}
+.dsm-trae-sidebar-points-line{display:flex;align-items:center;gap:6px;min-width:0;flex:1 1 auto}
+.dsm-trae-sidebar-points-text{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
+.dsm-trae-sidebar-points-failed{color:var(--dsw-alias-state-error-primary,#ef4444);font-size:11px;line-height:16px;white-space:nowrap}
+.dsm-trae-sidebar-points-refresh{appearance:none;flex:none;font:inherit;font-size:11px;line-height:16px;padding:2px 8px;border:1px solid var(--dsw-alias-border-l2,#3a3d45);border-radius:7px;color:var(--dsw-alias-label-secondary,#c6c9d0);background:transparent;cursor:pointer}
+.dsm-trae-sidebar-points-refresh:hover:not(:disabled){color:var(--dsw-alias-label-primary,#e6e6e6);border-color:var(--dsw-alias-label-dimmed,#777)}
+.dsm-trae-sidebar-points-refresh:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#5686fe);outline-offset:1px}
+.dsm-trae-sidebar-points-refresh:disabled{opacity:.5;cursor:default}
+`
+

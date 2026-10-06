@@ -25,6 +25,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import { TraeUsageCard } from './TraeUsageCard.tsx'
+import { SidebarPointsGate } from './SidebarPointsGate.tsx'
 import type { TraeUsageCardInjected } from './TraeUsageCard.tsx'
 import { en, zh } from './locales.ts'
 import type { TraeSettingsKey } from './locales.ts'
@@ -173,6 +174,36 @@ export function apply(ctx: ClientContext): void {
 
     registerCard('plugins.bundle.config', 'dsh-connect-trae')
     registerCard('plugins.row.config', 'dsh-connect-trae#dsh-connect-trae')
+
+    /**
+     * General-credit line at the sidebar foot (`sidebar.footer.action`, a
+     * root-scope list slot), contributed by JiewiW (issue #26).
+     *
+     * Registration is unconditional for the slot's lifetime; the component
+     * renders nothing until the card switch is on, and nothing again while the
+     * sidebar is collapsed — so an off switch (or a collapsed rail) leaves zero
+     * DOM and no fetch loop.
+     */
+    const registerSidebarPoints = (): void => {
+      try {
+        ctx.slots.inject('sidebar.footer.action' as never, () => (ctx.slots as unknown as {
+          register(
+            options: { name: string; id: string; order: number; locale: string; inject: () => TraeUsageCardInjected },
+            component: unknown,
+          ): () => void
+        }).register({
+          name: 'sidebar.footer.action',
+          id: 'dsh-connect-trae-points',
+          order: 4,
+          locale: namespace,
+          inject: () => ({ t, settingsScope }),
+        }, SidebarPointsGate))
+      } catch (error: unknown) {
+        console.error('[dsh-connect-trae] sidebar points slot failed to register (host provider unaffected):', error)
+      }
+    }
+
+    registerSidebarPoints()
   } catch (error: unknown) {
     // Degrade silently on the page: the host provider still serves models.
     console.error('[dsh-connect-trae] client card failed to load (host provider unaffected):', error)

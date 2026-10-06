@@ -255,6 +255,26 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
    */
   const [claiming, setClaiming] = useState(false)
   /** Last claim refusal, shown until the next successful refresh. */
+  /**
+   * Toggle the global "show credits at the DSH sidebar foot" switch. Unlike the
+   * per-region provider switch this is one top-level boolean shared by both
+   * regions; only that field is written, and the read-back must show the new
+   * value before success is reported.
+   */
+  const toggleShowPointsInMainUi = async (enabled: boolean): Promise<void> => {
+    if (settingsScope === undefined || settingsScope.getSnapshot().writable !== true) return
+    setTogglingMainUi(true)
+    setWriteError(undefined)
+    try {
+      await writeSettingsField(settingsScope, 'showPointsInMainUi', enabled,
+        readBack => (unwrapVolatileDeep(readBack) as { showPointsInMainUi?: unknown })?.showPointsInMainUi === enabled)
+    } catch (error: unknown) {
+      if (mounted.current) setWriteError(error instanceof Error ? error.message : t('row.requestFailed'))
+    } finally {
+      if (mounted.current) setTogglingMainUi(false)
+    }
+  }
+
   const [claimError, setClaimError] = useState<string | undefined>(undefined)
   /**
    * Outcome of the last "refresh accounts" press (issue #25).
@@ -265,6 +285,8 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
    * failure. Reporting the outcome is the difference between "it did nothing"
    * and "it found the same 2 accounts, still on X".
    */
+
+  const [togglingMainUi, setTogglingMainUi] = useState(false)
   const [rescanNote, setRescanNote] = useState<string | undefined>(undefined)
   /**
    * Whether this MACHINE has spent today's check-in while the selected account
@@ -777,6 +799,17 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
       <div className="dsm-plugin-card-body" hidden={!open}>
         {open
           ? <div className="dsm-trae-usage">
+              <div className="dsm-trae-mainui-switch">
+                <label className="dsm-trae-mainui-switch-label" title={t('row.showPointsInMainUiHint')}>
+                  <input
+                    type="checkbox"
+                    checked={(settingsValue as { showPointsInMainUi?: unknown } | null)?.showPointsInMainUi === true}
+                    disabled={settingsScope?.getSnapshot().writable !== true || togglingMainUi}
+                    onChange={event => { void toggleShowPointsInMainUi(event.currentTarget.checked) }}
+                  />
+                  <span>{t('row.showPointsInMainUi')}</span>
+                </label>
+              </div>
               <div className="dsm-trae-tabs" role="tablist" aria-label={title}>
                 {TRAE_REGIONS.map(item => {
                   const regionStatus = statusByRegion[item]

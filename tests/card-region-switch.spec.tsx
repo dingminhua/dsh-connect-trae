@@ -74,12 +74,19 @@ function expand(): void {
 
 /**
  * Expand the card and return its two region switches, in tab order.
- * `noUncheckedIndexedAccess` is on in this repo, so the pair is asserted here
- * once instead of sprinkling non-null assertions through every case.
+ *
+ * Selected by the region each box belongs to, NOT by position: the card also
+ * carries the "show credits in the main UI" switch (issue #26), and a
+ * positional pick would silently start asserting about the wrong control the
+ * next time a checkbox is added above them.
  */
 function switches(): [HTMLInputElement, HTMLInputElement] {
-  const boxes = screen.getAllByRole('checkbox') as HTMLInputElement[]
-  const [cn, ai] = boxes
+  // Region switches carry `row.tabSwitchAria` with the region name; the
+  // "show credits in the main UI" box (issue #26) is labelled with its own key
+  // and is deliberately not one of these.
+  const boxes = screen.getAllByRole('checkbox', { name: /row\.tabSwitchAria/ }) as HTMLInputElement[]
+  const cn = boxes.find(box => (box.getAttribute('aria-label') ?? '').includes('row.tabCn'))
+  const ai = boxes.find(box => box !== cn)
   if (cn === undefined || ai === undefined) throw new Error(`expected two region switches, saw ${boxes.length}`)
   return [cn, ai]
 }

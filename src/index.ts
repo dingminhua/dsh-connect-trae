@@ -188,6 +188,16 @@ export interface Config {
    */
   accounts?: Partial<Record<TraeRegion, string>>
   /**
+   * Show the CN account's general credit balance as a permanent line at the
+   * bottom of the DSH sidebar (issue #26, contributed by JiewiW).
+   *
+   * Off by default and kept opt-in: it adds a periodic read of the usage route
+   * to a surface the user cannot miss, so a user who never asked for it should
+   * not get it. Declared volatile alongside `accounts`/`regions` so the card's
+   * settings form can both read and write it.
+   */
+  showPointsInMainUi?: boolean
+  /**
    * Per-region model state, keyed `cn` | `ai`. The CN and international apps
    * expose different rosters, so each keeps its own directory and selection
    * and switching accounts never drops the other region's picks.
@@ -311,6 +321,8 @@ export const Config: z<Config> = z.object({
   // from the wrapped schema, which is narrower than the optional
   // `Partial<Record<TraeRegion, string>>` the Config interface declares. The
   // schema is unchanged either way — this only restores the assignment.
+  showPointsInMainUi: asVolatile(z.boolean().default(false).description('在DSH主界面显示积分状态')),
+
   accounts: asVolatile(accountSelectionConfig.description('Per-region account selections, keyed cn | ai')) as z<Partial<Record<TraeRegion, string>>>,
   regions: asVolatile(z.dict(regionStateConfig).default({}).description('Per-region model directory and selection, keyed cn | ai')),
   lastCatalog: z.array(modelConfig).description('Deprecated: pre-region-split CN model directory') as z<TraeModelInfo[]>,

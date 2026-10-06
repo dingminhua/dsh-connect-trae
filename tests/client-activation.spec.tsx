@@ -94,8 +94,11 @@ describe('client entry activation on 0.1.7', () => {
     // The 0.1.7 slots are registered, and the scope came from configForms
     // bound to the namespace the mirror actually serves (the patch id, not the
     // declared fallback `trae`).
+    // `sidebar.footer.action` joins the two config slots: the general-credit
+    // line contributed in issue #26. It registers unconditionally; the gate
+    // renders nothing until the card switch is on.
     expect(slots.registrations.map(entry => entry.name).sort())
-      .toEqual(['plugins.bundle.config', 'plugins.row.config'])
+      .toEqual(['plugins.bundle.config', 'plugins.row.config', 'sidebar.footer.action'])
     expect(forms.requested).toEqual(['dsh-connect-trae'])
     expect(errors).toHaveLength(0)
 
@@ -142,9 +145,11 @@ describe('client entry activation on 0.1.7', () => {
 
     // A missing settings surface must not cost the card its slots: only saving
     // needs the scope, so the card still registers (the scope stays unbound
-    // and read-only).
+    // and read-only). The sidebar line registers too — with no scope the gate
+    // reads the switch as false and renders nothing, which is the correct
+    // default for a host that cannot be asked.
     const slots = ctx.get('slots') as unknown as Slots
-    expect(slots.registrations).toHaveLength(2)
+    expect(slots.registrations).toHaveLength(3)
     expect(errors).toHaveLength(0)
 
     spy.mockRestore()
