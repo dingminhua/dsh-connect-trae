@@ -90,6 +90,14 @@ export const TRAE_CARD_CSS = `
 .dsm-trae-model-name-rate{color:var(--dsw-alias-label-tertiary,#999);font-size:11px;font-weight:400;line-height:16px;flex:none}
 /* The two head actions sit together; the probe one SPENDS quota, so it carries
    the hint tooltip rather than looking like its read-only sibling. */
+/* The sidebar-credit switch. Two instances share this style: the card's own
+   row at the top and the copy beside the model actions (2.9.3). Without it the
+   checkbox rendered unstyled and read as absent — the whole reason the switch
+   looked missing. */
+.dsm-trae-mainui-switch{padding:2px 0 0}
+.dsm-trae-mainui-switch-label{display:flex;align-items:center;gap:9px;font-size:13px;line-height:18px;color:var(--dsw-alias-label-secondary,#c6c9d0);cursor:pointer;white-space:nowrap}
+.dsm-trae-mainui-switch-label input{margin:0;accent-color:var(--dsw-alias-brand-primary,#5686fe)}
+.dsm-trae-mainui-switch-label:has(input:disabled){opacity:.6;cursor:default}
 .dsm-trae-models-actions{display:flex;align-items:center;gap:8px;flex:none}
 }
 .dsm-trae-usage-alternative{display:flex;align-items:flex-start;gap:10px;margin-top:10px;padding:10px 12px;border:1px solid var(--dsw-alias-state-warning-border,#7a5b12);border-radius:10px;background:var(--dsw-alias-state-warning-bg,#2a2313)}

@@ -1040,6 +1040,23 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
                           <p className="dsm-trae-models-summary">{t('row.modelsSummary', { count: activeEnabledIds.size })}</p>
                         </div>
                         <div className="dsm-trae-models-actions">
+                          {/* The sidebar-credit switch sits beside the model
+                              actions too (2.9.3). The same checkbox already
+                              exists at the very top of the card, but the model
+                              block is where the eye already is while managing
+                              models, and a settings row that must be hunted for
+                              is the same as no setting at all — which is how
+                              this switch was lost on hosts whose Plugins tab is
+                              owned by a market plugin. */}
+                          <label className="dsm-trae-mainui-switch-label" title={t('row.showPointsInMainUiHint')}>
+                            <input
+                              type="checkbox"
+                              checked={(settingsValue as { showPointsInMainUi?: unknown } | null)?.showPointsInMainUi === true}
+                              disabled={settingsScope?.getSnapshot().writable !== true || togglingMainUi}
+                              onChange={event => { void toggleShowPointsInMainUi(event.currentTarget.checked) }}
+                            />
+                            <span>{t('row.showPointsInMainUi')}</span>
+                          </label>
                           <button
                             type="button"
                             className="dsm-btn dsm-btn-outline"
