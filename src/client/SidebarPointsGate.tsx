@@ -7,22 +7,41 @@
  * depends only on React, the card's settings-scope shape and the line
  * component.
  *
- * It renders NOTHING while the card switch `showPointsInMainUi` is off (the
- * row's DOM is absent, not hidden), and mounts {@link SidebarPoints} — which
- * owns the fetch loop and its timer — only while on. A subscription to the
- * settings scope mounts or unmounts the line as soon as the switch changes.
+ * TWO states, and the off state is still a visible control:
+ *
+ *  - on  → {@link SidebarPoints}, which owns the fetch loop and its timer;
+ *  - off → a single dimmed "积分" chip that turns it back on.
+ *
+ * The off state used to render NOTHING, and that turned out to be a dead end
+ * (2.9.1): the switch also lives in the plugin card, but a market plugin can
+ * own the Plugins tab without ever dispatching `plugins.bundle.config`, so on
+ * such a host the line never rendered AND the switch could not be found. A
+ * feature whose only control is on a page the user cannot open is not a
+ * feature. The chip keeps the control where the feature itself renders, so it
+ * is reachable on every host that draws this slot at all.
+ *
+ * The collapsed rail still renders nothing: the shell squeezes the footer to a
+ * 56px strip rather than hiding it, and neither the line nor a chip reads well
+ * there — see the bail-out below.
  */
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { SidebarPoints } from './SidebarPoints.tsx'
 import { unwrapVolatileDeep } from '../status-paths.ts'
 import type { TraeSettingsKey } from './locales.ts'
 import type { TraeUsageCardInjected } from './TraeUsageCard.tsx'
 
-/** Read the sidebar-credit switch out of a committed settings snapshot. */
+/**
+ * Read the sidebar-credit switch out of a committed settings snapshot.
+ *
+ * Absent means ON: the field defaults to true on the host, and a settings
+ * scope that has not populated yet must not blink the line away. Only an
+ * explicit `false` (the user turned it off, from the line or the card) hides
+ * the balance.
+ */
 export function sidebarPointsEnabledOf(scope: TraeUsageCardInjected['settingsScope']): boolean {
-  if (scope === undefined) return false
+  if (scope === undefined) return true
   const value = unwrapVolatileDeep(scope.getSnapshot().value) as { showPointsInMainUi?: unknown } | undefined
-  return value?.showPointsInMainUi === true
+  return value?.showPointsInMainUi !== false
 }
 
 export interface SidebarPointsGateProps {
@@ -39,7 +58,18 @@ export function SidebarPointsGate(props: SidebarPointsGateProps) {
     () => settingsScope?.subscribe(() => { setEnabled(sidebarPointsEnabledOf(settingsScope)) }),
     [settingsScope],
   )
-  if (!enabled) return null
+
+  /**
+   * Write the switch back through the same field the card writes, so the two
+   * controls can never disagree. The read-back is not awaited for its value:
+   * the subscription above re-renders when the committed snapshot changes, and
+   * an unwritable scope simply leaves the current state alone.
+   */
+  const setShown = useCallback((next: boolean): void => {
+    if (settingsScope === undefined || settingsScope.getSnapshot().writable !== true) return
+    void settingsScope.set('showPointsInMainUi', next).catch(() => { /* keep current state */ })
+  }, [settingsScope])
+
   // Collapsed rail: render NOTHING.
   //
   // The shell does NOT hide the footer when the sidebar collapses — it
@@ -54,5 +84,22 @@ export function SidebarPointsGate(props: SidebarPointsGateProps) {
   // Bailing out here — before the line mounts — also means the fetch loop and
   // its 5-minute timer never start while collapsed.
   if (wide === false) return null
-  return <SidebarPoints t={t} />
+
+  if (!enabled) {
+    return (
+      <div className="dsm-trae-sidebar-points dsm-trae-sidebar-points-off">
+        <button
+          type="button"
+          className="dsm-trae-sidebar-points-show"
+          disabled={settingsScope?.getSnapshot()?.writable !== true}
+          title={t('sidebar.showHint')}
+          onClick={() => { setShown(true) }}
+        >
+          {t('sidebar.show')}
+        </button>
+      </div>
+    )
+  }
+
+  return <SidebarPoints t={t} onHide={() => { setShown(false) }} />
 }

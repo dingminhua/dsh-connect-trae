@@ -191,10 +191,16 @@ export interface Config {
    * Show the CN account's general credit balance as a permanent line at the
    * bottom of the DSH sidebar (issue #26, contributed by JiewiW).
    *
-   * Off by default and kept opt-in: it adds a periodic read of the usage route
-   * to a surface the user cannot miss, so a user who never asked for it should
-   * not get it. Declared volatile alongside `accounts`/`regions` so the card's
-   * settings form can both read and write it.
+   * ON by default and opt-out since 2.9.1. It was opt-in first, on the theory
+   * that a user who never asked for a periodic usage read should not get one —
+   * but the switch lived only in the plugin card, and the card is not reachable
+   * in every host: a market plugin can own the Plugins tab and never dispatch
+   * `plugins.bundle.config`, so the line was permanently off with no discoverable
+   * way to turn it on. The line now carries its own on/off control in the
+   * sidebar, which is reachable exactly where the feature renders.
+   *
+   * Declared volatile alongside `accounts`/`regions` so the settings form can
+   * both read and write it.
    */
   showPointsInMainUi?: boolean
   /**
@@ -321,7 +327,12 @@ export const Config: z<Config> = z.object({
   // from the wrapped schema, which is narrower than the optional
   // `Partial<Record<TraeRegion, string>>` the Config interface declares. The
   // schema is unchanged either way — this only restores the assignment.
-  showPointsInMainUi: asVolatile(z.boolean().default(false).description('在DSH主界面显示积分状态')),
+  // ON by default (2.9.1): the plugin page that carries the card checkbox is
+  // not reachable in every host — a market plugin can own the Plugins tab and
+  // never render `plugins.bundle.config`, which left the line permanently off
+  // with no way to discover it. The line is now opt-OUT and carries its own
+  // on/off control in the sidebar, so it is reachable wherever it renders.
+  showPointsInMainUi: asVolatile(z.boolean().default(true).description('在DSH主界面显示积分状态（可在侧边栏那一行上随时关闭）')),
 
   accounts: asVolatile(accountSelectionConfig.description('Per-region account selections, keyed cn | ai')) as z<Partial<Record<TraeRegion, string>>>,
   regions: asVolatile(z.dict(regionStateConfig).default({}).description('Per-region model directory and selection, keyed cn | ai')),

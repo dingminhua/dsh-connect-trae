@@ -141,16 +141,20 @@ describe('SidebarPointsGate', () => {
   function makeScope(initial: boolean) {
     let value: unknown = { showPointsInMainUi: initial }
     const listeners = new Set<() => void>()
+    const writes: unknown[] = []
+    const commit = (next: boolean): void => {
+      value = { showPointsInMainUi: next }
+      for (const listener of listeners) listener()
+    }
     return {
       scope: {
         getSnapshot: () => ({ status: 'ready', value, writable: true }),
         subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener) } },
-        set: async () => true,
+        set: async (_field: string, next: unknown) => { writes.push(next); commit(next === true); return true },
       },
-      setEnabled(next: boolean) {
-        value = { showPointsInMainUi: next }
-        for (const listener of listeners) listener()
-      },
+      /** Values written through `set`, in order. */
+      written: () => writes,
+      setEnabled: commit,
     }
   }
 
@@ -187,18 +191,51 @@ describe('SidebarPointsGate', () => {
     expect(SIDEBAR_POINTS_REFRESH_INTERVAL_MS).toBe(300_000)
   })
 
-  it('renders nothing while off and mounts the line once enabled', async () => {
+  it('shows the line by default, and turning it off leaves a chip that turns it back on', async () => {
+    // The off state used to render NOTHING. That made the feature unreachable
+    // on a host whose Plugins tab is owned by a market plugin (which never
+    // dispatches the card slot): the line was hidden AND the card switch could
+    // not be opened. The off state must therefore still be a control.
     const { calls } = stubRoute(okResponse)
-    const holder = makeScope(false)
+    const holder = makeScope(true)
     render(<SidebarPointsGate t={t} settingsScope={holder.scope as never} />)
-    expect(screen.queryByText(/sidebar\.points/)).toBeNull()
-    expect(calls).toHaveLength(0)
-
-    holder.setEnabled(true)
     await waitFor(() => { expect(screen.getByText(/sidebar\.points/)).toBeTruthy() })
     expect(calls).toHaveLength(1)
 
+    // Off: the balance is gone, a chip remains, and the polling stops.
     holder.setEnabled(false)
     await waitFor(() => { expect(screen.queryByText(/sidebar\.points/)).toBeNull() })
+    const chip = screen.getByText(/sidebar\.show/)
+    expect(chip).toBeTruthy()
+
+    // The chip turns it back on and the fetch resumes.
+    fireEvent.click(chip)
+    await waitFor(() => { expect(screen.getByText(/sidebar\.points/)).toBeTruthy() })
+    expect(holder.written()).toContain(true)
+  })
+
+  it('treats an absent switch as ON, so a not-yet-populated scope does not blink the line away', async () => {
+    const { calls } = stubRoute(okResponse)
+    const scope = {
+      getSnapshot: () => ({ status: 'ready', value: {}, writable: true }),
+      subscribe: () => () => {},
+      set: async () => true,
+    }
+    render(<SidebarPointsGate t={t} settingsScope={scope as never} />)
+    await waitFor(() => { expect(screen.getByText(/sidebar\.points/)).toBeTruthy() })
+    expect(calls).toHaveLength(1)
+  })
+
+  it('hides the line from its own close button, writing the shared switch', async () => {
+    const { calls } = stubRoute(okResponse)
+    const holder = makeScope(true)
+    render(<SidebarPointsGate t={t} settingsScope={holder.scope as never} />)
+    await waitFor(() => { expect(screen.getByText(/sidebar\.points/)).toBeTruthy() })
+    expect(calls).toHaveLength(1)
+
+    fireEvent.click(screen.getByLabelText(/sidebar\.hide/))
+    await waitFor(() => { expect(screen.queryByText(/sidebar\.points/)).toBeNull() })
+    // The write goes through the SAME field the plugin card uses.
+    expect(holder.written()).toContain(false)
   })
 })
