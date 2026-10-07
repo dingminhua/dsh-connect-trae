@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased
+
+> 以下两条修复**尚未发布**：未 bump 版本、未打 tag、未建 Release。等功能验收完整后再一起切版本。
+
+### Fixes
+
+- **切换账号后，另一个账号不再丢失积分**。真机复现：绑定账号切换到 B 后，A 那行变成「—」。
+
+  根因是 `readAll()` 的副本合并规则——**桌面副本先入，own 副本同 id 即跳过**，于是插件自己刷新出来的有效凭据被丢弃，账号永远「token 过期」，而有效 token 就在隔壁文件里：
+
+  | | 访问 token |
+  | --- | --- |
+  | `~/.dsh/.trae-auth.cn.json`（15:08 刚写入） | **有效到 2026-10-14** ✅ |
+  | `credentialOf()` 实际取到的桌面副本 | 过期于 **2026-09-27** ❌ |
+
+  修复：**按账号归并，同一 id 保留访问 token 更长寿的副本**。插入顺序仍跟随桌面列表，因此「选哪个账号」不变——只改「同一账号取哪份副本」。这也解释了为何该 bug 只在**切换之后**出现：`ownAuthPath()` 每区域一个文件，绑定账号刷新会覆盖它。
+
+- **绑定账号的取数改走会刷新 token 的路径**（`/account-credits` 端点）。它的存储 token 是已过期状态，而 `creditsOfAccount` 是纯查找、按设计原样返回过期 token（`creditAlternatives` 因此专门排除选中账号）；表格不排除，故改用与用量接口同一条 `deps.client(region)` 路径，并在客户端用量文档兜底——同一屏上读数与表格不能对同一账号给出两个答案。
+
+- **积分浮层表格样式**：统一行高与首列对齐（按钮承担全部左右内边距并回拉，使标签与表头对齐）、表头细分割线、当前账号加粗与绿点、悬停只作用于可点的按钮。
+
+### Screenshot
+
+本图为修复后的实际呈现——两个账号各有数字，输入框读数与选中账号一致：
+
+<img src="docs/assets/dsh-connect-trae-composer-credits.png" width="536" alt="Trae credits panel: a table of accounts with their general balance, and the composer readout below" />
+
+
 ## 2.14.0 (2026-10-07)
 
 > **积分浮层改为表格：本区域每个账号一行、只列通用积分、点行即可切换账号。**
