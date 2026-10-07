@@ -26,7 +26,6 @@ import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import { TraeUsageCard } from './TraeUsageCard.tsx'
 import { ComposerPointsGate } from './ComposerPointsGate.tsx'
-import { useAnchoredPosition, useDismissOnOutsidePointer } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TraeUsageCardInjected } from './TraeUsageCard.tsx'
 import { en, zh } from './locales.ts'
 import type { TraeSettingsKey } from './locales.ts'
@@ -203,11 +202,7 @@ export function apply(ctx: ClientContext): void {
           id: 'dsh-connect-trae-composer-points',
           order: 4,
           locale: namespace,
-          // The anchored-panel behaviours come from the shell's primitives and
-          // are injected rather than imported by the component, so the component
-          // stays loadable in the Node test suite (the primitives bundle pulls
-          // in `*.module.css` and further DSH packages that Node cannot import).
-          inject: () => ({ t, popover: { useAnchoredPosition, useDismissOnOutsidePointer } }),
+          inject: () => ({ t }),
         }, ComposerPointsGate))
       } catch (error: unknown) {
         console.error('[dsh-connect-trae] composer points slot failed to register (host provider unaffected):', error)

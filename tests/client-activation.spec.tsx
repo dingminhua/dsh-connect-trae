@@ -2,17 +2,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { Context, Service } from '@deepseek-ai/cordis'
 
-// The real entry imports the shell's UI primitives for the composer credit
-// panel's anchored popover. That package is a browser bundle (it reaches
-// `*.module.css` and further DSH packages Node cannot import), and every other
-// client spec in this suite mocks it the same way — this test keeps its own
-// subject intact: it boots the REAL entry to exercise its `inject` array, and
-// mocking a third-party component library does not touch that.
-vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => ({
-  useAnchoredPosition: () => undefined,
-  useDismissOnOutsidePointer: () => {},
-}))
-
 import * as clientEntry from '../src/client/index.tsx'
 
 /**

@@ -22,6 +22,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { useAnchoredPosition, useDismissOnOutsidePointer } from './popover.ts'
 import { TRAE_USAGE_PATH, withTraeRegion } from '../status-paths.ts'
 import type { TraeWebUsage } from '../status-paths.ts'
 import type { TraeRegion } from '../region.ts'
@@ -39,35 +40,6 @@ export interface ComposerPointsInjected {
   t: (key: TraeSettingsKey, params?: Record<string, unknown>) => string
 }
 
-/**
- * The two shell behaviours the popover needs, injected rather than imported.
- *
- * Importing them from `@deepseek-ai/dsh-client-ui-primitives` would pull that
- * package (and its `*.module.css` and transitive DSH packages) into every test
- * that renders this component — and into the component's own dependency list,
- * where the host already guarantees the primitives are present. Injecting them
- * keeps this file a plain React component that the suite can render with stubs,
- * while the shipped wiring passes the real hooks from the client entry.
- */
-export interface ComposerPointsPopover {
-  /** Viewport-anchored `position: fixed` style for the panel, or undefined. */
-  useAnchoredPosition: (options: {
-    open: boolean
-    anchorRef: { current: HTMLElement | null }
-    panelRef: { current: HTMLElement | null }
-    side?: 'top' | 'bottom'
-    gap: number
-    margin: number
-  }) => { left: number; top: number } | undefined
-  /** Close the panel when a pointerdown lands outside `root`/`portal`. */
-  useDismissOnOutsidePointer: (
-    root: { current: HTMLElement | null },
-    open: boolean,
-    setOpen: (open: boolean) => void,
-    portal?: { current: HTMLElement | null },
-  ) => void
-}
-
 export interface ComposerPointsProps extends Partial<ComposerPointsInjected> {
   /**
    * Provider route of the session's selected model, or undefined while the
@@ -77,12 +49,6 @@ export interface ComposerPointsProps extends Partial<ComposerPointsInjected> {
   provider?: string
   /** Which region's credits to read when the provider is this plugin's. */
   region?: TraeRegion
-  /**
-   * Shell popover behaviours. Required in production (the client entry always
-   * passes them); absent in a test that only cares about the readout, in which
-   * case the panel still opens but is not positioned or auto-dismissed.
-   */
-  popover?: ComposerPointsPopover
 }
 
 /**
@@ -110,22 +76,8 @@ function formatClock(value: number): string {
   return new Date(value).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
 }
 
-/**
- * Inert stand-ins used when no popover behaviours are injected.
- *
- * They exist so the two hook calls below happen on EVERY render regardless of
- * whether `popover` was supplied: calling them conditionally would change the
- * hook count between renders and break React's rules. Neither stub calls a hook
- * of its own, so substituting them is safe.
- */
-const INERT_POPOVER: ComposerPointsPopover = {
-  useAnchoredPosition: () => undefined,
-  useDismissOnOutsidePointer: () => {},
-}
-
 export function ComposerPoints(props: ComposerPointsProps) {
   const { t, provider, region } = props
-  const popover = props.popover ?? INERT_POPOVER
   if (t === undefined) throw new Error('Composer points readout requires its translation function')
   const owned = provider === undefined ? undefined : TRAE_COMPOSER_PROVIDERS[provider]
   const activeRegion = region ?? owned
@@ -145,9 +97,7 @@ export function ComposerPoints(props: ComposerPointsProps) {
     return () => { mounted.current = false }
   }, [])
 
-  // Hooks are called unconditionally (rules of hooks); the injected pair is a
-  // stable reference from the client entry, so this is not a conditional call.
-  const position = popover.useAnchoredPosition({
+  const position = useAnchoredPosition({
     open: open && activeRegion !== undefined,
     anchorRef: rootRef,
     panelRef,
@@ -155,7 +105,7 @@ export function ComposerPoints(props: ComposerPointsProps) {
     gap: 8,
     margin: 12,
   })
-  popover.useDismissOnOutsidePointer(rootRef, open, setOpen, panelRef)
+  useDismissOnOutsidePointer(rootRef, open, setOpen, panelRef)
 
   const fetchUsage = useCallback(async (signal?: AbortSignal): Promise<void> => {
     if (inFlight.current || activeRegion === undefined) return

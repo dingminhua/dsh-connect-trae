@@ -1,5 +1,44 @@
 # Changelog
 
+## 2.13.1 (2026-10-07)
+
+> **紧急修复：2.12.0 引入的客户端整半无法加载。**
+>
+> ```
+> web boot: 1 entry did not activate
+> dsh-connect-trae: import failed
+> ```
+>
+> 受影响版本：**2.12.0、2.13.0**。2.11.1 及更早不受影响。
+
+### 根因
+
+2.12.0 为积分浮层加了锚定定位，为此在客户端入口**值导入**了 `@deepseek-ai/dsh-client-ui-primitives`。
+
+插件的客户端 bundle 由 shell 的模块加载器载入（`window.__ModuleLoader__.load({ factory: (require) => … })`），它只注册了极少数模块名。tsdown 会把该值导入转成一个外部 `require(...)`，而浏览器无法解析它——**整个客户端半边因此加载失败**。
+
+**这个不变量一直写在仓库里**：`tests/client-activation.spec.tsx` 明确记录「入口的运行时依赖只有 React 和本地文件——所有 DSH 包都是 type-only 导入、编译期被擦除」。2.12.0 破坏了它，而且**所有测试依然全绿**：测试里该包被 mock、Node 也能从 node_modules 解析它，**问题只存在于浏览器中**。
+
+### 修复
+
+- 两个 hook（`useAnchoredPosition` / `useDismissOnOutsidePointer`）**改为本地实现**，新增 `src/client/popover.ts`，零 DSH 导入。行为对齐 shell 版本：同一套上/下放置与视口夹取、同一套滚动（capture）/缩放/浮层尺寸变化时重测、同一条「按下位置既不在触发区也不在浮层内则关闭」规则。
+- 移除入口的 primitives 值导入，以及为此引入的依赖注入绕路。
+- 产物恢复为**只有 `react` 与 `react/jsx-runtime` 两个 require**——即 2.11.1 那个已验证可用的状态。
+
+### 防止复发
+
+- **新增 `tests/client-runtime-imports.spec.ts`**：静态扫描 `src/client/**`，**若有任何 DSH 包的值导入即失败**（`import type` 允许，编译期被擦除）。这条守卫**已验证能抓住 2.12.0 的那个错误**。它跑在常规测试里、不需要构建产物，**在引入问题的那一行就失败，而不是等到启动时**。
+- 新增 `tests/popover.spec.tsx`（14 例）覆盖本地 hook 的真实几何与关闭规则。
+
+### Tests
+
+- 全仓 438 → **455**。**变异验证 5 次全部被抓**：定位忘记减去浮层高度 → 2 例；`align=end` 失效 → 1 例；去掉水平夹取 → 2 例；点浮层自身被当成外部点击 → 1 例；关闭状态下仍挂监听 → 1 例。
+- 另：`client-activation.spec.tsx` 中 2.12.0 为此加的 primitives mock **已删除**——该测试恢复为「加载真实入口、零 mock」。
+
+### 教训
+
+「所有测试全绿」不能证明插件能加载。这个仓库的测试把 DSH 包都 mock 掉了（Node 需要），因此**构建产物里出现什么 require，测试看不见**。现在这条静态守卫补上了这个盲区。
+
 ## 2.13.0 (2026-10-07)
 
 > **移除侧边栏积分行。侧边栏不再有任何本插件的痕迹，积分只在输入框工具栏、且仅在选用本插件模型时出现。**
