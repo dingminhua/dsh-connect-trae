@@ -191,27 +191,23 @@ describe('SidebarPointsGate', () => {
     expect(SIDEBAR_POINTS_REFRESH_INTERVAL_MS).toBe(300_000)
   })
 
-  it('shows the line by default, and turning it off leaves a chip that turns it back on', async () => {
-    // The off state used to render NOTHING. That made the feature unreachable
-    // on a host whose Plugins tab is owned by a market plugin (which never
-    // dispatches the card slot): the line was hidden AND the card switch could
-    // not be opened. The off state must therefore still be a control.
+  it('shows the line by default, and turning it off leaves NOTHING behind', async () => {
+    // Off means gone. An earlier revision left a small "积分" chip so the switch
+    // could not be lost, but the card now carries the same checkbox in two
+    // places, so the way back exists where the feature is configured. A residue
+    // in the footer is exactly what the user asked to clear.
     const { calls } = stubRoute(okResponse)
     const holder = makeScope(true)
-    render(<SidebarPointsGate t={t} settingsScope={holder.scope as never} />)
+    const { container } = render(<SidebarPointsGate t={t} settingsScope={holder.scope as never} />)
     await waitFor(() => { expect(screen.getByText(/sidebar\.points/)).toBeTruthy() })
     expect(calls).toHaveLength(1)
 
-    // Off: the balance is gone, a chip remains, and the polling stops.
     holder.setEnabled(false)
     await waitFor(() => { expect(screen.queryByText(/sidebar\.points/)).toBeNull() })
-    const chip = screen.getByText(/sidebar\.show/)
-    expect(chip).toBeTruthy()
-
-    // The chip turns it back on and the fetch resumes.
-    fireEvent.click(chip)
-    await waitFor(() => { expect(screen.getByText(/sidebar\.points/)).toBeTruthy() })
-    expect(holder.written()).toContain(true)
+    // Not "hidden", not "replaced by a chip": the slot renders no DOM at all.
+    expect(container.innerHTML).toBe('')
+    // And the polling stopped with it.
+    expect(calls).toHaveLength(1)
   })
 
   it('treats an absent switch as ON, so a not-yet-populated scope does not blink the line away', async () => {
@@ -229,13 +225,14 @@ describe('SidebarPointsGate', () => {
   it('hides the line from its own close button, writing the shared switch', async () => {
     const { calls } = stubRoute(okResponse)
     const holder = makeScope(true)
-    render(<SidebarPointsGate t={t} settingsScope={holder.scope as never} />)
+    const { container } = render(<SidebarPointsGate t={t} settingsScope={holder.scope as never} />)
     await waitFor(() => { expect(screen.getByText(/sidebar\.points/)).toBeTruthy() })
     expect(calls).toHaveLength(1)
 
     fireEvent.click(screen.getByLabelText(/sidebar\.hide/))
     await waitFor(() => { expect(screen.queryByText(/sidebar\.points/)).toBeNull() })
-    // The write goes through the SAME field the plugin card uses.
+    // Completely gone, and the write goes through the SAME field the card uses.
+    expect(container.innerHTML).toBe('')
     expect(holder.written()).toContain(false)
   })
 })

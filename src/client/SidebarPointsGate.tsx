@@ -7,22 +7,21 @@
  * depends only on React, the card's settings-scope shape and the line
  * component.
  *
- * TWO states, and the off state is still a visible control:
+ * TWO states:
  *
  *  - on  → {@link SidebarPoints}, which owns the fetch loop and its timer;
- *  - off → a single dimmed "积分" chip that turns it back on.
+ *  - off → NOTHING. The row is absent from the DOM, not hidden.
  *
- * The off state used to render NOTHING, and that turned out to be a dead end
- * (2.9.1): the switch also lives in the plugin card, but a market plugin can
- * own the Plugins tab without ever dispatching `plugins.bundle.config`, so on
- * such a host the line never rendered AND the switch could not be found. A
- * feature whose only control is on a page the user cannot open is not a
- * feature. The chip keeps the control where the feature itself renders, so it
- * is reachable on every host that draws this slot at all.
+ * Off used to leave a small "积分" chip behind, on the theory that a switch you
+ * cannot find is no switch at all (2.9.1). That safety net is no longer needed:
+ * the card carries the same checkbox twice — at the top of the card and beside
+ * the model actions — so the way back is always where the feature is
+ * configured. What the user asked for is for the row to be gone, and a leftover
+ * chip still occupies the footer they wanted cleared.
  *
- * The collapsed rail still renders nothing: the shell squeezes the footer to a
- * 56px strip rather than hiding it, and neither the line nor a chip reads well
- * there — see the bail-out below.
+ * The collapsed rail also renders nothing: the shell squeezes the footer to a
+ * 56px strip rather than hiding it, and the line does not read well there — see
+ * the bail-out below.
  */
 import { useCallback, useEffect, useState } from 'react'
 import { SidebarPoints } from './SidebarPoints.tsx'
@@ -85,21 +84,15 @@ export function SidebarPointsGate(props: SidebarPointsGateProps) {
   // its 5-minute timer never start while collapsed.
   if (wide === false) return null
 
-  if (!enabled) {
-    return (
-      <div className="dsm-trae-sidebar-points dsm-trae-sidebar-points-off">
-        <button
-          type="button"
-          className="dsm-trae-sidebar-points-show"
-          disabled={settingsScope?.getSnapshot()?.writable !== true}
-          title={t('sidebar.showHint')}
-          onClick={() => { setShown(true) }}
-        >
-          {t('sidebar.show')}
-        </button>
-      </div>
-    )
-  }
+  // Off means GONE: no row, no chip, no placeholder.
+  //
+  // An earlier revision kept a small "积分" button here so the switch could not
+  // be lost. That reasoning no longer holds: the card carries the same checkbox
+  // in two places (top of the card, and beside the model actions), so the way
+  // back is always available where the feature is configured. A residue in the
+  // sidebar is worse than useless — the user asked for the row to disappear, and
+  // a leftover chip still occupies the footer they wanted cleared.
+  if (!enabled) return null
 
   return <SidebarPoints t={t} onHide={() => { setShown(false) }} />
 }
