@@ -26,6 +26,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import { TraeUsageCard } from './TraeUsageCard.tsx'
 import { SidebarPointsGate } from './SidebarPointsGate.tsx'
+import { ComposerPointsGate } from './ComposerPointsGate.tsx'
 import type { TraeUsageCardInjected } from './TraeUsageCard.tsx'
 import { en, zh } from './locales.ts'
 import type { TraeSettingsKey } from './locales.ts'
@@ -203,6 +204,40 @@ export function apply(ctx: ClientContext): void {
       }
     }
 
+    /**
+     * Credit readout in the composer tool row (`conversation.input.left`, a
+     * session-scope list slot).
+     *
+     * Provider-scoped on purpose: it renders only while the session's selected
+     * model belongs to this plugin, which is what keeps two connector plugins
+     * from competing for one shared row. The sidebar foot cannot do that — it is
+     * a single root row, and the observed result there was this plugin's line
+     * collapsed to a clipped "Tr" beside dsh-connect-workbuddy's two rows.
+     *
+     * Registration is unconditional; the gate reads the Host's modelSelection
+     * projection and returns null for every other provider, so nothing is drawn
+     * and no fetch loop starts while another provider is selected.
+     */
+    const registerComposerPoints = (): void => {
+      try {
+        ctx.slots.inject('conversation.input.left' as never, () => (ctx.slots as unknown as {
+          register(
+            options: { name: string; id: string; order: number; locale: string; inject: () => { t: typeof t } },
+            component: unknown,
+          ): () => void
+        }).register({
+          name: 'conversation.input.left',
+          id: 'dsh-connect-trae-composer-points',
+          order: 4,
+          locale: namespace,
+          inject: () => ({ t }),
+        }, ComposerPointsGate))
+      } catch (error: unknown) {
+        console.error('[dsh-connect-trae] composer points slot failed to register (host provider unaffected):', error)
+      }
+    }
+
+    registerComposerPoints()
     registerSidebarPoints()
   } catch (error: unknown) {
     // Degrade silently on the page: the host provider still serves models.

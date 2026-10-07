@@ -94,11 +94,15 @@ describe('client entry activation on 0.1.7', () => {
     // The 0.1.7 slots are registered, and the scope came from configForms
     // bound to the namespace the mirror actually serves (the patch id, not the
     // declared fallback `trae`).
-    // `sidebar.footer.action` joins the two config slots: the general-credit
-    // line contributed in issue #26. It registers unconditionally; the gate
-    // renders nothing until the card switch is on.
+    // Two more slots join the two config ones:
+    //   - `sidebar.footer.action`: the general-credit line (issue #26);
+    //   - `conversation.input.left`: the provider-scoped credit readout, which
+    //     exists precisely so two connector plugins do not fight over the single
+    //     shared sidebar row.
+    // Both register unconditionally; their gates render nothing until the switch
+    // is on / this plugin's model is the selected one.
     expect(slots.registrations.map(entry => entry.name).sort())
-      .toEqual(['plugins.bundle.config', 'plugins.row.config', 'sidebar.footer.action'])
+      .toEqual(['conversation.input.left', 'plugins.bundle.config', 'plugins.row.config', 'sidebar.footer.action'])
     expect(forms.requested).toEqual(['dsh-connect-trae'])
     expect(errors).toHaveLength(0)
 
@@ -149,7 +153,7 @@ describe('client entry activation on 0.1.7', () => {
     // reads the switch as false and renders nothing, which is the correct
     // default for a host that cannot be asked.
     const slots = ctx.get('slots') as unknown as Slots
-    expect(slots.registrations).toHaveLength(3)
+    expect(slots.registrations).toHaveLength(4)
     expect(errors).toHaveLength(0)
 
     spy.mockRestore()

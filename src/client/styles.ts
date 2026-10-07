@@ -160,6 +160,15 @@ export const TRAE_SIDEBAR_CSS = `
    squeezed into the leftover space - which is exactly what happened next to
    dsh-connect-workbuddy's two lines, where ours collapsed to a clipped "Tr".
    The sibling plugin hit the same thing and fixed it the same way. */
+/* Composer-row credit readout. Deliberately narrow: the row is shared with the
+   permission, agent and model controls, so this is a value plus one icon button
+   and nothing else. */
+.dsm-trae-composer-points{display:inline-flex;align-items:center;gap:4px;min-width:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#c6c9d0)}
+.dsm-trae-composer-points-text{white-space:nowrap;font-variant-numeric:tabular-nums}
+.dsm-trae-composer-points-refresh{appearance:none;flex:none;display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;padding:0;border:0;border-radius:6px;color:var(--dsw-alias-label-tertiary,#999);background:transparent;cursor:pointer}
+.dsm-trae-composer-points-refresh:hover:not(:disabled){color:var(--dsw-alias-label-primary,#e6e6e6);background:var(--dsw-alias-bg-layer-3,#2c2f36)}
+.dsm-trae-composer-points-refresh:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#5686fe);outline-offset:1px}
+.dsm-trae-composer-points-refresh:disabled{opacity:.5;cursor:default}
 .dsm-trae-sidebar-points{display:flex;align-items:center;gap:8px;padding:4px 2px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#c6c9d0);flex:0 0 100%;min-width:0}
 .dsm-trae-sidebar-points-line{display:flex;align-items:center;gap:6px;min-width:0;flex:1 1 auto}
 .dsm-trae-sidebar-points-text{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
