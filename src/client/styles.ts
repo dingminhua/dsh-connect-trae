@@ -168,7 +168,14 @@ export const COMPOSER_POINTS_CSS = `
 .dsm-trae-composer-points-trigger{
   appearance:none;display:inline-flex;align-items:center;align-self:stretch;
   padding:2px 6px;border:0;border-radius:6px;background:transparent;
-  color:inherit;font:inherit;white-space:nowrap;cursor:pointer;
+  /* EXPLICIT, not inherit. The composer row's own font and body colour are
+     noticeably larger and darker than the neighbouring controls — a credit
+     readout is secondary information and must not shout. 12px matches this
+     plugin's original line; label-tertiary matches the shell's own composer-row
+     control (ContextMeter), which is the sibling this reads alongside. */
+  font-size:12px;line-height:18px;
+  color:var(--dsw-alias-label-tertiary,#999);
+  white-space:nowrap;cursor:pointer;
   font-variant-numeric:tabular-nums;
 }
 .dsm-trae-composer-points-trigger:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.14))}

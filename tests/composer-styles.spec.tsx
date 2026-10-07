@@ -111,6 +111,12 @@ describe('the composer readout injects its own stylesheet', () => {
     expect(rule?.[0]).toContain('border:0')
     expect(rule?.[0]).toContain('background:transparent')
     expect(rule?.[0]).toContain('cursor:pointer')
+    // The readout is SECONDARY information in a row that already carries the
+    // permission, agent and model controls. It was first inheriting the
+    // composer's own font and body colour, which read as too large and too
+    // dark next to them; these two values pin what was asked for.
+    expect(rule?.[0]).toContain('font-size:12px')
+    expect(rule?.[0]).toContain('label-tertiary')
     // ...and a hover state exists, so it is discoverable as clickable.
     expect(COMPOSER_POINTS_CSS).toContain('.dsm-trae-composer-points-trigger:hover')
   })
