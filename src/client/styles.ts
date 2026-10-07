@@ -160,15 +160,23 @@ export const TRAE_SIDEBAR_CSS = `
    squeezed into the leftover space - which is exactly what happened next to
    dsh-connect-workbuddy's two lines, where ours collapsed to a clipped "Tr".
    The sibling plugin hit the same thing and fixed it the same way. */
-/* Composer-row credit readout. Deliberately narrow: the row is shared with the
-   permission, agent and model controls, so this is a value plus one icon button
-   and nothing else. */
-.dsm-trae-composer-points{display:inline-flex;align-items:center;gap:4px;min-width:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#c6c9d0)}
-.dsm-trae-composer-points-text{white-space:nowrap;font-variant-numeric:tabular-nums}
-.dsm-trae-composer-points-refresh{appearance:none;flex:none;display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;padding:0;border:0;border-radius:6px;color:var(--dsw-alias-label-tertiary,#999);background:transparent;cursor:pointer}
-.dsm-trae-composer-points-refresh:hover:not(:disabled){color:var(--dsw-alias-label-primary,#e6e6e6);background:var(--dsw-alias-bg-layer-3,#2c2f36)}
-.dsm-trae-composer-points-refresh:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#5686fe);outline-offset:1px}
-.dsm-trae-composer-points-refresh:disabled{opacity:.5;cursor:default}
+/* Composer-row credit readout: a bare clickable pill; clicking opens the
+   account/credits panel. No refresh button in the row — the row is shared and
+   must stay narrow. */
+.dsm-trae-composer-points{display:inline-flex;align-items:center;min-width:0}
+.dsm-trae-composer-points-trigger{appearance:none;display:inline-flex;align-items:center;gap:4px;padding:1px 8px;border:0;border-radius:var(--dsw-radius-sm,6px);background:transparent;color:var(--dsw-alias-label-tertiary,#999);font:inherit;font-size:13px;line-height:20px;white-space:nowrap;cursor:pointer;font-variant-numeric:tabular-nums}
+.dsm-trae-composer-points-trigger:hover,.dsm-trae-composer-points-trigger[aria-expanded='true']{background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.06));color:var(--dsw-alias-label-secondary,#c6c9d0)}
+.dsm-trae-composer-points-trigger:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#5686fe);outline-offset:1px}
+/* The anchored panel: menu surface material, matching ContextMeter's panel. */
+.dsm-trae-composer-panel{position:fixed;z-index:1100;box-sizing:border-box;width:min(248px,calc(100vw - 24px));padding:12px;border:0;border-radius:var(--dsw-radius-lg,14px);background:var(--dsw-specific-menu,#24262c);backdrop-filter:var(--dsw-menu-backdrop-filter,none);--dsw-elevation-stroke-color:var(--dsw-alias-border-l1,#333);box-shadow:var(--dsw-elevation-prominent,0 8px 32px rgba(0,0,0,.4));font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#c6c9d0)}
+.dsm-trae-composer-panel-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
+.dsm-trae-composer-panel-title{font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary,#e6e6e6)}
+.dsm-trae-composer-panel-refresh{flex:none;padding:2px 10px;font-size:11px;line-height:16px}
+.dsm-trae-composer-panel-grid{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;margin:0}
+.dsm-trae-composer-panel-grid dt{color:var(--dsw-alias-label-tertiary,#9aa0a8);white-space:nowrap}
+.dsm-trae-composer-panel-grid dd{margin:0;text-align:right;font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-primary,#e6e6e6)}
+.dsm-trae-composer-panel-empty{margin:0;color:var(--dsw-alias-label-tertiary,#9aa0a8)}
+.dsm-trae-composer-panel-error{margin:8px 0 0;color:var(--dsw-alias-state-error-primary,#ef4444);font-size:11px;line-height:16px}
 .dsm-trae-sidebar-points{display:flex;align-items:center;gap:8px;padding:4px 2px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#c6c9d0);flex:0 0 100%;min-width:0}
 .dsm-trae-sidebar-points-line{display:flex;align-items:center;gap:6px;min-width:0;flex:1 1 auto}
 .dsm-trae-sidebar-points-text{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}

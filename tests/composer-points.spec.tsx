@@ -5,7 +5,7 @@
  * scoping decision, which is the whole reason the component exists.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { ComposerPoints, TRAE_COMPOSER_PROVIDERS } from '../src/client/ComposerPoints.tsx'
 import { ComposerPointsGate, selectedProviderOf } from '../src/client/ComposerPointsGate.tsx'
 import { TRAE_USAGE_PATH, withTraeRegion } from '../src/status-paths.ts'
@@ -29,7 +29,7 @@ function usageDocument(general: number): Record<string, unknown> {
     accounts: [],
     models: [],
     enabledModelIds: [],
-    credits: { total: 7500, consumed: 0, available: general + 1111, workAvailable: 0, generalAvailable: general, accounts: [] },
+    credits: { total: 7500, consumed: 0, available: general + 1111, workAvailable: 1777, generalAvailable: general, accounts: [] },
   }
 }
 
@@ -157,14 +157,48 @@ describe('ComposerPoints readout', () => {
     expect(screen.getByText(/3,392/).textContent).toBe('Trae CN · 3,392')
   })
 
-  it('carries exactly one control: the refresh icon', async () => {
-    // The composer row is shared, so the readout must stay a value plus a single
-    // icon button — no label button, no second action.
+  it('closes the panel on Escape', async () => {
+    // The panel is portaled to document.body with no focus trap, so keyboard
+    // dismissal is the only way out for a keyboard user; without this listener
+    // the panel is a keyboard trap.
     stubRoute()
     const { container } = render(<ComposerPoints t={t} provider="trae" region="cn" />)
     await waitFor(() => { expect(screen.getByText(/composer\.points/)).toBeTruthy() })
-    const buttons = Array.from(container.querySelectorAll('button'))
-    expect(buttons).toHaveLength(1)
-    expect(buttons[0]?.getAttribute('aria-label')).toMatch(/composer\.refresh/)
+    fireEvent.click(container.querySelector('button.dsm-trae-composer-points-trigger') as HTMLButtonElement)
+    await waitFor(() => { expect(screen.getByText(/composer\.panelTitle/)).toBeTruthy() })
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await waitFor(() => { expect(screen.queryByText(/composer\.panelTitle/)).toBeNull() })
+  })
+
+  it('the row is one clickable trigger with NO refresh button; refresh lives in the panel', async () => {
+    // The composer row is shared and must stay narrow: it is a single trigger,
+    // and the refresh action is behind the click (in the anchored panel), like
+    // the neighbouring Expert control.
+    stubRoute()
+    const { container } = render(<ComposerPoints t={t} provider="trae" region="cn" />)
+    await waitFor(() => { expect(screen.getByText(/composer\.points/)).toBeTruthy() })
+    const trigger = container.querySelector('button.dsm-trae-composer-points-trigger')
+    expect(trigger).not.toBeNull()
+    expect(trigger?.getAttribute('aria-haspopup')).toBe('dialog')
+    // The only button in the row is the trigger itself.
+    expect(container.querySelectorAll('button')).toHaveLength(1)
+    expect(screen.queryByText(/composer\.refresh/)).toBeNull()
+
+    // Clicking opens the panel, which carries the account, both buckets and the
+    // refresh button.
+    fireEvent.click(trigger as HTMLButtonElement)
+    await waitFor(() => { expect(screen.getByText(/composer\.panelTitle/)).toBeTruthy() })
+    expect(screen.getByText(/composer\.account/)).toBeTruthy()
+    expect(screen.getByText(/composer\.workCredits/)).toBeTruthy()
+    expect(screen.getByText(/composer\.generalCredits/)).toBeTruthy()
+    expect(screen.getByText(/composer\.refresh/)).toBeTruthy()
+    // The panel reports the ACCOUNT, not just a number: the row is a label and
+    // a value, so the panel is where "whose credits are these" gets answered.
+    expect(screen.getByText('LaoDing')).toBeTruthy()
+    // The fixture carries workAvailable = 1,777; both buckets must be rendered
+    // with their own figures, not collapsed into one.
+    expect(screen.getByText('1,777')).toBeTruthy()
+    expect(screen.getByText('3,392')).toBeTruthy()
   })
 })

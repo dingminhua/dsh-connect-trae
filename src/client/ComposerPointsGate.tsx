@@ -14,6 +14,7 @@
  * what the composer shows the user.
  */
 import { ComposerPoints, TRAE_COMPOSER_PROVIDERS } from './ComposerPoints.tsx'
+import type { ComposerPointsPopover } from './ComposerPoints.tsx'
 import type { TraeSettingsKey } from './locales.ts'
 
 /** The slice of the `modelSelection` projection this decision needs. */
@@ -36,6 +37,8 @@ export function selectedProviderOf(projection: ModelSelectionProjectionLike | un
 
 export interface ComposerPointsGateProps {
   t: (key: TraeSettingsKey, params?: Record<string, unknown>) => string
+  /** Shell popover behaviours, passed through to the readout. */
+  popover?: ComposerPointsPopover
   /**
    * Standard slot hook: reads one Host-computed projection for this session.
    * Injected by the slot, so it is absent when this gate is rendered directly
@@ -45,7 +48,7 @@ export interface ComposerPointsGateProps {
 }
 
 export function ComposerPointsGate(props: ComposerPointsGateProps) {
-  const { t, useProjection } = props
+  const { t, popover, useProjection } = props
   // The hook is optional so the gate can be rendered in a test without a Host.
   // Calling it conditionally would break the rules of hooks, so the call itself
   // is unconditional and the fallback is handled by the result.
@@ -64,5 +67,5 @@ export function ComposerPointsGate(props: ComposerPointsGateProps) {
   // `region` is non-undefined here, and it is derived from `provider`, so the
   // provider is present too; the assertion states that rather than widening the
   // component's prop to accept an absent provider it never sees.
-  return <ComposerPoints t={t} provider={provider as string} region={region} />
+  return <ComposerPoints t={t} provider={provider as string} region={region} {...popover === undefined ? {} : { popover }} />
 }
