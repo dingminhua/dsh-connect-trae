@@ -148,7 +148,11 @@ export function ComposerPoints(props: ComposerPointsProps) {
   return (
     <div className="dsm-trae-composer-points" title={failed ? t('composer.refreshFailed') : undefined}>
       <span className="dsm-trae-composer-points-text" aria-live="polite">
-        {label} {valueText}
+        {/* Label and value are split by a middle dot, matching the model seat
+            next to it ("DeepSeek-V4.1-Flash · x0.08"). No unit word: the row is
+            shared and narrow, and the dot already says "attribute of the
+            thing named before it". */}
+        {label} · {valueText}
       </span>
       <button
         type="button"

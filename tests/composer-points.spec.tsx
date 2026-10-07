@@ -9,6 +9,7 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import { ComposerPoints, TRAE_COMPOSER_PROVIDERS } from '../src/client/ComposerPoints.tsx'
 import { ComposerPointsGate, selectedProviderOf } from '../src/client/ComposerPointsGate.tsx'
 import { TRAE_USAGE_PATH, withTraeRegion } from '../src/status-paths.ts'
+import { en, zh } from '../src/client/locales.ts'
 import type { TraeSettingsKey } from '../src/client/locales.ts'
 
 const t = ((key: TraeSettingsKey) => key) as (key: TraeSettingsKey, params?: Record<string, unknown>) => string
@@ -118,6 +119,42 @@ describe('ComposerPoints readout', () => {
     const { container } = render(<ComposerPoints t={t} provider="workbuddy-global" region="cn" />)
     expect(container.innerHTML).toBe('')
     expect(calls).toHaveLength(0)
+  })
+
+  it('separates label and value with a middle dot, and carries no unit word', async () => {
+    // The row is shared and narrow: "Trae CN · 3,392", matching the model seat
+    // beside it ("DeepSeek-V4.1-Flash · x0.08"). Pinned because both halves are
+    // easy to lose in a refactor — a space instead of the dot, or the unit word
+    // creeping back in.
+    stubRoute()
+    render(<ComposerPoints t={t} provider="trae" region="cn" />)
+    await waitFor(() => { expect(screen.getByText(/3,392/)).toBeTruthy() })
+    const text = screen.getByText(/3,392/).textContent ?? ''
+    expect(text).toBe('composer.points · 3,392')
+    expect(text).not.toMatch(/积分|credits/i)
+  })
+
+  it('the SHIPPED copy says "Trae CN" with no unit word, in both languages', () => {
+    // Asserted against the real locale tables, not the key-returning test `t`:
+    // with a fake `t` the rendered label is the KEY, so a unit word creeping
+    // back into the real strings would never turn a test red.
+    expect(zh['composer.points']).toBe('Trae CN')
+    expect(en['composer.points']).toBe('Trae CN')
+    expect(zh['composer.points']).not.toMatch(/积分/)
+    expect(en['composer.points']).not.toMatch(/credits/i)
+  })
+
+  it('renders the REAL Chinese copy as "Trae CN · 3,392"', async () => {
+    const realT = ((key: TraeSettingsKey, params?: Record<string, unknown>) => {
+      const template = zh[key] ?? key
+      return params === undefined
+        ? template
+        : template.replace(/\{(\w+)\}/g, (_, name: string) => String(params[name] ?? ''))
+    }) as (key: TraeSettingsKey, params?: Record<string, unknown>) => string
+    stubRoute()
+    render(<ComposerPoints t={realT} provider="trae" region="cn" />)
+    await waitFor(() => { expect(screen.getByText(/3,392/)).toBeTruthy() })
+    expect(screen.getByText(/3,392/).textContent).toBe('Trae CN · 3,392')
   })
 
   it('carries exactly one control: the refresh icon', async () => {
