@@ -52,13 +52,21 @@ export interface ComposerPointsProps extends Partial<ComposerPointsInjected> {
 }
 
 /**
- * Provider routes this plugin owns, mapped to the region whose credits apply.
- * Mirrors `TRAE_PROVIDERS` on the host side; duplicated here because the client
- * bundle must not import the host entry.
+ * Provider routes whose credit balance this readout can show, mapped to the
+ * region to read it from.
+ *
+ * CN ONLY, and the restriction is the data's, not a preference: the Host builds
+ * the international region's usage document from `payStatus` and never sets
+ * `credits` on it (`webStatusFor` returns early for `region === 'ai'`), because
+ * that side is subscription-based and has no comparable balance. Mapping
+ * `trae-global` here would render the hardcoded "Trae CN" label next to a dash
+ * — a number-slot with no number — while an international model is selected.
+ *
+ * Mirrors the CN half of `TRAE_PROVIDERS` on the host side; duplicated here
+ * because the client bundle must not import the host entry.
  */
 export const TRAE_COMPOSER_PROVIDERS: Readonly<Record<string, TraeRegion>> = {
   'trae': 'cn',
-  'trae-global': 'ai',
 }
 
 /** The general credit balance out of one usage document, or undefined. */

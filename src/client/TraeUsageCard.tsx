@@ -800,17 +800,6 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
       <div className="dsm-plugin-card-body" hidden={!open}>
         {open
           ? <div className="dsm-trae-usage">
-              <div className="dsm-trae-mainui-switch">
-                <label className="dsm-trae-mainui-switch-label" title={t('row.showPointsInMainUiHint')}>
-                  <input
-                    type="checkbox"
-                    checked={(settingsValue as { showPointsInMainUi?: unknown } | null)?.showPointsInMainUi === true}
-                    disabled={settingsScope?.getSnapshot().writable !== true || togglingCredits}
-                    onChange={event => { void toggleShowPointsInMainUi(event.currentTarget.checked) }}
-                  />
-                  <span>{t('row.showPointsInMainUi')}</span>
-                </label>
-              </div>
               <div className="dsm-trae-tabs" role="tablist" aria-label={title}>
                 {TRAE_REGIONS.map(item => {
                   const regionStatus = statusByRegion[item]
@@ -855,6 +844,26 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
               {regionOn(activeRegion)
                 ? null
                 : <p className="dsm-trae-tab-off-notice" role="status">{t('row.tabOffNotice')}</p>}
+              {/* CN ONLY, and deliberately OUTSIDE the signed-in subtree: the
+                  international region is subscription-based and its usage
+                  document carries no `credits` at all (`webStatusFor` returns
+                  `payStatus` for `region === 'ai'`), so there is no balance to
+                  mirror; and the credit stats this switch relates to only exist
+                  while signed in, so nesting it there would hide the control
+                  exactly when a signed-out user goes looking for it. */}
+              {activeRegion !== 'cn'
+                ? null
+                : <div className="dsm-trae-mainui-switch">
+                    <label className="dsm-trae-mainui-switch-label" title={t('row.showPointsInMainUiHint')}>
+                      <input
+                        type="checkbox"
+                        checked={(settingsValue as { showPointsInMainUi?: unknown } | null)?.showPointsInMainUi === true}
+                        disabled={settingsScope?.getSnapshot().writable !== true || togglingCredits}
+                        onChange={event => { void toggleShowPointsInMainUi(event.currentTarget.checked) }}
+                      />
+                      <span>{t('row.showPointsInMainUi')}</span>
+                    </label>
+                  </div>}
               <div className="dsm-trae-usage-account">
                 <div className="dsm-trae-usage-account-copy" role="status">
                   <div className="dsm-trae-usage-status">

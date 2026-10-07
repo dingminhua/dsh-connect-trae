@@ -133,22 +133,27 @@ describe('ComposerPointsGate provider scoping', () => {
     expect(calls[0]).toBe(withTraeRegion(TRAE_USAGE_PATH, 'cn'))
   })
 
-  it('renders and fetches international credits for the trae-global provider', async () => {
+  it('renders nothing for the INTERNATIONAL provider, and fetches nothing', async () => {
+    // Not a provider-scoping choice but a data one: the Host builds the `ai`
+    // usage document from `payStatus` and never sets `credits` on it, because
+    // that side is subscription-based. Rendering here would put the hardcoded
+    // "Trae CN" label beside a dash. The switch being ON proves this is the
+    // region rule deciding, not the switch.
     const { calls } = stubRoute()
     const { scope } = makeScope(true)
-    render(
+    const { container } = render(
       <ComposerPointsGate
         t={t}
         settingsScope={scope as never}
         useProjection={() => ({ lastUsed: { provider: 'trae-global' } })}
       />,
     )
-    await waitFor(() => { expect(screen.getByText(/composer\.points/)).toBeTruthy() })
-    expect(calls[0]).toBe(withTraeRegion(TRAE_USAGE_PATH, 'ai'))
+    expect(container.innerHTML).toBe('')
+    expect(calls).toHaveLength(0)
   })
 
-  it('owns exactly the two provider routes the host registers', () => {
-    expect(TRAE_COMPOSER_PROVIDERS).toEqual({ 'trae': 'cn', 'trae-global': 'ai' })
+  it('owns exactly the ONE provider route that has a balance to show', () => {
+    expect(TRAE_COMPOSER_PROVIDERS).toEqual({ 'trae': 'cn' })
   })
 })
 

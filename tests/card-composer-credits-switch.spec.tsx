@@ -94,6 +94,22 @@ describe('the composer-credits switch in the card', () => {
     expect(composerPointsEnabledOf(holder.scope as never)).toBe(false)
   })
 
+  it('is ABSENT on the 国际版 tab: that region has no balance to mirror', () => {
+    // The switch is CN-only because the DATA is. The Host builds the `ai` usage
+    // document from `payStatus` and never sets `credits` on it, so an
+    // international tab offering "show the credit readout" would promise
+    // something that cannot render.
+    renderOpen(makeScope({}).scope)
+    expect(screen.queryByRole('checkbox', { name: /row\.showPointsInMainUi$/ })).not.toBeNull()
+
+    fireEvent.click(screen.getByRole('tab', { name: /row\.tabAi/ }))
+    expect(screen.queryByRole('checkbox', { name: /row\.showPointsInMainUi$/ })).toBeNull()
+
+    // ...and it comes back on the CN tab.
+    fireEvent.click(screen.getByRole('tab', { name: /row\.tabCn/ }))
+    expect(screen.queryByRole('checkbox', { name: /row\.showPointsInMainUi$/ })).not.toBeNull()
+  })
+
   it('refuses to write on a read-only scope, and stays unchecked', () => {
     const holder = makeScope({}, false)
     renderOpen(holder.scope)
