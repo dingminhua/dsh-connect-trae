@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.10.2 (2026-10-07)
+
+### 变更
+
+- **侧边栏标签改为 `Trae CN 积分`**（英文 `Trae CN credits`），对齐同族插件 `dsh-connect-workbuddy` 的呈现格式（`WB CN 积分： 3,392`）——即「**产品缩写 + 区域 + 积分**」。
+  - 上一版是 `Trae通用积分`，没有区域标记。加上 `CN` 后，与 workbuddy 的两行（`WB CN 积分` / `WB AI 积分`）在视觉上属于同一套语言。
+  - 数值仍是**通用积分**（`credits.generalAvailable`），未改动。
+
 ## 2.10.1 (2026-10-07)
 
 > **对齐 `dsh-connect-workbuddy` 的侧边栏积分呈现方式：去掉行内开关，默认不显示。**
