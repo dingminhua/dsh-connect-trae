@@ -18,6 +18,18 @@ export const TRAE_MODELS_REFRESH_PATH = '/plugins/dsh-connect-trae/models/refres
 export const TRAE_MODELS_TEST_PATH = '/plugins/dsh-connect-trae/models/test'
 /** Plugin-owned local account rescan endpoint. */
 export const TRAE_ACCOUNTS_REFRESH_PATH = '/plugins/dsh-connect-trae/accounts/refresh'
+
+/**
+ * General balance of EVERY account in a region, for the composer panel's table.
+ *
+ * Separate from the usage route on purpose: the usage document backs the
+ * 5-minute readout, and multiplying its upstream reads by the account count
+ * would charge a healthy account for something it never looks at — the same
+ * principle that keeps `creditAlternatives` firing only when a balance hits
+ * zero. This one is paid when the panel is actually opened, which is the only
+ * place the table is shown.
+ */
+export const TRAE_ACCOUNT_CREDITS_PATH = '/plugins/dsh-connect-trae/account-credits'
 /**
  * Plugin-owned daily check-in claim endpoint. POST, loopback-only, and the only
  * route in this plugin that changes upstream account state.
@@ -201,6 +213,22 @@ export interface TraeWebAccount {
  * name the alternative in the UI — identity plus the two CN credit buckets —
  * and is only ever produced by a read-only upstream call.
  */
+/**
+ * One row of the composer panel's account table: the account and its general
+ * balance.
+ *
+ * `generalAvailable` is optional because the host may not expose
+ * `creditsOfAccount` (the table still lists the accounts, with no figure).
+ * WORK credits are deliberately absent: the table's single figure is the
+ * general bucket, the one the SOLO chat actually spends.
+ */
+export interface TraeWebAccountCredit {
+  id: string
+  accountName: string
+  selected: boolean
+  generalAvailable?: number
+}
+
 export interface TraeWebCreditAlternative {
   id: string
   accountName: string
@@ -260,6 +288,25 @@ export function unwrapVolatileDeep<T>(value: T): T {
     out[key] = unwrapVolatileDeep(source[key])
   }
   return out as T
+}
+
+/**
+ * Read the per-region account selections out of a settings value.
+ *
+ * SHARED because `accounts` now has TWO writers: the card, and the composer
+ * panel's account table (2.14.0). Two writers of one field must use one merge
+ * rule, or they drift — and the rule is not obvious.
+ *
+ * Deep-unwraps first: on DSH 0.1.7 a volatile field arrives as a `{get(): T}`
+ * live reference, which passes the `typeof === 'object'` check and would be
+ * returned as if it were the map. Every lookup on it is then `undefined`, and
+ * the merge (`{ ...configured, [region]: id }`) would spread a reference into
+ * `{get: <function>}` — dropping the other region's selection and leaking a
+ * function into the settings document.
+ */
+export function configuredAccountsOf(configured: unknown): Record<string, string> {
+  const accounts = (unwrapVolatileDeep(configured) as { accounts?: unknown } | undefined)?.accounts
+  return typeof accounts === 'object' && accounts !== null ? accounts as Record<string, string> : {}
 }
 
 /**

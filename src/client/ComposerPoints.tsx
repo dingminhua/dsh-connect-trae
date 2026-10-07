@@ -8,12 +8,21 @@
  * per-session and provider-scoped, so exactly one plugin's credits are relevant
  * at a time and nothing overlaps.
  *
- * The row itself is a bare clickable readout — `Trae CN · 3,392` — with NO
- * refresh control. Clicking it opens an anchored panel (the same interaction as
- * the neighbouring "Expert" control): account name, the Work and general
- * buckets, and the manual refresh button. Keeping the action out of the row is
- * deliberate: the row is shared with the permission, agent and model controls
- * and must stay narrow, while the panel has room to explain the number.
+ * The row itself is a bare clickable readout — `Trae CN · 657` — with NO
+ * refresh control. Clicking it opens an anchored panel: a TABLE with one row
+ * per account in the region and that account's general balance, where a row
+ * click switches to it. The manual refresh button lives in the panel too.
+ *
+ * Two deliberate choices in that panel:
+ *
+ *  - GENERAL balance only, not Work credits. The table's one figure is the
+ *    bucket the SOLO chat actually spends; two columns of numbers in a
+ *    five-slot popover is noise, and the card is where the breakdown belongs.
+ *  - Per-account figures are fetched ONLY while the panel is open. The
+ *    5-minute readout must not multiply its upstream reads by the account
+ *    count — a healthy balance should not pay for a table nobody is looking at.
+ *    This is the same principle that keeps `creditAlternatives` firing only
+ *    when a balance hits zero.
  *
  * The provider comes from the Host's own `modelSelection` projection rather
  * than from anything this plugin tracks: the projection is what the model
@@ -23,11 +32,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useAnchoredPosition, useDismissOnOutsidePointer } from './popover.ts'
-import { TRAE_USAGE_PATH, withTraeRegion } from '../status-paths.ts'
+import {
+  TRAE_ACCOUNT_CREDITS_PATH,
+  TRAE_USAGE_PATH,
+  configuredAccountsOf,
+  withTraeRegion,
+} from '../status-paths.ts'
 import { COMPOSER_POINTS_CSS } from './styles.ts'
-import type { TraeWebUsage } from '../status-paths.ts'
+import type { TraeWebAccountCredit, TraeWebUsage } from '../status-paths.ts'
 import type { TraeRegion } from '../region.ts'
 import type { TraeSettingsKey } from './locales.ts'
+import type { TraeUsageCardInjected } from './TraeUsageCard.tsx'
 
 /**
  * Inject the readout's styles into the document head, once, on module load.
@@ -71,6 +86,12 @@ export interface ComposerPointsProps extends Partial<ComposerPointsInjected> {
   provider?: string
   /** Which region's credits to read when the provider is this plugin's. */
   region?: TraeRegion
+  /**
+   * Settings scope from the configForms mirror. Present whenever a row click
+   * should switch accounts; without it the table still renders but the rows are
+   * inert, because a panel that switches nothing must not pretend to.
+   */
+  settingsScope?: TraeUsageCardInjected['settingsScope']
 }
 
 /**
@@ -107,13 +128,15 @@ function formatClock(value: number): string {
 }
 
 export function ComposerPoints(props: ComposerPointsProps) {
-  const { t, provider, region } = props
+  const { t, provider, region, settingsScope } = props
   if (t === undefined) throw new Error('Composer points readout requires its translation function')
   const owned = provider === undefined ? undefined : TRAE_COMPOSER_PROVIDERS[provider]
   const activeRegion = region ?? owned
 
   const [usage, setUsage] = useState<TraeWebUsage | undefined>(undefined)
+  const [accountCredits, setAccountCredits] = useState<TraeWebAccountCredit[] | undefined>(undefined)
   const [busy, setBusy] = useState(false)
+  const [switchingId, setSwitchingId] = useState<string | undefined>(undefined)
   const [failed, setFailed] = useState(false)
   const [lastRefresh, setLastRefresh] = useState<number | undefined>(undefined)
   const [open, setOpen] = useState(false)
@@ -161,9 +184,34 @@ export function ComposerPoints(props: ComposerPointsProps) {
     }
   }, [activeRegion])
 
-  // Fetch on mount and whenever the region changes, then keep it fresh. The
-  // timer starts only after the first fetch settles, so a slow upstream cannot
-  // stack overlapping reads.
+  /**
+   * Every account's general balance — one upstream read per account.
+   *
+   * Paid only while the panel is open (see the note at the top of this file).
+   * A failure keeps whatever we already have rather than clearing it: a number
+   * that went stale is better than a switch that vanished.
+   */
+  const fetchAccountCredits = useCallback(async (signal?: AbortSignal): Promise<void> => {
+    if (activeRegion === undefined) return
+    try {
+      const response = await fetch(withTraeRegion(TRAE_ACCOUNT_CREDITS_PATH, activeRegion), {
+        headers: { accept: 'application/json' },
+        credentials: 'same-origin',
+        ...signal === undefined ? {} : { signal },
+      })
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      const data = await response.json() as { accounts?: unknown }
+      if (!mounted.current || signal?.aborted === true) return
+      if (Array.isArray(data.accounts)) setAccountCredits(data.accounts as TraeWebAccountCredit[])
+    } catch {
+      // Keep the previous rows: the table falls back to the usage document's
+      // account list, so a failed figure must not remove the switch.
+    }
+  }, [activeRegion])
+
+  // Fetch usage on mount and whenever the region changes, then keep it fresh.
+  // The timer starts only after the first fetch settles, so a slow upstream
+  // cannot stack overlapping reads.
   useEffect(() => {
     if (owned === undefined) return undefined
     let cancelled = false
@@ -180,6 +228,14 @@ export function ComposerPoints(props: ComposerPointsProps) {
     }
   }, [owned, fetchUsage])
 
+  // Per-account figures are read on OPEN, not on the 5-minute cycle.
+  useEffect(() => {
+    if (!open || activeRegion === undefined) return undefined
+    const controller = new AbortController()
+    void fetchAccountCredits(controller.signal)
+    return () => { controller.abort() }
+  }, [open, activeRegion, fetchAccountCredits])
+
   // Escape closes the panel, matching the neighbouring popovers.
   useEffect(() => {
     if (!open) return undefined
@@ -189,6 +245,40 @@ export function ComposerPoints(props: ComposerPointsProps) {
     document.addEventListener('keydown', onKeyDown)
     return () => { document.removeEventListener('keydown', onKeyDown) }
   }, [open])
+
+  /**
+   * Switch to another account, then re-read both the usage document and the
+   * table so the marker, the readout, and the panel all move together.
+   *
+   * The merge goes through the shared `configuredAccountsOf` helper (the card
+   * uses the same one): writing only `[region]: id` would drop the other
+   * region's selection. The write is read-back checked — `set()` resolving is
+   * not proof it landed — so a refused write reports failure instead of
+   * showing a marker on an account that was never selected.
+   */
+  const switchTo = async (accountId: string): Promise<void> => {
+    if (settingsScope === undefined || settingsScope.getSnapshot().writable !== true) return
+    if (activeRegion === undefined || switchingId !== undefined) return
+    const currentId = accountCredits?.find(account => account.selected)?.id
+      ?? (usage?.status === 'signed-in' ? usage.accountId : undefined)
+    if (accountId === currentId) return
+    setSwitchingId(accountId)
+    setFailed(false)
+    try {
+      const configured = configuredAccountsOf(settingsScope.getSnapshot().value)
+      const accepted = await settingsScope.set('accounts', { ...configured, [activeRegion]: accountId })
+      const readBack = configuredAccountsOf(settingsScope.getSnapshot().value)
+      if (accepted === false || readBack[activeRegion] !== accountId) {
+        throw new Error('the Host did not persist the switch')
+      }
+      await fetchUsage()
+      await fetchAccountCredits()
+    } catch {
+      if (mounted.current) setFailed(true)
+    } finally {
+      if (mounted.current) setSwitchingId(undefined)
+    }
+  }
 
   // Not this plugin's model: render nothing at all, so the composer row is
   // untouched while another provider is in use.
@@ -204,11 +294,27 @@ export function ComposerPoints(props: ComposerPointsProps) {
   // genuinely signed-out account.
   const signedIn = usage?.status === 'signed-in' ? usage : undefined
   const general = signedIn === undefined ? undefined : generalCreditsOf(signedIn)
-  const work = signedIn?.credits?.workAvailable
-  const accountName = signedIn?.accountName
   const signedOut = usage !== undefined && usage.status === 'signed-out'
   const valueText = general === undefined ? '—' : formatCredits(general)
   const label = t('composer.points')
+
+  /**
+   * The table's rows: every account in this region, with its general balance.
+   *
+   * The endpoint's answer is authoritative (it carries the figures). Before it
+   * lands — or if it fails — fall back to the usage document's account list so
+   * the switches are reachable immediately, showing `—` for the figure rather
+   * than a spinner the user has to wait on.
+   */
+  const rows: TraeWebAccountCredit[] = accountCredits
+    ?? (signedIn === undefined
+      ? []
+      : signedIn.accounts
+        .filter(account => account.region === activeRegion)
+        .map(account => ({ id: account.id, accountName: account.accountName, selected: account.selected })))
+  const selectedId = accountCredits?.find(account => account.selected)?.id
+    ?? (signedIn === undefined ? undefined : signedIn.accountId)
+  const canSwitch = settingsScope !== undefined && settingsScope.getSnapshot().writable === true
 
   return (
     <span ref={rootRef} className="dsm-trae-composer-points">
@@ -234,7 +340,7 @@ export function ComposerPoints(props: ComposerPointsProps) {
             <button
               type="button"
               className="dsm-trae-composer-panel-refresh"
-              disabled={busy}
+              disabled={busy || switchingId !== undefined}
               onClick={() => { void fetchUsage() }}
             >
               {busy ? t('composer.refreshing') : t('composer.refresh')}
@@ -242,18 +348,47 @@ export function ComposerPoints(props: ComposerPointsProps) {
           </div>
           {signedOut
             ? <p className="dsm-trae-composer-panel-empty">{t('composer.signedOut')}</p>
-            : (
-              <dl className="dsm-trae-composer-panel-grid">
-                <dt>{t('composer.account')}</dt>
-                <dd>{accountName ?? '—'}</dd>
-                <dt>{t('composer.workCredits')}</dt>
-                <dd>{work === undefined ? '—' : formatCredits(work)}</dd>
-                <dt>{t('composer.generalCredits')}</dt>
-                <dd>{general === undefined ? '—' : formatCredits(general)}</dd>
-                <dt>{t('composer.lastRefresh')}</dt>
-                <dd>{lastRefresh === undefined ? '—' : formatClock(lastRefresh)}</dd>
-              </dl>
-            )}
+            : rows.length === 0
+              ? <p className="dsm-trae-composer-panel-empty">{t('composer.noAccounts')}</p>
+              : (
+                <table className="dsm-trae-composer-panel-table">
+                  <thead>
+                    <tr>
+                      <th scope="col">{t('composer.account')}</th>
+                      <th scope="col" className="dsm-trae-composer-panel-num">{t('composer.generalCredits')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map(row => {
+                      const current = row.id === selectedId
+                      return (
+                        <tr key={row.id} className={current ? 'dsm-trae-composer-panel-row-current' : undefined}>
+                          <th scope="row">
+                            <button
+                              type="button"
+                              className="dsm-trae-composer-panel-switch"
+                              disabled={!canSwitch || switchingId !== undefined || current}
+                              aria-label={t('composer.switchTo', { account: row.accountName })}
+                              onClick={() => { void switchTo(row.id) }}
+                            >
+                              <span className="dsm-trae-composer-panel-dot" aria-hidden="true" />
+                              {row.accountName}
+                            </button>
+                          </th>
+                          <td className="dsm-trae-composer-panel-num">
+                            {row.generalAvailable === undefined ? '—' : formatCredits(row.generalAvailable)}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              )}
+          <div className="dsm-trae-composer-panel-foot">
+            <span>
+              {t('composer.lastRefresh')} {lastRefresh === undefined ? '—' : formatClock(lastRefresh)}
+            </span>
+          </div>
           {failed ? <p className="dsm-trae-composer-panel-error" role="status">{t('composer.refreshFailed')}</p> : null}
         </div>,
         document.body,

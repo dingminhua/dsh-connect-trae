@@ -19,15 +19,16 @@ import type { TraeRawDiagnostic } from './raw-diagnostic.ts'
 import type { TraeRegion } from './region.ts'
 import {
   regionOfTraeStatusUrl,
+  TRAE_ACCOUNT_CREDITS_PATH,
   TRAE_ACCOUNTS_REFRESH_PATH,
   TRAE_CHECKIN_PATH,
   TRAE_MODELS_REFRESH_PATH,
   TRAE_MODELS_TEST_PATH,
   TRAE_USAGE_PATH,
 } from './status-paths.ts'
-import type { TraeWebAccount, TraeWebCheckin, TraeWebCreditAlternative, TraeWebCredits, TraeWebUsage } from './status-paths.ts'
+import type { TraeWebAccount, TraeWebAccountCredit, TraeWebCheckin, TraeWebCreditAlternative, TraeWebCredits, TraeWebUsage } from './status-paths.ts'
 
-export { TRAE_USAGE_PATH } from './status-paths.ts'
+export { TRAE_USAGE_PATH, TRAE_ACCOUNT_CREDITS_PATH } from './status-paths.ts'
 export type { TraeWebUsage } from './status-paths.ts'
 
 /**
@@ -333,6 +334,36 @@ async function creditAlternatives(
  * The region a request addresses, or a 400 answer. Absent parameter means the
  * domestic tab; an unknown value is refused rather than guessed.
  */
+/**
+ * The general balance of every account in one region.
+ *
+ * One upstream read per account — the same call `creditsOfAccount` already
+ * makes for the exhausted-balance alternatives, widened to every account and to
+ * zero balances. Costs nothing until the composer panel is opened, so the
+ * 5-minute readout never pays for it (see {@link TRAE_ACCOUNT_CREDITS_PATH}).
+ *
+ * An account whose read fails or is unavailable still appears, without a
+ * figure: the table lists how many accounts exist even when one cannot be
+ * quoted, rather than dropping it and making the switch unavailable.
+ */
+export async function traeAccountCredits(
+  deps: TraeUsageRouteOptions,
+  region: TraeRegion,
+): Promise<TraeWebAccountCredit[]> {
+  const accounts = (await deps.store(region).accounts()).filter(account => account.region === region)
+  if (accounts.length === 0) return []
+  return Promise.all(accounts.map(async account => {
+    let generalAvailable: number | undefined
+    if (deps.creditsOfAccount !== undefined) {
+      try {
+        const credits = await deps.creditsOfAccount(region, account.id)
+        generalAvailable = credits?.generalAvailable
+      } catch { /* keep the row, without a figure */ }
+    }
+    return { id: account.id, accountName: account.accountName, selected: account.selected, ...generalAvailable === undefined ? {} : { generalAvailable } }
+  }))
+}
+
 function requestRegion(req: IncomingMessage, res: ServerResponse): TraeRegion | undefined {
   const region = regionOfTraeStatusUrl(req.url ?? '/')
   if (region === undefined) {
@@ -361,6 +392,27 @@ export function registerTraeUsageRoute(ctx: Context, deps: TraeUsageRouteOptions
         if (region === undefined) return
         try {
           json(res, 200, await traeWebUsage(deps, region))
+        } catch (error: unknown) {
+          json(res, 500, { error: safeMessage(error) })
+        }
+      },
+    })
+    /**
+     * General balance of every account in the region — read only when the
+     * composer panel is opened. One upstream read per account, paid once per
+     * open rather than on the 5-minute cycle (see
+     * {@link TRAE_ACCOUNT_CREDITS_PATH}).
+     */
+    const disposeAccountCredits = ctx.webServer.register({
+      kind: 'exact',
+      path: TRAE_ACCOUNT_CREDITS_PATH,
+      handler: async (req: IncomingMessage, res: ServerResponse) => {
+        if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' })
+        if (!loopbackOrigin(req)) return json(res, 403, { error: 'origin-not-trusted' })
+        const region = requestRegion(req, res)
+        if (region === undefined) return
+        try {
+          json(res, 200, { accounts: await traeAccountCredits(deps, region) })
         } catch (error: unknown) {
           json(res, 500, { error: safeMessage(error) })
         }
@@ -522,6 +574,7 @@ export function registerTraeUsageRoute(ctx: Context, deps: TraeUsageRouteOptions
       disposeRefresh()
       disposeModelsTest()
       disposeAccounts()
+      disposeAccountCredits()
       disposeUsage()
     }
   }, 'dsh-connect-trae: Web usage route')

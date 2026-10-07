@@ -26,18 +26,38 @@ function usageDocument(general: number): Record<string, unknown> {
     accountName: 'LaoDing',
     tokenExpiresAtMs: Date.now() + 3_600_000,
     region: 'cn',
-    accounts: [],
+    accounts: [
+      { id: 'account-1', accountName: 'LaoDing', edition: 'cn', region: 'cn', source: 'dsh', tokenExpiresAtMs: Date.now() + 3_600_000, selected: true },
+      { id: 'account-2', accountName: 'Backup', edition: 'cn', region: 'cn', source: 'dsh', tokenExpiresAtMs: Date.now() + 3_600_000, selected: false },
+    ],
     models: [],
     enabledModelIds: [],
     credits: { total: 7500, consumed: 0, available: general + 1111, workAvailable: 1777, generalAvailable: general, accounts: [] },
   }
 }
 
+/**
+ * Stub both endpoints this component reads.
+ *
+ * There are two: the usage document (5-minute readout) and the account-credits
+ * table (read on panel open). Answering both with the usage shape would give
+ * the table `accounts: []` and leave it empty, so a test that asserts table
+ * rows would fail for the wrong reason.
+ */
 function stubRoute(): { calls: string[] } {
   const calls: string[] = []
   vi.stubGlobal('fetch', async (input: string | URL | Request) => {
-    calls.push(String(input))
-    return new Response(JSON.stringify(usageDocument(3392)), { status: 200 })
+    const url = String(input)
+    calls.push(url)
+    const body = url.includes('/account-credits')
+      ? {
+          accounts: [
+            { id: 'account-1', accountName: 'LaoDing', selected: true, generalAvailable: 3392 },
+            { id: 'account-2', accountName: 'Backup', selected: false, generalAvailable: 1777 },
+          ],
+        }
+      : usageDocument(3392)
+    return new Response(JSON.stringify(body), { status: 200 })
   })
   return { calls }
 }
@@ -69,21 +89,38 @@ describe('selectedProviderOf', () => {
  * `unwrapVolatileDeep` recurses through plain objects, so `{ showPointsInMainUi }`
  * is exactly the shape the gate reads.
  */
-function makeScope(enabled: boolean | undefined): {
+/**
+ * A settings scope carrying the composer switch plus an initial document, and
+ * recording every `set`.
+ *
+ * `initial` matters for the account switch: the panel writes the WHOLE `accounts`
+ * field through the shared merge helper, so a test must start with a
+ * `regions`-independent `accounts` map and assert what came out — only the
+ * written region may change, and the other region's selection must survive.
+ */
+function makeScope(enabled: boolean | undefined, initial: Record<string, unknown> = {}): {
   scope: unknown
+  writes: { field: string; value: unknown }[]
   setEnabled: (next: boolean | undefined) => void
 } {
-  let value: Record<string, unknown> = enabled === undefined ? {} : { showPointsInMainUi: enabled }
+  let value: Record<string, unknown> = { ...initial, ...enabled === undefined ? {} : { showPointsInMainUi: enabled } }
   const listeners = new Set<() => void>()
+  const writes: { field: string; value: unknown }[] = []
   const scope = {
     getSnapshot: () => ({ status: 'ready', value, writable: true }),
     subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener) } },
-    set: async () => true,
+    set: async (field: string, next: unknown) => {
+      writes.push({ field, value: next })
+      value = { ...value, [field]: next }
+      for (const listener of [...listeners]) listener()
+      return true
+    },
   }
   return {
     scope,
+    writes,
     setEnabled: (next: boolean | undefined) => {
-      value = next === undefined ? {} : { showPointsInMainUi: next }
+      value = { ...value, ...next === undefined ? { showPointsInMainUi: undefined } : { showPointsInMainUi: next } }
       for (const listener of [...listeners]) listener()
     },
   }
@@ -309,15 +346,112 @@ describe('ComposerPoints readout', () => {
     fireEvent.click(trigger as HTMLButtonElement)
     await waitFor(() => { expect(screen.getByText(/composer\.panelTitle/)).toBeTruthy() })
     expect(screen.getByText(/composer\.account/)).toBeTruthy()
-    expect(screen.getByText(/composer\.workCredits/)).toBeTruthy()
     expect(screen.getByText(/composer\.generalCredits/)).toBeTruthy()
     expect(screen.getByText(/composer\.refresh/)).toBeTruthy()
-    // The panel reports the ACCOUNT, not just a number: the row is a label and
-    // a value, so the panel is where "whose credits are these" gets answered.
+    // The panel is a TABLE of accounts, not a property list: every account in
+    // the region gets a row, and the one figure per row is the general balance.
     expect(screen.getByText('LaoDing')).toBeTruthy()
-    // The fixture carries workAvailable = 1,777; both buckets must be rendered
-    // with their own figures, not collapsed into one.
-    expect(screen.getByText('1,777')).toBeTruthy()
+    expect(screen.getByText('Backup')).toBeTruthy()
+    // The bound account's figure, and the other account's — distinct numbers,
+    // so "two rows showing the same number" cannot pass unnoticed.
     expect(screen.getByText('3,392')).toBeTruthy()
+    expect(screen.getByText('1,777')).toBeTruthy()
+    // Work credits were dropped from the panel on purpose (general only).
+    expect(screen.queryByText(/composer\.workCredits/)).toBeNull()
+  })
+})
+
+describe('the account table and account switching', () => {
+  it('reads the per-account table only when the panel is OPEN', async () => {
+    // One upstream read per account is paid on demand, never on the 5-minute
+    // cycle: a healthy balance must not pay for a table nobody is looking at.
+    const { calls } = stubRoute()
+    const { scope } = makeScope(true)
+    render(
+      <ComposerPointsGate
+        t={t}
+        settingsScope={scope as never}
+        useProjection={() => ({ lastUsed: { provider: 'trae' } })}
+      />,
+    )
+    await waitFor(() => { expect(screen.getByText(/composer\.points/)).toBeTruthy() })
+    expect(calls.filter(url => url.includes('/account-credits'))).toHaveLength(0)
+
+    fireEvent.click(screen.getByRole('button', { name: /composer\.points/ }))
+    await waitFor(() => { expect(screen.getByText(/composer\.panelTitle/)).toBeTruthy() })
+    await waitFor(() => {
+      expect(calls.filter(url => url.includes('/account-credits')).length).toBeGreaterThan(0)
+    })
+  })
+
+  it('disables the CURRENT account row and leaves the others switchable', async () => {
+    stubRoute()
+    const { scope } = makeScope(true)
+    render(
+      <ComposerPointsGate
+        t={t}
+        settingsScope={scope as never}
+        useProjection={() => ({ lastUsed: { provider: 'trae' } })}
+      />,
+    )
+    await waitFor(() => { expect(screen.getByText(/composer\.points/)).toBeTruthy() })
+    fireEvent.click(screen.getByRole('button', { name: /composer\.points/ }))
+    await waitFor(() => { expect(screen.getByText(/composer\.panelTitle/)).toBeTruthy() })
+
+    const switches = screen.getAllByRole('button', { name: /composer\.switchTo/ }) as HTMLButtonElement[]
+    expect(switches).toHaveLength(2)
+    // The bound account is marked current: clicking it would be a no-op write.
+    expect(switches[0]?.disabled).toBe(true)
+    expect(switches[1]?.disabled).toBe(false)
+  })
+
+  it('switches by writing the shared accounts field, preserving the other region', async () => {
+    // The field is also written by the card. Writing ONLY the target region
+    // would drop the international selection — the reason both writers go
+    // through the same merge helper.
+    stubRoute()
+    const holder = makeScope(true, { accounts: { cn: 'account-1', ai: 'keep-me' } })
+    render(
+      <ComposerPointsGate
+        t={t}
+        settingsScope={holder.scope as never}
+        useProjection={() => ({ lastUsed: { provider: 'trae' } })}
+      />,
+    )
+    await waitFor(() => { expect(screen.getByText(/composer\.points/)).toBeTruthy() })
+    fireEvent.click(screen.getByRole('button', { name: /composer\.points/ }))
+    await waitFor(() => { expect(screen.getByText(/composer\.panelTitle/)).toBeTruthy() })
+
+    const other = (screen.getAllByRole('button', { name: /composer\.switchTo/ }) as HTMLButtonElement[])
+      .find(button => button.disabled === false)
+    // A guard rather than `toBeDefined()`: `expect` does not narrow types, and
+    // clicking `undefined` would be a silent no-op that still passes.
+    if (other === undefined) throw new Error('expected a switchable account row')
+    fireEvent.click(other)
+
+    await waitFor(() => { expect(holder.writes).toHaveLength(1) })
+    expect(holder.writes[0]?.field).toBe('accounts')
+    expect(holder.writes[0]?.value).toEqual({ cn: 'account-2', ai: 'keep-me' })
+  })
+
+  it('does not write at all when the current account is pressed', async () => {
+    stubRoute()
+    const holder = makeScope(true, { accounts: { cn: 'account-1' } })
+    render(
+      <ComposerPointsGate
+        t={t}
+        settingsScope={holder.scope as never}
+        useProjection={() => ({ lastUsed: { provider: 'trae' } })}
+      />,
+    )
+    await waitFor(() => { expect(screen.getByText(/composer\.points/)).toBeTruthy() })
+    fireEvent.click(screen.getByRole('button', { name: /composer\.points/ }))
+    await waitFor(() => { expect(screen.getByText(/composer\.panelTitle/)).toBeTruthy() })
+
+    const current = (screen.getAllByRole('button', { name: /composer\.switchTo/ }) as HTMLButtonElement[])
+      .find(button => button.disabled === true)
+    if (current === undefined) throw new Error('expected the current account row')
+    fireEvent.click(current)
+    expect(holder.writes).toHaveLength(0)
   })
 })

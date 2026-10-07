@@ -4,7 +4,7 @@ import type { TraeCredential } from '../src/auth.ts'
 import { TraeUsageClient, type TraeUsageOptions } from '../src/usage.ts'
 import type { TraeRegion } from '../src/region.ts'
 import type { TraeUsageRouteOptions } from '../src/web-status.ts'
-import { traeWebUsage } from '../src/web-status.ts'
+import { traeAccountCredits, traeWebUsage } from '../src/web-status.ts'
 import { TRAE_CHECKIN_PATH, TRAE_MODELS_TEST_PATH, TRAE_USAGE_PATH } from '../src/status-paths.ts'
 
 const expiresAtMs = Date.now() + 60_000
@@ -743,5 +743,85 @@ describe('traeWebUsage: exhausted bound account (issue #25)', () => {
     expect(result.status).toBe('signed-in')
     if (result.status !== 'signed-in') return
     expect(result.alternatives).toBeUndefined()
+  })
+})
+
+describe('traeAccountCredits: the composer panel table', () => {
+  /** A minimal signed-in balance answer. */
+  const balance = (general: number): Awaited<ReturnType<NonNullable<TraeUsageRouteOptions['creditsOfAccount']>>> => ({
+    total: 7500, consumed: 0, available: general, workAvailable: 0, generalAvailable: general, accounts: [],
+  } as Awaited<ReturnType<NonNullable<TraeUsageRouteOptions['creditsOfAccount']>>>)
+
+  const twoAccounts = (): TraeUsageRouteOptions => {
+    const deps = makeRoute()
+    deps.store = () => ({
+      async accounts() {
+        return [
+          { id: 'account-1', accountName: 'LaoDing', edition: 'solo', region: 'cn', source: 'desktop', tokenExpiresAtMs: expiresAtMs, selected: true },
+          { id: 'account-2', accountName: 'Backup', edition: 'solo', region: 'cn', source: 'desktop', tokenExpiresAtMs: expiresAtMs, selected: false },
+          { id: 'account-3', accountName: 'Empty', edition: 'solo', region: 'cn', source: 'cli', tokenExpiresAtMs: expiresAtMs, selected: false },
+        ]
+      },
+      async status() { return { state: 'signed-in', edition: 'solo', expiresAtMs: Date.now() + 1000, source: 'desktop' } },
+      async resolve() { return credential },
+    }) as unknown as ReturnType<TraeUsageRouteOptions['store']>
+    return deps
+  }
+
+  it('lists EVERY account — including the bound one and a zero balance', async () => {
+    // Both are differences from `creditAlternatives`, which excludes the
+    // selected account (it is the one you already have) and drops zero balances
+    // (they are the alternatives you would switch TO). The table is a list of
+    // what exists, so neither exclusion applies.
+    const deps = twoAccounts()
+    deps.creditsOfAccount = async (_region, accountId) =>
+      accountId === 'account-1' ? balance(3392) : accountId === 'account-2' ? balance(1777) : balance(0)
+
+    const rows = await traeAccountCredits(deps, 'cn')
+    expect(rows.map(row => row.accountName)).toEqual(['LaoDing', 'Backup', 'Empty'])
+    expect(rows.map(row => row.generalAvailable)).toEqual([3392, 1777, 0])
+    expect(rows[0]?.selected).toBe(true)
+    expect(rows[1]?.selected).toBe(false)
+  })
+
+  it('keeps an account whose balance read fails, without a figure', async () => {
+    // A stale token on one account must not remove it from the table: the whole
+    // point of the panel is to SEE which accounts exist and switch to one.
+    const deps = twoAccounts()
+    deps.creditsOfAccount = async (_region, accountId) => {
+      if (accountId === 'account-2') throw new Error('token expired')
+      return accountId === 'account-1' ? balance(3392) : balance(0)
+    }
+
+    const rows = await traeAccountCredits(deps, 'cn')
+    expect(rows).toHaveLength(3)
+    expect(rows[1]).toEqual({ id: 'account-2', accountName: 'Backup', selected: false })
+    expect(rows[0]?.generalAvailable).toBe(3392)
+  })
+
+  it('still lists the accounts when the host exposes no per-account balance', async () => {
+    const deps = twoAccounts()
+    delete deps.creditsOfAccount
+    const rows = await traeAccountCredits(deps, 'cn')
+    expect(rows.map(row => row.accountName)).toEqual(['LaoDing', 'Backup', 'Empty'])
+    expect(rows.every(row => row.generalAvailable === undefined)).toBe(true)
+  })
+
+  it('does not offer accounts from another region', async () => {
+    const deps = twoAccounts()
+    deps.store = () => ({
+      async accounts() {
+        return [
+          { id: 'cn-1', accountName: 'Domestic', edition: 'solo', region: 'cn', source: 'desktop', tokenExpiresAtMs: expiresAtMs, selected: true },
+          { id: 'ai-1', accountName: 'International', edition: 'solo', region: 'ai', source: 'desktop', tokenExpiresAtMs: expiresAtMs, selected: false },
+        ]
+      },
+      async status() { return { state: 'signed-in', edition: 'solo', expiresAtMs: Date.now() + 1000, source: 'desktop' } },
+      async resolve() { return credential },
+    }) as unknown as ReturnType<TraeUsageRouteOptions['store']>
+    deps.creditsOfAccount = async () => balance(10)
+
+    const rows = await traeAccountCredits(deps, 'cn')
+    expect(rows.map(row => row.accountName)).toEqual(['Domestic'])
   })
 })

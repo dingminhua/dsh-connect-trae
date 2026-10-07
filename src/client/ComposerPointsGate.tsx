@@ -100,5 +100,5 @@ export function ComposerPointsGate(props: ComposerPointsGateProps) {
   // `region` is non-undefined here, and it is derived from `provider`, so the
   // provider is present too; the assertion states that rather than widening the
   // component's prop to accept an absent provider it never sees.
-  return <ComposerPoints t={t} provider={provider as string} region={region} />
+  return <ComposerPoints t={t} provider={provider as string} region={region} {...settingsScope === undefined ? {} : { settingsScope }} />
 }

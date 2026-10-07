@@ -207,9 +207,35 @@ export const COMPOSER_POINTS_CSS = `
 .dsm-trae-composer-panel-refresh:hover:not(:disabled){border-color:var(--dsw-alias-label-dimmed,rgba(127,127,127,.6));color:var(--dsw-alias-label-primary,CanvasText)}
 .dsm-trae-composer-panel-refresh:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#5686fe);outline-offset:1px}
 .dsm-trae-composer-panel-refresh:disabled{opacity:.5;cursor:default}
-.dsm-trae-composer-panel-grid{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;margin:0}
-.dsm-trae-composer-panel-grid dt{color:var(--dsw-alias-label-tertiary,GrayText);white-space:nowrap}
-.dsm-trae-composer-panel-grid dd{margin:0;text-align:right;font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-primary,CanvasText)}
+/* The panel is a TABLE: one row per account in the region, one figure (the
+   general balance) per row, and a row click switches accounts. */
+.dsm-trae-composer-panel-table{width:100%;border-collapse:collapse;font-size:12px;line-height:18px}
+.dsm-trae-composer-panel-table thead th{
+  padding:0 0 6px;font-weight:500;text-align:left;font-size:11px;
+  color:var(--dsw-alias-label-tertiary,GrayText);
+  border-bottom:1px solid var(--dsw-alias-border-l1,rgba(127,127,127,.22));
+}
+.dsm-trae-composer-panel-num{text-align:right;font-variant-numeric:tabular-nums}
+.dsm-trae-composer-panel-table tbody th{padding:2px 0;font-weight:400;text-align:left;vertical-align:middle}
+.dsm-trae-composer-panel-table tbody td{padding:4px 0;vertical-align:middle;color:var(--dsw-alias-label-primary,CanvasText)}
+.dsm-trae-composer-panel-table tr.dsm-trae-composer-panel-row-current td{color:var(--dsw-alias-label-primary,CanvasText)}
+.dsm-trae-composer-panel-switch{
+  appearance:none;display:flex;align-items:center;gap:6px;
+  width:100%;padding:3px 6px;margin-left:-6px;
+  border:0;border-radius:6px;background:transparent;
+  color:inherit;font:inherit;font-size:12px;text-align:left;cursor:pointer;
+  white-space:nowrap;overflow:hidden;
+}
+.dsm-trae-composer-panel-switch>span:last-child{overflow:hidden;text-overflow:ellipsis}
+.dsm-trae-composer-panel-switch:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.14))}
+.dsm-trae-composer-panel-switch:disabled{cursor:default;opacity:.8}
+.dsm-trae-composer-panel-dot{flex:none;width:6px;height:6px;border-radius:50%;background:var(--dsw-alias-label-dimmed,rgba(127,127,127,.5))}
+.dsm-trae-composer-panel-table tr.dsm-trae-composer-panel-row-current .dsm-trae-composer-panel-dot{background:var(--dsw-state-success,#22a06b)}
+.dsm-trae-composer-panel-foot{
+  margin-top:8px;padding-top:6px;
+  border-top:1px solid var(--dsw-alias-border-l1,rgba(127,127,127,.22));
+  font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary,GrayText);
+}
 .dsm-trae-composer-panel-empty{margin:0;color:var(--dsw-alias-label-tertiary,GrayText)}
 .dsm-trae-composer-panel-error{margin:8px 0 0;color:var(--dsw-alias-state-error-primary,#d92d20);font-size:11px;line-height:16px}
 `

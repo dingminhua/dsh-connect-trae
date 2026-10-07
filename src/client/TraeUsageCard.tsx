@@ -9,6 +9,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client'
 import {
+  configuredAccountsOf,
   nextRegionEnabled,
   nextRegionSlots,
   regionEnabledOf,
@@ -67,21 +68,6 @@ interface TraeDraft {
   enabledIds: Set<string>
   imageIds: Set<string>
   contextBudgets: Record<string, number>
-}
-
-/**
- * Read the per-region account selections out of the settings snapshot.
- *
- * Deep-unwraps first: on DSH 0.1.7 a volatile field arrives as a `{get(): T}`
- * live reference, which passes the `typeof === 'object'` check below and would
- * be returned as if it were the map. Every lookup on it is then `undefined`,
- * and the card's merge (`{ ...configured, [region]: id }`) would spread a
- * reference into `{get: <function>}` — dropping the other region's selection
- * and leaking a function into the settings document.
- */
-function configuredAccountsOf(configured: unknown): Record<string, string> {
-  const accounts = (unwrapVolatileDeep(configured) as { accounts?: unknown } | undefined)?.accounts
-  return typeof accounts === 'object' && accounts !== null ? accounts as Record<string, string> : {}
 }
 
 /**
