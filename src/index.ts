@@ -188,20 +188,20 @@ export interface Config {
    */
   accounts?: Partial<Record<TraeRegion, string>>
   /**
-   * Show the CN account's general credit balance as a line at the bottom of the
-   * DSH sidebar (issue #26, contributed by JiewiW).
+   * Show the credit readout in the composer tool row: `Trae CN · <n>`, rendered
+   * ONLY while the session's selected model belongs to this plugin, clickable
+   * for the account/balances panel.
    *
-   * OFF by default, matching `dsh-connect-workbuddy`'s sidebar credit line. The
-   * history here is worth keeping: this was opt-in, then opt-out (2.9.1) after
-   * the switch turned out to be unreachable on a host whose Plugins tab is owned
-   * by a market plugin, and is opt-in again now that the switch is also placed
-   * beside the model actions — where the user already is while managing models —
-   * and the sibling plugin settled on the same default.
+   * This field first gated the sidebar credit line (issue #26, contributed by
+   * JiewiW); when that line was removed in 2.13.0 the composer readout replaced
+   * it and rendered unconditionally; 2.13.3 restores the switch, because the
+   * user went looking for it and a readout inside the SHARED composer row
+   * deserves the same opt-in the sidebar line had. The field is REUSED so an
+   * existing `true` keeps the readout on across the upgrade.
    *
-   * The row itself carries no control: the card's checkbox is the only writer,
-   * so there is exactly one path that can disagree about the field. Declared
-   * volatile alongside `accounts`/`regions` so the settings form can both read
-   * and write it.
+   * OFF by default. The card's checkbox is the only writer, so exactly one path
+   * can change it. Declared volatile alongside `accounts`/`regions` so the
+   * settings form can both read and write it.
    */
   showPointsInMainUi?: boolean
   /**
@@ -328,13 +328,17 @@ export const Config: z<Config> = z.object({
   // from the wrapped schema, which is narrower than the optional
   // `Partial<Record<TraeRegion, string>>` the Config interface declares. The
   // schema is unchanged either way — this only restores the assignment.
-  // RETIRED in 2.12.0. The sidebar credit line it gated was removed: the credit
-  // readout now lives in the composer row, is provider-scoped (it appears only
-  // while this plugin's own model is selected) and needs no switch at all. The
-  // field is KEPT in the schema on purpose — a user may already have a saved
-  // value, and removing a persisted config field would turn that into unknown
-  // data for the host's settings store. Nothing reads or writes it any more.
-  showPointsInMainUi: asVolatile(z.boolean().default(false).description('（已废弃）侧边栏积分行已移除；积分读数现位于输入框工具栏，仅在选用本插件模型时出现。')),
+  // GATES the composer-row credit readout, restored as a real switch in 2.13.3
+  // after the user looked for it in settings. History: it first gated the
+  // sidebar credit line (issue #26), was retired when that line was removed in
+  // 2.13.0 (the composer readout replaced it and rendered unconditionally), and
+  // is back because a readout inside the SHARED composer row deserves the same
+  // opt-in the sidebar line had. The same field is REUSED on purpose: a user
+  // who already enabled the old switch keeps the readout after the upgrade
+  // instead of finding it silently off.
+  // OFF by default, matching the stated preference for the sidebar line: a row
+  // inside the shared composer toolbar is something to ask for, not to impose.
+  showPointsInMainUi: asVolatile(z.boolean().default(false).description('在输入框工具栏显示积分读数「Trae CN · <数值>」（仅当选中的模型属于本插件时出现，可点击查看账号与积分明细）')),
 
   accounts: asVolatile(accountSelectionConfig.description('Per-region account selections, keyed cn | ai')) as z<Partial<Record<TraeRegion, string>>>,
   regions: asVolatile(z.dict(regionStateConfig).default({}).description('Per-region model directory and selection, keyed cn | ai')),

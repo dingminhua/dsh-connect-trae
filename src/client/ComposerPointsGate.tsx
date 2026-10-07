@@ -1,6 +1,7 @@
 /**
  * Decides whether the composer credit readout belongs in this session, by
- * reading the Host's own `modelSelection` projection.
+ * reading the Host's own `modelSelection` projection and the plugin's
+ * `showPointsInMainUi` switch.
  *
  * Kept separate from {@link ComposerPoints} (and from the browser-plugin entry)
  * so the decision can be unit-tested without a Host: the entry imports
@@ -12,9 +13,18 @@
  * readout cannot disagree with the model actually in effect. `next` outranks
  * `lastUsed` because a selection that has been made but not yet sent is still
  * what the composer shows the user.
+ *
+ * The switch is read the same way the retired sidebar gate read it: absent or
+ * false means OFF, and only an explicit `true` shows the readout. The composer
+ * row is shared with the shell's own permission/agent/model controls, so the
+ * readout must be asked for, not imposed — 2.13.0 rendered it unconditionally
+ * and 2.13.3 restored the opt-in after the user went looking for the switch.
  */
+import { useEffect, useState } from 'react'
 import { ComposerPoints, TRAE_COMPOSER_PROVIDERS } from './ComposerPoints.tsx'
+import { unwrapVolatileDeep } from '../status-paths.ts'
 import type { TraeSettingsKey } from './locales.ts'
+import type { TraeUsageCardInjected } from './TraeUsageCard.tsx'
 
 /** The slice of the `modelSelection` projection this decision needs. */
 export interface ModelSelectionProjectionLike {
@@ -34,8 +44,23 @@ export function selectedProviderOf(projection: ModelSelectionProjectionLike | un
   return typeof provider === 'string' && provider !== '' ? provider : undefined
 }
 
+/**
+ * Read the composer-readout switch out of a committed settings snapshot.
+ *
+ * Absent means OFF, matching the host default (`false`): a scope that has not
+ * populated yet, or a host too old to serve the field, must not put a row in
+ * the composer toolbar that the user never asked for.
+ */
+export function composerPointsEnabledOf(scope: TraeUsageCardInjected['settingsScope']): boolean {
+  if (scope === undefined) return false
+  const value = unwrapVolatileDeep(scope.getSnapshot().value) as { showPointsInMainUi?: unknown } | undefined
+  return value?.showPointsInMainUi === true
+}
+
 export interface ComposerPointsGateProps {
   t: (key: TraeSettingsKey, params?: Record<string, unknown>) => string
+  /** Settings scope from the configForms mirror; the card writes the same field. */
+  settingsScope?: TraeUsageCardInjected['settingsScope']
   /**
    * Standard slot hook: reads one Host-computed projection for this session.
    * Injected by the slot, so it is absent when this gate is rendered directly
@@ -45,13 +70,24 @@ export interface ComposerPointsGateProps {
 }
 
 export function ComposerPointsGate(props: ComposerPointsGateProps) {
-  const { t, useProjection } = props
-  // The hook is optional so the gate can be rendered in a test without a Host.
-  // Calling it conditionally would break the rules of hooks, so the call itself
-  // is unconditional and the fallback is handled by the result.
+  const { t, settingsScope, useProjection } = props
+  // Follow the switch so ticking the card checkbox appears without a remount.
+  // The two hooks are unconditional; `settingsScope` is a stable injected
+  // reference, so the subscription is set up once per scope.
+  const [enabled, setEnabled] = useState(() => composerPointsEnabledOf(settingsScope))
+  useEffect(
+    () => settingsScope?.subscribe(() => { setEnabled(composerPointsEnabledOf(settingsScope)) }),
+    [settingsScope],
+  )
+  // The projection hook is optional so the gate can be rendered in a test
+  // without a Host; the fallback is handled by the result, not the call count.
   const projection = useProjection === undefined
     ? undefined
     : useProjection('modelSelection') as ModelSelectionProjectionLike | undefined
+
+  // The switch is off (or the scope has not landed): render NOTHING, so the
+  // shared composer row is untouched and no fetch loop starts.
+  if (!enabled) return null
 
   const provider = selectedProviderOf(projection)
   const region = provider === undefined ? undefined : TRAE_COMPOSER_PROVIDERS[provider]

@@ -63,13 +63,46 @@ describe('selectedProviderOf', () => {
   })
 })
 
+/**
+ * A settings scope stub carrying the composer-credit switch.
+ *
+ * `unwrapVolatileDeep` recurses through plain objects, so `{ showPointsInMainUi }`
+ * is exactly the shape the gate reads.
+ */
+function makeScope(enabled: boolean | undefined): {
+  scope: unknown
+  setEnabled: (next: boolean | undefined) => void
+} {
+  let value: Record<string, unknown> = enabled === undefined ? {} : { showPointsInMainUi: enabled }
+  const listeners = new Set<() => void>()
+  const scope = {
+    getSnapshot: () => ({ status: 'ready', value, writable: true }),
+    subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener) } },
+    set: async () => true,
+  }
+  return {
+    scope,
+    setEnabled: (next: boolean | undefined) => {
+      value = next === undefined ? {} : { showPointsInMainUi: next }
+      for (const listener of [...listeners]) listener()
+    },
+  }
+}
+
 describe('ComposerPointsGate provider scoping', () => {
   it('renders nothing while ANOTHER provider is selected, and fetches nothing', () => {
     // The entire point: the shared composer row stays untouched for every
-    // provider this plugin does not own.
+    // provider this plugin does not own. The switch is deliberately ON here —
+    // with it off this case would pass for the WRONG reason and stop testing
+    // the provider rule at all.
     const { calls } = stubRoute()
+    const { scope } = makeScope(true)
     const { container } = render(
-      <ComposerPointsGate t={t} useProjection={() => ({ lastUsed: { provider: 'workbuddy-global' } })} />,
+      <ComposerPointsGate
+        t={t}
+        settingsScope={scope as never}
+        useProjection={() => ({ lastUsed: { provider: 'workbuddy-global' } })}
+      />,
     )
     expect(container.innerHTML).toBe('')
     expect(calls).toHaveLength(0)
@@ -77,14 +110,24 @@ describe('ComposerPointsGate provider scoping', () => {
 
   it('renders nothing when the projection has not landed yet', () => {
     const { calls } = stubRoute()
-    const { container } = render(<ComposerPointsGate t={t} useProjection={() => undefined} />)
+    const { scope } = makeScope(true)
+    const { container } = render(
+      <ComposerPointsGate t={t} settingsScope={scope as never} useProjection={() => undefined} />,
+    )
     expect(container.innerHTML).toBe('')
     expect(calls).toHaveLength(0)
   })
 
   it('renders and fetches CN credits for the trae provider', async () => {
     const { calls } = stubRoute()
-    render(<ComposerPointsGate t={t} useProjection={() => ({ lastUsed: { provider: 'trae' } })} />)
+    const { scope } = makeScope(true)
+    render(
+      <ComposerPointsGate
+        t={t}
+        settingsScope={scope as never}
+        useProjection={() => ({ lastUsed: { provider: 'trae' } })}
+      />,
+    )
     await waitFor(() => { expect(screen.getByText(/composer\.points/)).toBeTruthy() })
     expect(screen.getByText(/3,392/)).toBeTruthy()
     expect(calls[0]).toBe(withTraeRegion(TRAE_USAGE_PATH, 'cn'))
@@ -92,13 +135,84 @@ describe('ComposerPointsGate provider scoping', () => {
 
   it('renders and fetches international credits for the trae-global provider', async () => {
     const { calls } = stubRoute()
-    render(<ComposerPointsGate t={t} useProjection={() => ({ lastUsed: { provider: 'trae-global' } })} />)
+    const { scope } = makeScope(true)
+    render(
+      <ComposerPointsGate
+        t={t}
+        settingsScope={scope as never}
+        useProjection={() => ({ lastUsed: { provider: 'trae-global' } })}
+      />,
+    )
     await waitFor(() => { expect(screen.getByText(/composer\.points/)).toBeTruthy() })
     expect(calls[0]).toBe(withTraeRegion(TRAE_USAGE_PATH, 'ai'))
   })
 
   it('owns exactly the two provider routes the host registers', () => {
     expect(TRAE_COMPOSER_PROVIDERS).toEqual({ 'trae': 'cn', 'trae-global': 'ai' })
+  })
+})
+
+describe('ComposerPointsGate switch', () => {
+  it('renders NOTHING when the switch is off, even for this plugin own model', () => {
+    // Restored in 2.13.3: the composer row is shared, so the readout is opt-in.
+    const { calls } = stubRoute()
+    const { scope } = makeScope(false)
+    const { container } = render(
+      <ComposerPointsGate
+        t={t}
+        settingsScope={scope as never}
+        useProjection={() => ({ lastUsed: { provider: 'trae' } })}
+      />,
+    )
+    expect(container.innerHTML).toBe('')
+    expect(calls).toHaveLength(0)
+  })
+
+  it('treats an ABSENT switch as off, so a not-yet-populated scope shows nothing', () => {
+    // The host default is false; a scope that has not landed must not flash the
+    // row into the shared toolbar.
+    const { calls } = stubRoute()
+    const { scope } = makeScope(undefined)
+    const { container } = render(
+      <ComposerPointsGate
+        t={t}
+        settingsScope={scope as never}
+        useProjection={() => ({ lastUsed: { provider: 'trae' } })}
+      />,
+    )
+    expect(container.innerHTML).toBe('')
+    expect(calls).toHaveLength(0)
+  })
+
+  it('renders nothing when no settings scope was injected at all', () => {
+    const { calls } = stubRoute()
+    const { container } = render(
+      <ComposerPointsGate t={t} useProjection={() => ({ lastUsed: { provider: 'trae' } })} />,
+    )
+    expect(container.innerHTML).toBe('')
+    expect(calls).toHaveLength(0)
+  })
+
+  it('follows the switch: turning it on appears, turning it off leaves NOTHING', async () => {
+    // The card's checkbox writes the field; the readout follows the committed
+    // snapshot rather than needing a remount.
+    stubRoute()
+    const { scope, setEnabled } = makeScope(false)
+    const { container } = render(
+      <ComposerPointsGate
+        t={t}
+        settingsScope={scope as never}
+        useProjection={() => ({ lastUsed: { provider: 'trae' } })}
+      />,
+    )
+    expect(container.innerHTML).toBe('')
+
+    setEnabled(true)
+    await waitFor(() => { expect(screen.getByText(/composer\.points/)).toBeTruthy() })
+
+    setEnabled(false)
+    await waitFor(() => { expect(screen.queryByText(/composer\.points/)).toBeNull() })
+    expect(container.innerHTML).toBe('')
   })
 })
 

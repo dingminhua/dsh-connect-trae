@@ -202,7 +202,9 @@ export function apply(ctx: ClientContext): void {
           id: 'dsh-connect-trae-composer-points',
           order: 4,
           locale: namespace,
-          inject: () => ({ t }),
+          // `settingsScope` rides along so the gate can honor the card's
+          // "show credits in the composer" switch without a second writer.
+          inject: () => ({ t, settingsScope }),
         }, ComposerPointsGate))
       } catch (error: unknown) {
         console.error('[dsh-connect-trae] composer points slot failed to register (host provider unaffected):', error)

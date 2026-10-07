@@ -281,12 +281,34 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
    * the control would flip and then quietly snap back on the next snapshot.
    */
   const [writeError, setWriteError] = useState<string | undefined>(undefined)
+  /** True while the composer-credit switch write is in flight. */
+  const [togglingCredits, setTogglingCredits] = useState(false)
   const mounted = useRef(true)
 
   useEffect(() => {
     mounted.current = true
     return () => { mounted.current = false }
   }, [])
+
+  /**
+   * Toggle the composer credit readout (`showPointsInMainUi`). The card's
+   * checkbox is the ONLY writer of this field — the readout itself carries no
+   * control — so there is exactly one path that can change it, and the write is
+   * read-back-checked like every other settings write in this card.
+   */
+  const toggleShowPointsInMainUi = async (enabled: boolean): Promise<void> => {
+    if (settingsScope === undefined || settingsScope.getSnapshot().writable !== true) return
+    setTogglingCredits(true)
+    setWriteError(undefined)
+    try {
+      await writeSettingsField(settingsScope, 'showPointsInMainUi', enabled,
+        readBack => (unwrapVolatileDeep(readBack) as { showPointsInMainUi?: unknown })?.showPointsInMainUi === enabled)
+    } catch (error: unknown) {
+      if (mounted.current) setWriteError(error instanceof Error ? error.message : t('row.requestFailed'))
+    } finally {
+      if (mounted.current) setTogglingCredits(false)
+    }
+  }
 
   useEffect(() => settingsScope?.subscribe(() => { setSettingsRevision(value => value + 1) }), [settingsScope])
 
@@ -778,6 +800,17 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
       <div className="dsm-plugin-card-body" hidden={!open}>
         {open
           ? <div className="dsm-trae-usage">
+              <div className="dsm-trae-mainui-switch">
+                <label className="dsm-trae-mainui-switch-label" title={t('row.showPointsInMainUiHint')}>
+                  <input
+                    type="checkbox"
+                    checked={(settingsValue as { showPointsInMainUi?: unknown } | null)?.showPointsInMainUi === true}
+                    disabled={settingsScope?.getSnapshot().writable !== true || togglingCredits}
+                    onChange={event => { void toggleShowPointsInMainUi(event.currentTarget.checked) }}
+                  />
+                  <span>{t('row.showPointsInMainUi')}</span>
+                </label>
+              </div>
               <div className="dsm-trae-tabs" role="tablist" aria-label={title}>
                 {TRAE_REGIONS.map(item => {
                   const regionStatus = statusByRegion[item]

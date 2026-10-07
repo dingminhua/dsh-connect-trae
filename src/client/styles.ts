@@ -30,6 +30,10 @@ export const TRAE_CARD_CSS = `
 .dsm-btn-outline:hover:not(:disabled){color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-label-dimmed);background:rgba(255,255,255,.04)}
 .dsm-btn-primary{background:var(--dsw-alias-label-primary);color:var(--dsw-alias-bg-layer-3)}
 .dsm-btn-primary:hover:not(:disabled){opacity:.9}
+.dsm-trae-mainui-switch{display:flex;justify-content:flex-end;padding:0 2px 8px}
+.dsm-trae-mainui-switch-label{display:inline-flex;align-items:center;gap:6px;font-size:13px;line-height:18px;color:var(--dsw-alias-label-secondary,#c6c9d0);white-space:nowrap;cursor:pointer}
+.dsm-trae-mainui-switch-label input{margin:0;accent-color:var(--dsw-alias-brand-primary,#5686fe)}
+.dsm-trae-mainui-switch-label:has(input:disabled){opacity:.6;cursor:default}
 .dsm-trae-usage{display:flex;flex-direction:column;gap:16px;margin:0;padding:16px 0 4px}
 .dsm-trae-tabs{display:flex;gap:6px;padding:4px;border:1px solid var(--dsw-alias-border-l2,#3a3d45);border-radius:10px;background:var(--dsw-alias-bg-layer-3,#2a2c33)}
 .dsm-trae-tab-cell{display:flex;align-items:center;gap:2px;flex:1;min-width:0}
