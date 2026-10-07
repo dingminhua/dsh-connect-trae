@@ -368,17 +368,33 @@ export class TraeCredentialStore {
    */
   private async readAll(): Promise<TraeCredential[]> {
     const { credentials: desktop } = await this.readDesktopAll()
-    const scoped = desktop.filter(credential => this.matchesRegion(credential))
+    // One entry per ACCOUNT, holding the FRESHEST copy of it.
+    //
+    // Keeping the desktop copy whenever both exist looks harmless — the desktop
+    // file is the Trae app's own login — but it silently discards every refresh
+    // this plugin performs, because a refreshed credential is written to the
+    // plugin's own file, not to the app's. The account then reads as "token
+    // expired" forever while a valid token sits on disk one file over: the
+    // composer table showed a dash for an account whose own copy was refreshed
+    // minutes earlier (`.trae-auth.cn.json` valid to 10-14, desktop copy from
+    // 09-27 winning the dedupe).
+    //
+    // Insertion order still follows the desktop list, so `preferred()` and the
+    // default selection are unchanged; only the VALUE behind a duplicate id can
+    // be replaced, and only by a copy that lives longer.
+    const byAccount = new Map<string, TraeCredential>()
+    const consider = (credential: TraeCredential): void => {
+      if (!this.matchesRegion(credential)) return
+      const id = traeAccountId(credential)
+      const incumbent = byAccount.get(id)
+      if (incumbent === undefined || credential.expiresAtMs > incumbent.expiresAtMs) byAccount.set(id, credential)
+    }
+    for (const credential of desktop) consider(credential)
     // The own copies are accepted for every edition: they are refresh results
     // the plugin itself wrote, so an international account's refreshed
     // credential must not be dropped just because it is not a CN edition.
-    const credentials = [...scoped]
-    for (const own of await this.readOwns()) {
-      if (!this.matchesRegion(own)) continue
-      if (credentials.some(credential => traeAccountId(credential) === traeAccountId(own))) continue
-      credentials.push(own)
-    }
-    return credentials
+    for (const own of await this.readOwns()) consider(own)
+    return [...byAccount.values()]
   }
 
   /**

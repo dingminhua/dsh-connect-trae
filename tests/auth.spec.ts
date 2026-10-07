@@ -61,6 +61,54 @@ describe('TraeCredentialStore', () => {
     expect(JSON.parse(await readFile(own, 'utf8')).credential.accessToken).toBe('fresh')
   })
 
+  it('uses the FRESHER copy when the same account exists on both sides', async () => {
+    // The live failure: the plugin refreshes the bound account and writes the
+    // result to its OWN file, but the desktop file still holds the pre-refresh
+    // token. Deduping by account id and keeping the desktop copy threw the
+    // refresh away, so the account read as "token expired" while a valid token
+    // sat one file over — the composer table showed a dash for it.
+    const dir = await temp(); const file = join(dir, 'storage.json'); const own = join(dir, 'own.json')
+    const expiredAt = Date.now() - 86_400_000
+    await writeFile(file, storage('stale-desktop', expiredAt, undefined, 'same-user'))
+    await writeFile(own, JSON.stringify({ version: 1, credential: {
+      accessToken: 'refreshed-own', refreshToken: 'rt', userId: 'same-user', host: 'https://api.trae.cn',
+      expiresAtMs: Date.now() + 86_400_000, source: 'dsh', edition: 'cn',
+    } }))
+    const store = new TraeCredentialStore({ storagePath: file, edition: 'cn', ownPath: own, refresh: async () => { throw new Error('unused') } })
+
+    // SAME account on both sides (edition + userId), so this is a choice between
+    // two copies of one login — never between two logins.
+    await expect(store.current()).resolves.toMatchObject({ accessToken: 'refreshed-own', source: 'dsh' })
+    // ...and the account is still discoverable exactly once.
+    await expect(store.accounts()).resolves.toHaveLength(1)
+  })
+
+  it('still keeps the desktop copy when IT is the fresher one', async () => {
+    // The mirror case, so the rule is "freshest copy", not "own copies win".
+    const dir = await temp(); const file = join(dir, 'storage.json'); const own = join(dir, 'own.json')
+    await writeFile(file, storage('fresh-desktop', Date.now() + 86_400_000, undefined, 'same-user'))
+    await writeFile(own, JSON.stringify({ version: 1, credential: {
+      accessToken: 'stale-own', refreshToken: 'rt', userId: 'same-user', host: 'https://api.trae.cn',
+      expiresAtMs: Date.now() - 86_400_000, source: 'dsh', edition: 'cn',
+    } }))
+    const store = new TraeCredentialStore({ storagePath: file, edition: 'cn', ownPath: own, refresh: async () => { throw new Error('unused') } })
+    await expect(store.current()).resolves.toMatchObject({ accessToken: 'fresh-desktop', source: 'desktop' })
+  })
+
+  it('does not replace an account with a DIFFERENT one that expires later', async () => {
+    // The rule is per ACCOUNT: two logins are two accounts, and which one is
+    // current still follows the desktop order (see the test above this block).
+    const dir = await temp(); const file = join(dir, 'storage.json'); const own = join(dir, 'own.json')
+    await writeFile(file, storage('desktop-login', Date.now() + 3_600_000, undefined, 'user-a'))
+    await writeFile(own, JSON.stringify({ version: 1, credential: {
+      accessToken: 'own-login', refreshToken: 'rt', userId: 'user-b', host: 'https://api.trae.cn',
+      expiresAtMs: Date.now() + 86_400_000, source: 'dsh', edition: 'cn',
+    } }))
+    const store = new TraeCredentialStore({ storagePath: file, edition: 'cn', ownPath: own, refresh: async () => { throw new Error('unused') } })
+    await expect(store.accounts()).resolves.toHaveLength(2)
+    await expect(store.current()).resolves.toMatchObject({ accessToken: 'desktop-login' })
+  })
+
   it('prefers the desktop credential even when the own cache expires later', async () => {
     const dir = await temp(); const file = join(dir, 'storage.json'); const own = join(dir, 'own.json')
     await writeFile(file, storage('desktop', Date.now() + 3_600_000))
