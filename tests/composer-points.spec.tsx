@@ -434,6 +434,42 @@ describe('the account table and account switching', () => {
     expect(holder.writes[0]?.value).toEqual({ cn: 'account-2', ai: 'keep-me' })
   })
 
+  it('falls back to the usage document when the table omits the BOUND account', async () => {
+    // The table request legitimately omits a figure it could not read. The
+    // trigger on the same screen already shows the bound account's balance, so
+    // the row must agree with it — a dash beside a number answers the same
+    // question twice and differently. This is the live failure that shipped in
+    // 2.14.0: the bound account's stored token is expired, the pure lookup
+    // returns it as-is, and every other account read fine.
+    vi.stubGlobal('fetch', async (input: string | URL | Request) => {
+      const url = String(input)
+      if (url.includes('/account-credits')) {
+        return new Response(JSON.stringify({
+          accounts: [
+            { id: 'account-1', accountName: 'LaoDing', selected: true },
+            { id: 'account-2', accountName: 'Backup', selected: false, generalAvailable: 1777 },
+          ],
+        }), { status: 200 })
+      }
+      return new Response(JSON.stringify(usageDocument(3392)), { status: 200 })
+    })
+    const { scope } = makeScope(true)
+    render(
+      <ComposerPointsGate
+        t={t}
+        settingsScope={scope as never}
+        useProjection={() => ({ lastUsed: { provider: 'trae' } })}
+      />,
+    )
+    await waitFor(() => { expect(screen.getByText(/composer\.points/)).toBeTruthy() })
+    fireEvent.click(screen.getByRole('button', { name: /composer\.points/ }))
+    await waitFor(() => { expect(screen.getByText(/composer\.panelTitle/)).toBeTruthy() })
+
+    expect(screen.getByText('3,392')).toBeTruthy()
+    expect(screen.getByText('1,777')).toBeTruthy()
+    expect(screen.queryByText('—')).toBeNull()
+  })
+
   it('does not write at all when the current account is pressed', async () => {
     stubRoute()
     const holder = makeScope(true, { accounts: { cn: 'account-1' } })

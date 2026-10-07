@@ -354,7 +354,17 @@ export async function traeAccountCredits(
   if (accounts.length === 0) return []
   return Promise.all(accounts.map(async account => {
     let generalAvailable: number | undefined
-    if (deps.creditsOfAccount !== undefined) {
+    if (account.selected) {
+      // The BOUND account goes through the shared client, the same path
+      // `traeWebUsage` uses, because its stored credential is normally EXPIRED:
+      // `resolve()` refreshes it on read. `creditsOfAccount` is a pure lookup by
+      // design and hands the stale token back as-is — which is fine for the
+      // alternatives, where `creditAlternatives` excludes the selected account
+      // for exactly this reason, but leaves this row with no figure.
+      try {
+        generalAvailable = toCredits(await deps.client(region).snapshot()).generalAvailable
+      } catch { /* keep the row, without a figure */ }
+    } else if (deps.creditsOfAccount !== undefined) {
       try {
         const credits = await deps.creditsOfAccount(region, account.id)
         generalAvailable = credits?.generalAvailable

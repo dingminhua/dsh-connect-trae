@@ -752,6 +752,15 @@ describe('traeAccountCredits: the composer panel table', () => {
     total: 7500, consumed: 0, available: general, workAvailable: 0, generalAvailable: general, accounts: [],
   } as Awaited<ReturnType<NonNullable<TraeUsageRouteOptions['creditsOfAccount']>>>)
 
+
+  /** A client whose snapshot carries the given general balance. */
+  const clientWith = (general: number) => ({
+    snapshot: async () => ({
+      summary: { totalAmount: general, consumedAmount: 0 },
+      packs: [{ displayDesc: 'monthly', availableEndpoint: 0, consumedCredits: 0, creditsLimit: general }],
+    }),
+  }) as unknown as ReturnType<TraeUsageRouteOptions['client']>
+
   const twoAccounts = (): TraeUsageRouteOptions => {
     const deps = makeRoute()
     deps.store = () => ({
@@ -774,8 +783,11 @@ describe('traeAccountCredits: the composer panel table', () => {
     // (they are the alternatives you would switch TO). The table is a list of
     // what exists, so neither exclusion applies.
     const deps = twoAccounts()
+    // The bound account reads through the client (its stored token is the
+    // expired one); the other two go through the per-account lookup.
+    deps.client = () => clientWith(3392)
     deps.creditsOfAccount = async (_region, accountId) =>
-      accountId === 'account-1' ? balance(3392) : accountId === 'account-2' ? balance(1777) : balance(0)
+      accountId === 'account-2' ? balance(1777) : balance(0)
 
     const rows = await traeAccountCredits(deps, 'cn')
     expect(rows.map(row => row.accountName)).toEqual(['LaoDing', 'Backup', 'Empty'])
@@ -784,13 +796,40 @@ describe('traeAccountCredits: the composer panel table', () => {
     expect(rows[1]?.selected).toBe(false)
   })
 
+  it('reads the BOUND account through the refreshing client, not the pure lookup', async () => {
+    // The live failure behind "a credit figure is missing": a bound account's
+    // STORED token is normally expired (its own usage read refreshes it), and
+    // `creditsOfAccount` hands stale tokens back as-is by design — which is why
+    // `creditAlternatives` excludes the selected account. The table does not
+    // exclude it, so it must take the other path.
+    const deps = twoAccounts()
+    deps.creditsOfAccount = async (_region, accountId) => {
+      if (accountId === 'account-1') throw new Error('token expired')
+      return accountId === 'account-2' ? balance(1777) : balance(0)
+    }
+    deps.client = () => ({
+      snapshot: async () => ({
+        summary: { totalAmount: 3392, consumedAmount: 0 },
+        packs: [{ displayDesc: 'monthly', availableEndpoint: 0, consumedCredits: 0, creditsLimit: 3392 }],
+      }),
+    }) as unknown as ReturnType<TraeUsageRouteOptions['client']>
+
+    const rows = await traeAccountCredits(deps, 'cn')
+    expect(rows[0]).toEqual({
+      id: 'account-1', accountName: 'LaoDing', selected: true, generalAvailable: 3392,
+    })
+    // ...and the others still take the per-account lookup.
+    expect(rows[1]?.generalAvailable).toBe(1777)
+  })
+
   it('keeps an account whose balance read fails, without a figure', async () => {
     // A stale token on one account must not remove it from the table: the whole
     // point of the panel is to SEE which accounts exist and switch to one.
     const deps = twoAccounts()
+    deps.client = () => clientWith(3392)
     deps.creditsOfAccount = async (_region, accountId) => {
       if (accountId === 'account-2') throw new Error('token expired')
-      return accountId === 'account-1' ? balance(3392) : balance(0)
+      return balance(0)
     }
 
     const rows = await traeAccountCredits(deps, 'cn')
@@ -802,9 +841,13 @@ describe('traeAccountCredits: the composer panel table', () => {
   it('still lists the accounts when the host exposes no per-account balance', async () => {
     const deps = twoAccounts()
     delete deps.creditsOfAccount
+    deps.client = () => clientWith(3392)
     const rows = await traeAccountCredits(deps, 'cn')
     expect(rows.map(row => row.accountName)).toEqual(['LaoDing', 'Backup', 'Empty'])
-    expect(rows.every(row => row.generalAvailable === undefined)).toBe(true)
+    // The bound account's figure does not depend on the optional lookup, so it
+    // survives on a host that exposes none; the other rows carry no number.
+    expect(rows[0]?.generalAvailable).toBe(3392)
+    expect(rows.slice(1).every(row => row.generalAvailable === undefined)).toBe(true)
   })
 
   it('does not offer accounts from another region', async () => {

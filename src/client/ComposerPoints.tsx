@@ -306,14 +306,22 @@ export function ComposerPoints(props: ComposerPointsProps) {
    * the switches are reachable immediately, showing `—` for the figure rather
    * than a spinner the user has to wait on.
    */
-  const rows: TraeWebAccountCredit[] = accountCredits
+  const selectedId = accountCredits?.find(account => account.selected)?.id
+    ?? (signedIn === undefined ? undefined : signedIn.accountId)
+  const sourceRows: TraeWebAccountCredit[] = accountCredits
     ?? (signedIn === undefined
       ? []
       : signedIn.accounts
         .filter(account => account.region === activeRegion)
         .map(account => ({ id: account.id, accountName: account.accountName, selected: account.selected })))
-  const selectedId = accountCredits?.find(account => account.selected)?.id
-    ?? (signedIn === undefined ? undefined : signedIn.accountId)
+  const rows: TraeWebAccountCredit[] = sourceRows.map(row => {
+    // The bound account's balance is already in the usage document the readout
+    // rendered, so fall back to it when the table request carried no figure.
+    // Without this the row could show "—" while the trigger on the same screen
+    // shows the number for the very same account — two answers to one question.
+    if (row.id !== selectedId || row.generalAvailable !== undefined || general === undefined) return row
+    return { ...row, generalAvailable: general }
+  })
   const canSwitch = settingsScope !== undefined && settingsScope.getSnapshot().writable === true
 
   return (
