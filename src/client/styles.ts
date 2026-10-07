@@ -153,7 +153,14 @@ export const TRAE_CARD_CSS = `
  * not inside the plugin card; a card that is closed still shows this.
  */
 export const TRAE_SIDEBAR_CSS = `
-.dsm-trae-sidebar-points{display:flex;align-items:center;gap:8px;padding:4px 2px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#c6c9d0)}
+/* The full-width claim (flex 0 0 100%) plus min-width 0 is what keeps this line
+   readable when the footer is shared. The shell renders the footer action slot
+   as a HORIZONTAL flex row (its own buttons plus every plugin contribution), so
+   a line that does not claim the full width is laid beside the others and
+   squeezed into the leftover space - which is exactly what happened next to
+   dsh-connect-workbuddy's two lines, where ours collapsed to a clipped "Tr".
+   The sibling plugin hit the same thing and fixed it the same way. */
+.dsm-trae-sidebar-points{display:flex;align-items:center;gap:8px;padding:4px 2px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#c6c9d0);flex:0 0 100%;min-width:0}
 .dsm-trae-sidebar-points-line{display:flex;align-items:center;gap:6px;min-width:0;flex:1 1 auto}
 .dsm-trae-sidebar-points-text{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
 .dsm-trae-sidebar-points-failed{color:var(--dsw-alias-state-error-primary,#ef4444);font-size:11px;line-height:16px;white-space:nowrap}
