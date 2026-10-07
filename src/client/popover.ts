@@ -1,27 +1,28 @@
 /**
- * The two shell behaviours the composer credit panel needs, implemented here
- * instead of imported from `@deepseek-ai/dsh-client-ui-primitives`.
+ * The two shell behaviours the composer credit panel needs: hanging the panel
+ * off its trigger, and dismissing it on an outside press.
  *
- * WHY LOCAL, and this is not a style preference: a plugin's client bundle must
- * not require a DSH package at runtime. The browser loads the bundle as a plain
- * module with no module registry behind it, so a bare `require(...)` for a
- * package the page never registered cannot resolve.
+ * Implemented locally rather than imported from
+ * `@deepseek-ai/dsh-client-ui-primitives`. The shell DOES register that package
+ * for plugin bundles, so importing it is legal — this is a deliberate choice,
+ * not a workaround: the two behaviours are ~40 lines of DOM geometry, and owning
+ * them keeps this component renderable in the Node test suite without mocking a
+ * package that itself reaches `*.module.css` and further DSH dependencies.
  *
- * That is not a theory. This plugin reached 2.11.1 with exactly two runtime
- * requires — `react` and `react/jsx-runtime`, both registered by the shell — and
- * every other DSH package it names is a TYPE-ONLY import that the build erases.
- * 2.12.0 added a value import of the primitives package, the bundle gained a
- * runtime require for it, and the whole client half stopped loading:
+ * NOTE ON A MISDIAGNOSIS, kept because it is the kind of thing that gets
+ * re-litigated: the 2.12.0/2.13.0 client load failure was first attributed to
+ * importing the primitives package. It was not that. The real cause was
+ * `import { createPortal } from 'react-dom'` being BUNDLED rather than
+ * externalized — the inlined development build opens with
+ * `process.env.NODE_ENV` and threw `ReferenceError: process is not defined` in
+ * the browser. See `tsdown.config.ts` for the fix and
+ * `tests/client-runtime-imports.spec.ts` for the rule that now prevents it.
  *
- *   web boot: 1 entry did not activate
- *   dsh-connect-trae: import failed
- *
- * Both hooks are ~40 lines of DOM geometry, so owning them costs far less than
- * the dependency did. Behaviour mirrors the shell's implementations so the panel
- * still feels like the neighbouring popovers: the same top/bottom placement, the
- * same viewport clamping, the same re-measure on scroll (capture, so nested
- * scrollers count), resize and the panel's own size changes, and the same
- * "a pointerdown outside both the trigger and the panel closes it" rule.
+ * Behaviour is intentionally identical to the shell's implementations: the same
+ * top/bottom placement, the same viewport clamping, the same re-measure on
+ * scroll (capture, so nested scrollers count), resize and the panel's own size
+ * changes, and the same "a pointerdown outside both the trigger and the panel
+ * closes it" rule.
  */
 import { useEffect, useLayoutEffect, useState } from 'react'
 import type { CSSProperties, RefObject } from 'react'

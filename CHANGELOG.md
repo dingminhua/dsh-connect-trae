@@ -1,5 +1,72 @@
 # Changelog
 
+## 2.13.2 (2026-10-07)
+
+> **修复 2.12.0 起客户端整半无法加载。2.13.1 的归因是错的，这一版是真正的原因。**
+>
+> ```
+> web boot: 1 entry did not activate
+> dsh-connect-trae: import failed
+> ```
+>
+> 受影响版本：**2.12.0、2.13.0、2.13.1**。
+
+### 真正的根因
+
+2.12.0 为积分浮层引入了 `import { createPortal } from 'react-dom'`。**`react-dom` 不在 `tsdown.config.ts` 的 `CLIENT_EXTERNALS` 名单里，于是被内联打包**，其 CJS 构建开头就是：
+
+```js
+if (process.env.NODE_ENV !== "production") { … }
+```
+
+浏览器里没有 `process` → 模块**求值时**抛 `ReferenceError: process is not defined` → 整个客户端半边 import 失败。
+
+证据链：
+
+| | |
+| --- | --- |
+| 产物里 `process.env` 出现次数 | 2.13.1 为 **5**，修复后为 **0** |
+| 产物体积 | 2.13.1 为 **1,072,561 B**（含内联 react-dom），修复后 **119,427 B** |
+| 宿主是否注册 `react-dom` | 是（`staticModules` 里有 `"react-dom":Rf,"react-dom/client":Df`） |
+| 同族插件 `dsh-better-sidebar` | 产物为 `require("react-dom")`（外部化），因此正常 |
+
+### 修复
+
+- `react-dom` 与 `react-dom/client` 加入 `CLIENT_EXTERNALS`，改为向 shell 的模块加载器 `require`，不再内联。
+
+### 2.13.1 的归因错在哪（保留记录）
+
+2.13.1 判定原因是「值导入了 `@deepseek-ai/dsh-client-ui-primitives`，浏览器无法解析」。**这是错的**：我把宿主的前端 bundle 反出来看了它的模块加载器，`staticModules` 明确注册了该包：
+
+```js
+{ react, "react/jsx-runtime", "react-dom", "react-dom/client",
+  "@deepseek-ai/cordis", "@deepseek-ai/dsh-client-store",
+  "@deepseek-ai/dsh-client-ui-slots",
+  "@deepseek-ai/dsh-client-ui-primitives",   // ← 注册了
+  "@deepseek-ai/dsh-client-ui-dockkit" }
+```
+
+我当时只对比了「2.11.1 有两个 require、2.12.0 有三个」，看到多的那个就下了结论，**没有去验证那个 require 在浏览器里到底能不能解析**。真正变化的是 `createPortal` 带来的 react-dom 内联，证据（`process.env`、1MB 体积）一直都在产物里。
+
+2.13.1 顺带把两个浮层 hook 改成了本地实现（`src/client/popover.ts`）。这个改动本身是好的（少一个运行时依赖、测试无需 mock），因此**保留**；但它的注释里那段错误归因已改正。
+
+### 防止复发（这一版的重点）
+
+`tests/client-runtime-imports.spec.ts` 重写为两条**真正的不变量**——之前的版本禁止一切 DSH 值导入，那是基于错误前提的：
+
+1. **凡值导入必须已外部化**。若一个 shell 已提供的包没进 `CLIENT_EXTERNALS`，它就会被内联——这正是 react-dom 事故。
+2. **凡外部化的导入必须是 shell 注册过的模块**，否则产出的 `require(...)` 解析不到。
+
+宿主注册表在测试里以常量记录，来源已在注释里写明（前端 bundle 的 `staticModules`）。
+
+- **已验证能抓住真实事故**：把 `react-dom` 移出 `CLIENT_EXTERNALS`（即还原 2.12.0 的状态）→ 2 例失败；导入一个未注册的包 → 1 例失败。
+- 该守卫跑在常规测试里、**不需要构建产物**，在引入问题的那一行就失败。
+- 附带修掉一个解析 bug：解析 `CLIENT_EXTERNALS` 时注释里的撇号（`shell's`）会骗过引号匹配、把注释文本当成条目，现改为先剥离注释再按行匹配。
+
+### Tests
+
+- 全仓 455 → **457**。
+
 ## 2.13.1 (2026-10-07)
 
 > **紧急修复：2.12.0 引入的客户端整半无法加载。**

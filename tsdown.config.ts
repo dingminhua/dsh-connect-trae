@@ -6,6 +6,19 @@ const PLUGIN_ID = 'dsh-connect-trae'
 const CLIENT_EXTERNALS = [
   'react',
   'react/jsx-runtime',
+  // react-dom MUST stay external. It is registered by the shell's module loader
+  // (`staticModules`), so externalizing turns the import into a `require` the
+  // page resolves. BUNDLING it inlines both the development and production CJS
+  // builds, and every one of them opens with
+  //   if (process.env.NODE_ENV !== "production") …
+  // which throws `ReferenceError: process is not defined` in the browser — at
+  // module-evaluation time, so the ENTIRE client half fails to import:
+  //   web boot: 1 entry did not activate
+  //   dsh-connect-trae: import failed
+  // That is exactly what shipped in 2.12.0 and 2.13.0 (the credit panel needed
+  // `createPortal`). `tests/client-runtime-imports.spec.ts` now pins this.
+  'react-dom',
+  'react-dom/client',
   '@deepseek-ai/cordis',
   '@deepseek-ai/dsh-client-ui-renderer/client',
   '@deepseek-ai/dsh-client-ui-settings/client',
