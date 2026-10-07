@@ -328,13 +328,13 @@ export const Config: z<Config> = z.object({
   // from the wrapped schema, which is narrower than the optional
   // `Partial<Record<TraeRegion, string>>` the Config interface declares. The
   // schema is unchanged either way — this only restores the assignment.
-  // OFF by default, matching dsh-connect-workbuddy's sidebar credit line —
-  // the sibling plugin this feature was aligned with (3.7.0). The sidebar foot
-  // is shared with the shell's own controls, and a permanent row is something a
-  // user should ask for rather than something that appears after an upgrade.
-  // The switch lives in the card, which is where the setting it controls also
-  // lives (account, models).
-  showPointsInMainUi: asVolatile(z.boolean().default(false).description('在DSH主界面显示积分状态')),
+  // RETIRED in 2.12.0. The sidebar credit line it gated was removed: the credit
+  // readout now lives in the composer row, is provider-scoped (it appears only
+  // while this plugin's own model is selected) and needs no switch at all. The
+  // field is KEPT in the schema on purpose — a user may already have a saved
+  // value, and removing a persisted config field would turn that into unknown
+  // data for the host's settings store. Nothing reads or writes it any more.
+  showPointsInMainUi: asVolatile(z.boolean().default(false).description('（已废弃）侧边栏积分行已移除；积分读数现位于输入框工具栏，仅在选用本插件模型时出现。')),
 
   accounts: asVolatile(accountSelectionConfig.description('Per-region account selections, keyed cn | ai')) as z<Partial<Record<TraeRegion, string>>>,
   regions: asVolatile(z.dict(regionStateConfig).default({}).description('Per-region model directory and selection, keyed cn | ai')),

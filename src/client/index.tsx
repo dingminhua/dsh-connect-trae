@@ -25,7 +25,6 @@ import type {} from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import { TraeUsageCard } from './TraeUsageCard.tsx'
-import { SidebarPointsGate } from './SidebarPointsGate.tsx'
 import { ComposerPointsGate } from './ComposerPointsGate.tsx'
 import { useAnchoredPosition, useDismissOnOutsidePointer } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TraeUsageCardInjected } from './TraeUsageCard.tsx'
@@ -178,42 +177,15 @@ export function apply(ctx: ClientContext): void {
     registerCard('plugins.row.config', 'dsh-connect-trae#dsh-connect-trae')
 
     /**
-     * General-credit line at the sidebar foot (`sidebar.footer.action`, a
-     * root-scope list slot), contributed by JiewiW (issue #26).
-     *
-     * Registration is unconditional for the slot's lifetime; the component
-     * renders nothing until the card switch is on, and nothing again while the
-     * sidebar is collapsed — so an off switch (or a collapsed rail) leaves zero
-     * DOM and no fetch loop.
-     */
-    const registerSidebarPoints = (): void => {
-      try {
-        ctx.slots.inject('sidebar.footer.action' as never, () => (ctx.slots as unknown as {
-          register(
-            options: { name: string; id: string; order: number; locale: string; inject: () => TraeUsageCardInjected },
-            component: unknown,
-          ): () => void
-        }).register({
-          name: 'sidebar.footer.action',
-          id: 'dsh-connect-trae-points',
-          order: 4,
-          locale: namespace,
-          inject: () => ({ t, settingsScope }),
-        }, SidebarPointsGate))
-      } catch (error: unknown) {
-        console.error('[dsh-connect-trae] sidebar points slot failed to register (host provider unaffected):', error)
-      }
-    }
-
-    /**
      * Credit readout in the composer tool row (`conversation.input.left`, a
      * session-scope list slot).
      *
      * Provider-scoped on purpose: it renders only while the session's selected
-     * model belongs to this plugin, which is what keeps two connector plugins
-     * from competing for one shared row. The sidebar foot cannot do that — it is
-     * a single root row, and the observed result there was this plugin's line
-     * collapsed to a clipped "Tr" beside dsh-connect-workbuddy's two rows.
+     * model belongs to this plugin. That is what keeps two connector plugins
+     * from competing for one shared row — the sidebar foot, where this line used
+     * to live, is a single root row, and the observed result beside
+     * dsh-connect-workbuddy's two rows was this plugin's line squeezed down to a
+     * clipped "Tr".
      *
      * Registration is unconditional; the gate reads the Host's modelSelection
      * projection and returns null for every other provider, so nothing is drawn
@@ -243,7 +215,7 @@ export function apply(ctx: ClientContext): void {
     }
 
     registerComposerPoints()
-    registerSidebarPoints()
+
   } catch (error: unknown) {
     // Degrade silently on the page: the host provider still serves models.
     console.error('[dsh-connect-trae] client card failed to load (host provider unaffected):', error)

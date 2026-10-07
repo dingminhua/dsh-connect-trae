@@ -94,10 +94,6 @@ export const TRAE_CARD_CSS = `
    row at the top and the copy beside the model actions (2.9.3). Without it the
    checkbox rendered unstyled and read as absent — the whole reason the switch
    looked missing. */
-.dsm-trae-mainui-switch{padding:2px 0 0}
-.dsm-trae-mainui-switch-label{display:flex;align-items:center;gap:9px;font-size:13px;line-height:18px;color:var(--dsw-alias-label-secondary,#c6c9d0);cursor:pointer;white-space:nowrap}
-.dsm-trae-mainui-switch-label input{margin:0;accent-color:var(--dsw-alias-brand-primary,#5686fe)}
-.dsm-trae-mainui-switch-label:has(input:disabled){opacity:.6;cursor:default}
 .dsm-trae-models-actions{display:flex;align-items:center;gap:8px;flex:none}
 }
 .dsm-trae-usage-alternative{display:flex;align-items:flex-start;gap:10px;margin-top:10px;padding:10px 12px;border:1px solid var(--dsw-alias-state-warning-border,#7a5b12);border-radius:10px;background:var(--dsw-alias-state-warning-bg,#2a2313)}
@@ -152,38 +148,4 @@ export const TRAE_CARD_CSS = `
  * Separate from the card bundle because the line lives in the shell's sidebar,
  * not inside the plugin card; a card that is closed still shows this.
  */
-export const TRAE_SIDEBAR_CSS = `
-/* The full-width claim (flex 0 0 100%) plus min-width 0 is what keeps this line
-   readable when the footer is shared. The shell renders the footer action slot
-   as a HORIZONTAL flex row (its own buttons plus every plugin contribution), so
-   a line that does not claim the full width is laid beside the others and
-   squeezed into the leftover space - which is exactly what happened next to
-   dsh-connect-workbuddy's two lines, where ours collapsed to a clipped "Tr".
-   The sibling plugin hit the same thing and fixed it the same way. */
-/* Composer-row credit readout: a bare clickable pill; clicking opens the
-   account/credits panel. No refresh button in the row — the row is shared and
-   must stay narrow. */
-.dsm-trae-composer-points{display:inline-flex;align-items:center;min-width:0}
-.dsm-trae-composer-points-trigger{appearance:none;display:inline-flex;align-items:center;gap:4px;padding:1px 8px;border:0;border-radius:var(--dsw-radius-sm,6px);background:transparent;color:var(--dsw-alias-label-tertiary,#999);font:inherit;font-size:13px;line-height:20px;white-space:nowrap;cursor:pointer;font-variant-numeric:tabular-nums}
-.dsm-trae-composer-points-trigger:hover,.dsm-trae-composer-points-trigger[aria-expanded='true']{background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.06));color:var(--dsw-alias-label-secondary,#c6c9d0)}
-.dsm-trae-composer-points-trigger:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#5686fe);outline-offset:1px}
-/* The anchored panel: menu surface material, matching ContextMeter's panel. */
-.dsm-trae-composer-panel{position:fixed;z-index:1100;box-sizing:border-box;width:min(248px,calc(100vw - 24px));padding:12px;border:0;border-radius:var(--dsw-radius-lg,14px);background:var(--dsw-specific-menu,#24262c);backdrop-filter:var(--dsw-menu-backdrop-filter,none);--dsw-elevation-stroke-color:var(--dsw-alias-border-l1,#333);box-shadow:var(--dsw-elevation-prominent,0 8px 32px rgba(0,0,0,.4));font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#c6c9d0)}
-.dsm-trae-composer-panel-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
-.dsm-trae-composer-panel-title{font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary,#e6e6e6)}
-.dsm-trae-composer-panel-refresh{flex:none;padding:2px 10px;font-size:11px;line-height:16px}
-.dsm-trae-composer-panel-grid{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;margin:0}
-.dsm-trae-composer-panel-grid dt{color:var(--dsw-alias-label-tertiary,#9aa0a8);white-space:nowrap}
-.dsm-trae-composer-panel-grid dd{margin:0;text-align:right;font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-primary,#e6e6e6)}
-.dsm-trae-composer-panel-empty{margin:0;color:var(--dsw-alias-label-tertiary,#9aa0a8)}
-.dsm-trae-composer-panel-error{margin:8px 0 0;color:var(--dsw-alias-state-error-primary,#ef4444);font-size:11px;line-height:16px}
-.dsm-trae-sidebar-points{display:flex;align-items:center;gap:8px;padding:4px 2px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#c6c9d0);flex:0 0 100%;min-width:0}
-.dsm-trae-sidebar-points-line{display:flex;align-items:center;gap:6px;min-width:0;flex:1 1 auto}
-.dsm-trae-sidebar-points-text{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
-.dsm-trae-sidebar-points-failed{color:var(--dsw-alias-state-error-primary,#ef4444);font-size:11px;line-height:16px;white-space:nowrap}
-.dsm-trae-sidebar-points-refresh{appearance:none;flex:none;font:inherit;font-size:11px;line-height:16px;padding:2px 8px;border:1px solid var(--dsw-alias-border-l2,#3a3d45);border-radius:7px;color:var(--dsw-alias-label-secondary,#c6c9d0);background:transparent;cursor:pointer}
-.dsm-trae-sidebar-points-refresh:hover:not(:disabled){color:var(--dsw-alias-label-primary,#e6e6e6);border-color:var(--dsw-alias-label-dimmed,#777)}
-.dsm-trae-sidebar-points-refresh:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#5686fe);outline-offset:1px}
-.dsm-trae-sidebar-points-refresh:disabled{opacity:.5;cursor:default}
-`
 

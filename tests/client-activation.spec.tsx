@@ -106,15 +106,16 @@ describe('client entry activation on 0.1.7', () => {
     // The 0.1.7 slots are registered, and the scope came from configForms
     // bound to the namespace the mirror actually serves (the patch id, not the
     // declared fallback `trae`).
-    // Two more slots join the two config ones:
-    //   - `sidebar.footer.action`: the general-credit line (issue #26);
-    //   - `conversation.input.left`: the provider-scoped credit readout, which
-    //     exists precisely so two connector plugins do not fight over the single
-    //     shared sidebar row.
-    // Both register unconditionally; their gates render nothing until the switch
-    // is on / this plugin's model is the selected one.
+    // A third slot joins the two config ones: `conversation.input.left`, the
+    // provider-scoped credit readout. It exists precisely so two connector
+    // plugins do not fight over a single shared row — which is why the earlier
+    // `sidebar.footer.action` line is GONE (2.12.0): the sidebar foot is one
+    // root-level row shared with the shell's own controls, so two plugins each
+    // parking a line there squeezed one of them down to a clipped fragment.
+    // It registers unconditionally; the gate renders nothing unless this
+    // plugin's own model is the selected one.
     expect(slots.registrations.map(entry => entry.name).sort())
-      .toEqual(['conversation.input.left', 'plugins.bundle.config', 'plugins.row.config', 'sidebar.footer.action'])
+      .toEqual(['conversation.input.left', 'plugins.bundle.config', 'plugins.row.config'])
     expect(forms.requested).toEqual(['dsh-connect-trae'])
     expect(errors).toHaveLength(0)
 
@@ -165,7 +166,7 @@ describe('client entry activation on 0.1.7', () => {
     // reads the switch as false and renders nothing, which is the correct
     // default for a host that cannot be asked.
     const slots = ctx.get('slots') as unknown as Slots
-    expect(slots.registrations).toHaveLength(4)
+    expect(slots.registrations).toHaveLength(3)
     expect(errors).toHaveLength(0)
 
     spy.mockRestore()
