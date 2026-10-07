@@ -24,9 +24,31 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useAnchoredPosition, useDismissOnOutsidePointer } from './popover.ts'
 import { TRAE_USAGE_PATH, withTraeRegion } from '../status-paths.ts'
+import { COMPOSER_POINTS_CSS } from './styles.ts'
 import type { TraeWebUsage } from '../status-paths.ts'
 import type { TraeRegion } from '../region.ts'
 import type { TraeSettingsKey } from './locales.ts'
+
+/**
+ * Inject the readout's styles into the document head, once, on module load.
+ *
+ * Same idempotent pattern as the card's injection, and for the same reason: the
+ * classes are attached to DOM this component owns, and `.dsm-card-*` lives in
+ * `TRAE_CARD_CSS` — which only loads when the settings card does. Before this
+ * existed (2.13.0–2.13.4) the trigger rendered as the browser's default button
+ * box and the panel, with no `position: fixed`, had its measured left/top
+ * ignored and appeared nowhere.
+ */
+if (typeof document !== 'undefined') {
+  const cssId = 'dsh-connect-trae/composer-points.css'
+  if (!document.querySelector(`style[data-plugin-css="${cssId}"]`)) {
+    const styleTag = document.createElement('style')
+    styleTag.dataset.plugin = 'dsh-connect-trae'
+    styleTag.dataset.pluginCss = cssId
+    styleTag.textContent = COMPOSER_POINTS_CSS
+    document.head.appendChild(styleTag)
+  }
+}
 
 /**
  * Automatic refresh period. Five minutes, matching the sidebar line: a credit
@@ -211,7 +233,7 @@ export function ComposerPoints(props: ComposerPointsProps) {
             <span className="dsm-trae-composer-panel-title">{t('composer.panelTitle')}</span>
             <button
               type="button"
-              className="dsm-btn dsm-btn-outline dsm-trae-composer-panel-refresh"
+              className="dsm-trae-composer-panel-refresh"
               disabled={busy}
               onClick={() => { void fetchUsage() }}
             >

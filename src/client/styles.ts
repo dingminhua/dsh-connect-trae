@@ -146,10 +146,63 @@ export const TRAE_CARD_CSS = `
    spent. Rendering it in the error colour would read as a plugin fault. */
 .dsm-trae-checkin-note{margin:8px 0 0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#c6c9d0)}
 `
-/**
- * Sidebar credit line styles, injected by the sidebar component itself.
- *
- * Separate from the card bundle because the line lives in the shell's sidebar,
- * not inside the plugin card; a card that is closed still shows this.
- */
 
+
+/**
+ * Composer-row readout styles, injected by the readout itself.
+ *
+ * SEPARATE from `TRAE_CARD_CSS`, and that is not tidiness: the card's CSS is
+ * only injected when the settings card module loads, so putting the composer's
+ * rules in it means the readout renders UNSTYLED in the composer toolbar —
+ * which is exactly what shipped in 2.13.0–2.13.4. The trigger fell back to the
+ * browser's default button box, and the panel, without `position: fixed`, had
+ * its inline left/top ignored and rendered nowhere useful.
+ *
+ * `tests/composer-styles.spec.tsx` now asserts that every class this component
+ * renders has a rule here, so a rule cannot go missing without a test failing.
+ */
+export const COMPOSER_POINTS_CSS = `
+/* The readout is plain composer text — no border, no fill at rest. The padding
+   is only the click target, invisible until the pointer arrives. */
+.dsm-trae-composer-points{display:inline-flex;align-items:center;min-width:0}
+.dsm-trae-composer-points-trigger{
+  appearance:none;display:inline-flex;align-items:center;align-self:stretch;
+  padding:2px 6px;border:0;border-radius:6px;background:transparent;
+  color:inherit;font:inherit;white-space:nowrap;cursor:pointer;
+  font-variant-numeric:tabular-nums;
+}
+.dsm-trae-composer-points-trigger:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.14))}
+.dsm-trae-composer-points-trigger:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#5686fe);outline-offset:1px}
+/* The panel is portaled to document.body and positioned from the trigger, so it
+   MUST be fixed — otherwise the left/top it measures are ignored and it lands in
+   document flow. All material comes from shell tokens so it follows the theme. */
+.dsm-trae-composer-panel{
+  position:fixed;z-index:1100;box-sizing:border-box;
+  width:min(248px,calc(100vw - 24px));padding:12px;
+  border:1px solid var(--dsw-alias-border-l1,rgba(127,127,127,.28));
+  border-radius:var(--dsw-radius-lg,14px);
+  background:var(--dsw-specific-menu,Canvas);
+  box-shadow:var(--dsw-elevation-prominent,0 8px 32px rgba(0,0,0,.22));
+  backdrop-filter:var(--dsw-menu-backdrop-filter,none);
+  font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#444);
+}
+.dsm-trae-composer-panel-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
+.dsm-trae-composer-panel-title{font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary,CanvasText)}
+/* Self-contained: the dsm-btn primitive lives in TRAE_CARD_CSS, which the
+   composer never loads, so the refresh button must style itself. */
+.dsm-trae-composer-panel-refresh{
+  appearance:none;flex:none;margin-left:auto;padding:3px 10px;
+  border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.34));
+  border-radius:7px;background:transparent;
+  color:var(--dsw-alias-label-secondary,#444);
+  font:inherit;font-size:11px;line-height:16px;cursor:pointer;
+}
+.dsm-trae-composer-panel-refresh:hover:not(:disabled){border-color:var(--dsw-alias-label-dimmed,rgba(127,127,127,.6));color:var(--dsw-alias-label-primary,CanvasText)}
+.dsm-trae-composer-panel-refresh:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#5686fe);outline-offset:1px}
+.dsm-trae-composer-panel-refresh:disabled{opacity:.5;cursor:default}
+.dsm-trae-composer-panel-grid{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;margin:0}
+.dsm-trae-composer-panel-grid dt{color:var(--dsw-alias-label-tertiary,GrayText);white-space:nowrap}
+.dsm-trae-composer-panel-grid dd{margin:0;text-align:right;font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-primary,CanvasText)}
+.dsm-trae-composer-panel-empty{margin:0;color:var(--dsw-alias-label-tertiary,GrayText)}
+.dsm-trae-composer-panel-error{margin:8px 0 0;color:var(--dsw-alias-state-error-primary,#d92d20);font-size:11px;line-height:16px}
+`
