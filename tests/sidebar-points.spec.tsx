@@ -191,11 +191,9 @@ describe('SidebarPointsGate', () => {
     expect(SIDEBAR_POINTS_REFRESH_INTERVAL_MS).toBe(300_000)
   })
 
-  it('shows the line by default, and turning it off leaves NOTHING behind', async () => {
-    // Off means gone. An earlier revision left a small "积分" chip so the switch
-    // could not be lost, but the card now carries the same checkbox in two
-    // places, so the way back exists where the feature is configured. A residue
-    // in the footer is exactly what the user asked to clear.
+  it('mounts when switched on, and leaves NOTHING behind when switched off', async () => {
+    // Off means gone: the row is absent from the DOM, not hidden, and the fetch
+    // loop does not run. The way back is the card's checkbox.
     const { calls } = stubRoute(okResponse)
     const holder = makeScope(true)
     const { container } = render(<SidebarPointsGate t={t} settingsScope={holder.scope as never} />)
@@ -210,29 +208,41 @@ describe('SidebarPointsGate', () => {
     expect(calls).toHaveLength(1)
   })
 
-  it('treats an absent switch as ON, so a not-yet-populated scope does not blink the line away', async () => {
+  it('treats an absent switch as OFF, so nothing appears until the user asks for it', async () => {
+    // The host default is false. A scope that has not populated yet, or a host
+    // too old to serve the field, must not put a row in the footer that the
+    // user never asked for.
     const { calls } = stubRoute(okResponse)
     const scope = {
       getSnapshot: () => ({ status: 'ready', value: {}, writable: true }),
       subscribe: () => () => {},
       set: async () => true,
     }
-    render(<SidebarPointsGate t={t} settingsScope={scope as never} />)
-    await waitFor(() => { expect(screen.getByText(/sidebar\.points/)).toBeTruthy() })
-    expect(calls).toHaveLength(1)
+    const { container } = render(<SidebarPointsGate t={t} settingsScope={scope as never} />)
+    expect(container.innerHTML).toBe('')
+    expect(calls).toHaveLength(0)
   })
 
-  it('hides the line from its own close button, writing the shared switch', async () => {
+  it('carries NO control of its own: the card is the only writer of the switch', async () => {
+    // The `×` that used to live here was a second writer of one setting, with a
+    // weaker success path than the card's read-back-checked write — the sibling
+    // plugin hit that first (its `×` could not turn the line off at all). The
+    // row now only reports; switching happens in the card.
     const { calls } = stubRoute(okResponse)
     const holder = makeScope(true)
     const { container } = render(<SidebarPointsGate t={t} settingsScope={holder.scope as never} />)
     await waitFor(() => { expect(screen.getByText(/sidebar\.points/)).toBeTruthy() })
     expect(calls).toHaveLength(1)
 
-    fireEvent.click(screen.getByLabelText(/sidebar\.hide/))
+    // Exactly two buttons: refresh, and nothing else. No hide control.
+    const buttons = Array.from(container.querySelectorAll('button'))
+    expect(buttons).toHaveLength(1)
+    expect(buttons[0]?.textContent).toMatch(/sidebar\.refresh/)
+    expect(holder.written()).toHaveLength(0)
+
+    // Turning it off happens in the card, and the row follows the field.
+    holder.setEnabled(false)
     await waitFor(() => { expect(screen.queryByText(/sidebar\.points/)).toBeNull() })
-    // Completely gone, and the write goes through the SAME field the card uses.
     expect(container.innerHTML).toBe('')
-    expect(holder.written()).toContain(false)
   })
 })

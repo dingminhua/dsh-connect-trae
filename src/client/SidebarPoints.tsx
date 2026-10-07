@@ -42,14 +42,7 @@ export interface SidebarPointsInjected {
  * Props. The line is only ever mounted in the EXPANDED column: the gate drops it
  * while the sidebar is collapsed (56px rail), so no width variant is needed.
  */
-export type SidebarPointsProps = Partial<SidebarPointsInjected> & {
-  /**
-   * Turn the line off. Wired by the gate to the SAME `showPointsInMainUi` field
-   * the plugin card writes, so the balance can be dismissed from where it is
-   * shown instead of only from a settings page that some hosts never render.
-   */
-  onHide?: () => void
-}
+export type SidebarPointsProps = Partial<SidebarPointsInjected>
 
 /** Inject the sidebar-line CSS once. */
 if (typeof document !== 'undefined') {
@@ -91,7 +84,7 @@ function generalCreditsOf(usage: TraeWebUsage): number | undefined {
 }
 
 /** One fetch+render cycle. Returns false when the request failed. */
-export function SidebarPoints({ t, onHide }: SidebarPointsProps) {
+export function SidebarPoints({ t }: SidebarPointsProps) {
   if (t === undefined) throw new Error('Sidebar points line requires its translation function')
   const [points, setPoints] = useState<number | undefined>(undefined)
   const [signedIn, setSignedIn] = useState(true)
@@ -188,17 +181,6 @@ export function SidebarPoints({ t, onHide }: SidebarPointsProps) {
       >
         {busy ? t('sidebar.refreshing') : t('sidebar.refresh')}
       </button>
-      {onHide === undefined
-        ? null
-        : <button
-          type="button"
-          className="dsm-trae-sidebar-points-hide"
-          aria-label={t('sidebar.hide')}
-          title={t('sidebar.hide')}
-          onClick={onHide}
-        >
-          ×
-        </button>}
     </div>
   )
 }

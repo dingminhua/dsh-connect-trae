@@ -188,19 +188,20 @@ export interface Config {
    */
   accounts?: Partial<Record<TraeRegion, string>>
   /**
-   * Show the CN account's general credit balance as a permanent line at the
-   * bottom of the DSH sidebar (issue #26, contributed by JiewiW).
+   * Show the CN account's general credit balance as a line at the bottom of the
+   * DSH sidebar (issue #26, contributed by JiewiW).
    *
-   * ON by default and opt-out since 2.9.1. It was opt-in first, on the theory
-   * that a user who never asked for a periodic usage read should not get one —
-   * but the switch lived only in the plugin card, and the card is not reachable
-   * in every host: a market plugin can own the Plugins tab and never dispatch
-   * `plugins.bundle.config`, so the line was permanently off with no discoverable
-   * way to turn it on. The line now carries its own on/off control in the
-   * sidebar, which is reachable exactly where the feature renders.
+   * OFF by default, matching `dsh-connect-workbuddy`'s sidebar credit line. The
+   * history here is worth keeping: this was opt-in, then opt-out (2.9.1) after
+   * the switch turned out to be unreachable on a host whose Plugins tab is owned
+   * by a market plugin, and is opt-in again now that the switch is also placed
+   * beside the model actions — where the user already is while managing models —
+   * and the sibling plugin settled on the same default.
    *
-   * Declared volatile alongside `accounts`/`regions` so the settings form can
-   * both read and write it.
+   * The row itself carries no control: the card's checkbox is the only writer,
+   * so there is exactly one path that can disagree about the field. Declared
+   * volatile alongside `accounts`/`regions` so the settings form can both read
+   * and write it.
    */
   showPointsInMainUi?: boolean
   /**
@@ -327,12 +328,13 @@ export const Config: z<Config> = z.object({
   // from the wrapped schema, which is narrower than the optional
   // `Partial<Record<TraeRegion, string>>` the Config interface declares. The
   // schema is unchanged either way — this only restores the assignment.
-  // ON by default (2.9.1): the plugin page that carries the card checkbox is
-  // not reachable in every host — a market plugin can own the Plugins tab and
-  // never render `plugins.bundle.config`, which left the line permanently off
-  // with no way to discover it. The line is now opt-OUT and carries its own
-  // on/off control in the sidebar, so it is reachable wherever it renders.
-  showPointsInMainUi: asVolatile(z.boolean().default(true).description('在DSH主界面显示积分状态（可在侧边栏那一行上随时关闭）')),
+  // OFF by default, matching dsh-connect-workbuddy's sidebar credit line —
+  // the sibling plugin this feature was aligned with (3.7.0). The sidebar foot
+  // is shared with the shell's own controls, and a permanent row is something a
+  // user should ask for rather than something that appears after an upgrade.
+  // The switch lives in the card, which is where the setting it controls also
+  // lives (account, models).
+  showPointsInMainUi: asVolatile(z.boolean().default(false).description('在DSH主界面显示积分状态')),
 
   accounts: asVolatile(accountSelectionConfig.description('Per-region account selections, keyed cn | ai')) as z<Partial<Record<TraeRegion, string>>>,
   regions: asVolatile(z.dict(regionStateConfig).default({}).description('Per-region model directory and selection, keyed cn | ai')),

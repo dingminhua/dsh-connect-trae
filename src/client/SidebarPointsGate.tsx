@@ -1,6 +1,9 @@
 /**
  * Gate between the `sidebar.footer.action` slot and the compact credit line.
  *
+ * Aligned with `dsh-connect-workbuddy`'s sidebar credit gate (3.7.0), which is
+ * the sibling plugin this feature was modelled on.
+ *
  * Kept in its own module (rather than inside the browser-plugin entry) so it
  * can be imported from the Node/jsdom test suite: the entry imports
  * browser-only DSH packages the test environment cannot load, but this gate
@@ -12,18 +15,25 @@
  *  - on  → {@link SidebarPoints}, which owns the fetch loop and its timer;
  *  - off → NOTHING. The row is absent from the DOM, not hidden.
  *
- * Off used to leave a small "积分" chip behind, on the theory that a switch you
- * cannot find is no switch at all (2.9.1). That safety net is no longer needed:
- * the card carries the same checkbox twice — at the top of the card and beside
- * the model actions — so the way back is always where the feature is
- * configured. What the user asked for is for the row to be gone, and a leftover
- * chip still occupies the footer they wanted cleared.
+ * There is deliberately NO control inside the row. An earlier revision put a
+ * `×` beside the refresh button, on the theory that a switch you cannot find is
+ * no switch at all. That trade turned out badly in two ways, both of which the
+ * sibling plugin hit first and documented:
+ *
+ *  1. a bare `scope.set()` in the row was a SECOND writer of the same field,
+ *     with a different (weaker) success path than the card's read-back-checked
+ *     write — a second path that can disagree about one setting;
+ *  2. it competed for space in a footer the row was meant to leave tidy.
+ *
+ * The card is the right home for the switch: it sits with the setting it
+ * controls (account, models), and it is where the user already is. It carries
+ * the checkbox TWICE — at the top of the card and beside the model actions —
+ * so the control is found where the work happens rather than hunted for.
  *
  * The collapsed rail also renders nothing: the shell squeezes the footer to a
- * 56px strip rather than hiding it, and the line does not read well there — see
- * the bail-out below.
+ * 56px strip rather than hiding it, and the line does not read well there.
  */
-import { useCallback, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { SidebarPoints } from './SidebarPoints.tsx'
 import { unwrapVolatileDeep } from '../status-paths.ts'
 import type { TraeSettingsKey } from './locales.ts'
@@ -32,15 +42,15 @@ import type { TraeUsageCardInjected } from './TraeUsageCard.tsx'
 /**
  * Read the sidebar-credit switch out of a committed settings snapshot.
  *
- * Absent means ON: the field defaults to true on the host, and a settings
- * scope that has not populated yet must not blink the line away. Only an
- * explicit `false` (the user turned it off, from the line or the card) hides
- * the balance.
+ * Absent means OFF, matching the host default (the field defaults to false).
+ * Only an explicit `true` shows the balance: a scope that has not populated
+ * yet, or a host too old to serve the field, must not put a row in the footer
+ * that the user never asked for.
  */
 export function sidebarPointsEnabledOf(scope: TraeUsageCardInjected['settingsScope']): boolean {
-  if (scope === undefined) return true
+  if (scope === undefined) return false
   const value = unwrapVolatileDeep(scope.getSnapshot().value) as { showPointsInMainUi?: unknown } | undefined
-  return value?.showPointsInMainUi !== false
+  return value?.showPointsInMainUi === true
 }
 
 export interface SidebarPointsGateProps {
@@ -58,17 +68,6 @@ export function SidebarPointsGate(props: SidebarPointsGateProps) {
     [settingsScope],
   )
 
-  /**
-   * Write the switch back through the same field the card writes, so the two
-   * controls can never disagree. The read-back is not awaited for its value:
-   * the subscription above re-renders when the committed snapshot changes, and
-   * an unwritable scope simply leaves the current state alone.
-   */
-  const setShown = useCallback((next: boolean): void => {
-    if (settingsScope === undefined || settingsScope.getSnapshot().writable !== true) return
-    void settingsScope.set('showPointsInMainUi', next).catch(() => { /* keep current state */ })
-  }, [settingsScope])
-
   // Collapsed rail: render NOTHING.
   //
   // The shell does NOT hide the footer when the sidebar collapses — it
@@ -83,16 +82,7 @@ export function SidebarPointsGate(props: SidebarPointsGateProps) {
   // Bailing out here — before the line mounts — also means the fetch loop and
   // its 5-minute timer never start while collapsed.
   if (wide === false) return null
-
-  // Off means GONE: no row, no chip, no placeholder.
-  //
-  // An earlier revision kept a small "积分" button here so the switch could not
-  // be lost. That reasoning no longer holds: the card carries the same checkbox
-  // in two places (top of the card, and beside the model actions), so the way
-  // back is always available where the feature is configured. A residue in the
-  // sidebar is worse than useless — the user asked for the row to disappear, and
-  // a leftover chip still occupies the footer they wanted cleared.
   if (!enabled) return null
 
-  return <SidebarPoints t={t} onHide={() => { setShown(false) }} />
+  return <SidebarPoints t={t} />
 }
