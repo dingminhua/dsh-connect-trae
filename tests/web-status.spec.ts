@@ -868,3 +868,53 @@ describe('traeAccountCredits: the composer panel table', () => {
     expect(rows.map(row => row.accountName)).toEqual(['Domestic'])
   })
 })
+
+/**
+ * The app-sign-in follow hint (issue #29): when Trae switches accounts the
+ * plugin must REPORT the mismatch on the usage document so the card can offer
+ * one-click follow — while a healthy document carries no extra field and a
+ * failing scan must not take the whole document down.
+ */
+describe('app sign-in follow hint (issue #29)', () => {
+  const appLogin = { id: 'account-b', accountName: 'AppUserB', edition: 'solo' as const, region: 'cn' as const }
+
+  function makeFollowRoute(liveLogin?: TraeUsageRouteOptions['liveLogin']): TraeUsageRouteOptions {
+    const deps = makeRoute()
+    deps.store = () => ({
+      async accounts() {
+        return [
+          { id: 'account-a', accountName: 'BoundA', edition: 'solo', region: 'cn', source: 'dsh', tokenExpiresAtMs: expiresAtMs, selected: true },
+          { id: 'account-b', accountName: 'AppUserB', edition: 'solo', region: 'cn', source: 'desktop', tokenExpiresAtMs: expiresAtMs, selected: false },
+        ]
+      },
+      async status() { return { state: 'signed-in', edition: 'solo', expiresAtMs: Date.now() + 1000, source: 'desktop' } },
+      async resolve() { return credential },
+    }) as unknown as ReturnType<TraeUsageRouteOptions['store']>
+    if (liveLogin !== undefined) deps.liveLogin = liveLogin
+    return deps
+  }
+
+  it('carries appLogin on the signed-in document when the app differs', async () => {
+    const deps = makeFollowRoute(async () => appLogin)
+    const result = await traeWebUsage(deps, 'cn')
+    expect(result.status).toBe('signed-in')
+    if (result.status !== 'signed-in') return
+    expect(result.appLogin).toEqual(appLogin)
+  })
+
+  it('omits appLogin when nothing differs (a healthy document costs no hint)', async () => {
+    const deps = makeFollowRoute()
+    const result = await traeWebUsage(deps, 'cn')
+    expect(result.status).toBe('signed-in')
+    if (result.status !== 'signed-in') return
+    expect(result.appLogin).toBeUndefined()
+  })
+
+  it('degrades a throwing liveLogin to no hint instead of failing the document', async () => {
+    const deps = makeFollowRoute(async () => { throw new Error('scan failed') })
+    const result = await traeWebUsage(deps, 'cn')
+    expect(result.status).toBe('signed-in')
+    if (result.status !== 'signed-in') return
+    expect(result.appLogin).toBeUndefined()
+  })
+})

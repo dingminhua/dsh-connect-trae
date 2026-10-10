@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### 修复
+
+- **跟随 Trae 当前登录的账号（issue #29）**。在 Trae 桌面端**退出换登录**后，插件此前一直绑定**换号前**的账号继续计费，而同族插件 `dsh-connect-workbuddy` 会自动跟随 App 的新登录；报告人需要每次手动打开账号下拉切一次。根因是两处：`TraeCredentialStore.preferred()` 只取 `credentials[0]`（**不认哪个来源是 App 的 live 登录**），`current()` 在 `accountId` 有值时**严格绑定、find 不命中也不回退**（刻意为之，见 `src/auth.ts` 的注释——避免悄悄给用户换一个计费账号）。
+
+  分两条路径修，**都不改变未勾选用户的任何行为**：
+
+  1. **`preferred()` 改为 live 登录优先**（`source === 'desktop'` 的凭据先于插件自己的刷新副本）。只改**排序**、不改 `readAll()` 的取值去重——同一账号仍保留更长寿的副本，否则会退回「有效 token 在隔壁文件却读成过期」的旧问题（`src/auth.ts:371-384` 的注释）。这修好「从未显式选择」的默认路径，与 workbuddy 对齐。
+  2. **显式绑定的跟随**：新增只读方法 `liveLogin()` 报告「App 当前登录 ≠ 绑定账号」的**不一致**（纯读，绝不静默换绑）；卡片在账号下拉旁给出**提示行 + 一键切换**（复用与下拉相同的 `switchAccount` 写入，保持单一写入路径）；新增配置字段 `followAppLogin`（volatile，默认**关闭**）让宿主在每次配置生效时自动重绑——**默认关**是因为自动换绑意味着换人计费，必须由用户主动勾选，未勾选时提示行就是手动通道。
+
+  配套：usage 文档新增 `appLogin` 字段（仅在不一致时携带，健康文档不加字段、扫描失败也不拖垮整个文档），双语文案 `row.appLoginMismatch` / `row.appLoginFollow` / `row.followAppLogin`，README「多账号切换」补充该行为说明。
+
+### 测试
+
+- 新增 5 个：`preferred()` 优先 App 登录（旧 own 副本仍列出但不默认选中）、`liveLogin()` 三种不一致/一致状态、usage 文档 `appLogin` 的携带/省略/扫描失败降级；集成测试的 `MemorySettings` 补上 `revision` 冲突门（建模真实 `SettingsConflictError`）与新 volatile 字段 `followAppLogin`。
+- `pnpm run check`（typecheck + 全量测试 + build）通过。
+
 ## 3.0.0 (2026-10-07)
 
 > **积分从「侧边栏常驻一行」改为「输入框工具栏的按供应商读数 + 账号表格浮层」。**

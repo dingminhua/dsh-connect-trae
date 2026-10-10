@@ -26,7 +26,7 @@ import {
   TRAE_MODELS_TEST_PATH,
   TRAE_USAGE_PATH,
 } from './status-paths.ts'
-import type { TraeWebAccount, TraeWebAccountCredit, TraeWebCheckin, TraeWebCreditAlternative, TraeWebCredits, TraeWebUsage } from './status-paths.ts'
+import type { TraeWebAccount, TraeWebAccountCredit, TraeWebAppLogin, TraeWebCheckin, TraeWebCreditAlternative, TraeWebCredits, TraeWebUsage } from './status-paths.ts'
 
 export { TRAE_USAGE_PATH, TRAE_ACCOUNT_CREDITS_PATH } from './status-paths.ts'
 export type { TraeWebUsage } from './status-paths.ts'
@@ -59,6 +59,14 @@ export interface TraeUsageRouteOptions {
    * exhausted-account hint is simply not offered.
    */
   creditsOfAccount?(region: TraeRegion, accountId: string): Promise<TraeWebCredits | undefined>
+  /**
+   * The account the Trae app is signed in to right now, when it differs from
+   * the bound one (issue #29). Optional: absent means the card's follow hint
+   * simply is not offered (a test harness or a host without the store's scan).
+   * Read-only — the HOST never rebinds from this value; the follow is a
+   * settings write, made by the card or by the host's follow switch.
+   */
+  liveLogin?(region: TraeRegion): Promise<TraeWebAppLogin | undefined>
   /** The requested region's last-refreshed raw directory (one entry per upstream model). */
   displayModels(region: TraeRegion): readonly TraeModelInfo[]
   /** The user's model selection in the requested region, stored as model id (= Trae name). */
@@ -241,6 +249,13 @@ export async function traeWebUsage(deps: TraeUsageRouteOptions, region: TraeRegi
   // and stable user IDs stay on the Host. The requested region drives which
   // per-region model directory and selection this document reports, and which
   // usage surface the credits block reads.
+  //
+  // `appLogin` is the same class of fact — identity only — read best-effort:
+  // a store whose scan fails must not take the whole document down for a hint.
+  let appLogin: TraeWebAppLogin | undefined
+  try {
+    appLogin = await deps.liveLogin?.(region)
+  } catch { /* the hint is optional; the document still answers */ }
   const account = {
     accountId: accounts.find(item => item.selected)?.id ?? '',
     accountName: credential.accountName ?? credential.userId,
@@ -248,6 +263,7 @@ export async function traeWebUsage(deps: TraeUsageRouteOptions, region: TraeRegi
     region,
     enabled,
     accounts,
+    ...appLogin === undefined ? {} : { appLogin },
     models: deps.displayModels(region).map(model => ({ ...model, ...model.input === undefined ? {} : { input: [...model.input] } })),
     enabledModelIds: [...deps.enabledModelIds(region)],
     ...deps.rawDiagnostic === undefined ? {} : { rawChat: deps.rawDiagnostic(region) },

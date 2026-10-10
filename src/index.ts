@@ -12,7 +12,8 @@ import {
   TRAE_PROVIDER_DISPLAY_NAMES,
   TRAE_PROVIDERS,
 } from './adapter.ts'
-import type { TraeWebCredits } from './status-paths.ts'
+import type { TraeWebAppLogin, TraeWebCredits } from './status-paths.ts'
+import { configuredAccountsOf, followAppLoginEnabled, unwrapVolatile } from './status-paths.ts'
 import type { TraeAdapter } from './adapter.ts'
 import { TraeCredentialStore } from './auth.ts'
 import { applyImageSelection, deriveCatalog, discoveredCatalog, FALLBACK_TRAE_MODELS, fallbackModelsFor, mergeTraeModelSources, sanitizeCatalog, TraeCatalog, traeInputModalities, traeModelDisplayName, type TraeModelInfo } from './catalog.ts'
@@ -34,7 +35,6 @@ import { TraeDelegatingUpstreamClient } from './delegating-upstream.ts'
 import { probeModelsSequentially } from './model-probe.ts'
 import { TraeUsageClient } from './usage.ts'
 import { registerTraeUsageRoute, toCredits } from './web-status.ts'
-import { unwrapVolatile } from './status-paths.ts'
 
 export {
   createTraeAdapter,
@@ -108,10 +108,13 @@ export {
   unwrapVolatileDeep,
   withTraeRegion,
   type TraeWebActivity,
+  type TraeWebAppLogin,
   type TraeWebCheckin,
   type TraeWebCheckinClaim,
   type TraeWebCredits,
   type TraeWebUsage,
+  configuredAccountsOf,
+  followAppLoginEnabled,
 } from './status-paths.ts'
 export { createTraeShim, type TraeShim } from './shim.ts'
 export { UnconfiguredTraeUpstreamClient, type TraeChatResult, type TraeUpstreamClient } from './upstream.ts'
@@ -204,6 +207,26 @@ export interface Config {
    * settings form can both read and write it.
    */
   showPointsInMainUi?: boolean
+  /**
+   * Follow the Trae desktop app's CURRENT sign-in instead of staying bound to
+   * the account the user (or the default) picked earlier (issue #29).
+   *
+   * When the app switches accounts, the old binding kept billing the previous
+   * account forever while `dsh-connect-workbuddy` followed the app
+   * automatically — every Trae sign-out then needed a manual switch here. With
+   * this switch ON, each settings re-apply rebinds `accounts.<region>` to
+   * whatever the app is signed in to right now (the live login outranks the
+   * plugin's own refreshed copies, see `TraeCredentialStore.preferred`).
+   *
+   * OFF by default: an existing configuration keeps the strict bind it
+   * shipped with, because silently switching billing accounts is exactly what
+   * `current()`'s no-fallback rule exists to prevent — the user opts in. When
+   * OFF, the card still shows a one-click hint (its own settings write), so
+   * the report in #29 is solved on both paths without any behavior change
+   * nobody asked for. Declared volatile so the card's switch can read and
+   * write it on the 0.1.7 settings form.
+   */
+  followAppLogin?: boolean
   /**
    * Per-region model state, keyed `cn` | `ai`. The CN and international apps
    * expose different rosters, so each keeps its own directory and selection
@@ -339,6 +362,9 @@ export const Config: z<Config> = z.object({
   // OFF by default, matching the stated preference for the sidebar line: a row
   // inside the shared composer toolbar is something to ask for, not to impose.
   showPointsInMainUi: asVolatile(z.boolean().default(false).description('在输入框工具栏显示积分读数「Trae CN · <数值>」（仅当选中的模型属于本插件时出现，可点击查看账号与积分明细）')),
+  // Follow the app's current sign-in (issue #29). OFF by default: a config
+  // written before this field existed keeps the strict bind it shipped with.
+  followAppLogin: asVolatile(z.boolean().default(false).description('跟随 Trae 桌面端当前登录账号换绑（打开后每次配置生效时重绑到 App 现在登录的账号）')),
 
   accounts: asVolatile(accountSelectionConfig.description('Per-region account selections, keyed cn | ai')) as z<Partial<Record<TraeRegion, string>>>,
   regions: asVolatile(z.dict(regionStateConfig).default({}).description('Per-region model directory and selection, keyed cn | ai')),
@@ -751,6 +777,44 @@ export function apply(ctx: Context, config: Config): void {
     }
   }
 
+  /**
+   * The app's current sign-in when it differs from the bound account (issue
+   * #29). Pure read: the store resolves the bound account verbatim, so billing
+   * never moves from here — the card's hint and the follow switch below are
+   * the only writers.
+   */
+  const liveLoginOf = async (region: TraeRegion): Promise<TraeWebAppLogin | undefined> => {
+    try {
+      const live = await stacks[region].store.liveLogin()
+      if (live === undefined || live.region !== region) return undefined
+      return { id: live.id, accountName: live.accountName, edition: live.edition, region: live.region }
+    } catch {
+      // A scan failure must not take the usage document down for a hint.
+      return undefined
+    }
+  }
+
+  /**
+   * Persist `accounts.<region>` = the app's live sign-in and rebind the store
+   * (issue #29). The ONE Host-side path that moves the binding, driven by the
+   * follow switch in {@link maybeFollowAppLogin}; the card's one-click hint
+   * goes through its own settings write instead (one writer per path). Returns
+   * the applied login so the caller can report what moved.
+   *
+   * The write goes through `settings.update` (the volatile write gate), not a
+   * direct config mutation: `apply()` receives a snapshot, and the settings
+   * event (`loader/volatile-update`) is what re-runs `applySelection` with the
+   * updated document — the same channel every card write already uses.
+   */
+  const followAppLogin = async (region: TraeRegion): Promise<TraeWebAppLogin | undefined> => {
+    const live = await liveLoginOf(region)
+    if (live === undefined || writeSettings === undefined) return undefined
+    const configured = configuredAccountsOf(current())
+    if (configured[region] === live.id) return live
+    await writeSettings({ accounts: { ...configured, [region]: live.id } })
+    return live
+  }
+
   // Same-origin routes backing the card. Each request names the region whose
   // tab it belongs to; the region-scoped accessors below then read (and the
   // save writes back into) that region's own slot.
@@ -767,6 +831,10 @@ export function apply(ctx: Context, config: Config): void {
     // throwaway client so the store's selection (and every in-flight chat
     // request using it) is left alone (issue #25).
     creditsOfAccount: (region, accountId) => stacks[region].creditsOfAccount(accountId),
+    // The follow hint's read half (issue #29): a pure report the usage
+    // document carries when the app's sign-in differs. Degrades to `undefined`
+    // (no hint) rather than failing a status read.
+    liveLogin: region => liveLoginOf(region),
   }))
 
   /**
@@ -870,6 +938,8 @@ export function apply(ctx: Context, config: Config): void {
   // shape names the pieces this plugin touches.
   interface SettingsShapes {
     configure: (presentation: { auto?: boolean }, owner?: unknown) => () => void
+    describe(): { ns: string; revision: number }[]
+    update(ns: string, patch: object, expectedRevision?: number): Promise<void>
   }
 
   // `inject` rather than a direct read: `settings` is an optional service, and
@@ -877,9 +947,34 @@ export function apply(ctx: Context, config: Config): void {
   // disposer that must be registered with the calling plugin's effects, or the
   // presentation policy leaks past disposal (the first-party plugins do the
   // same: `child.effect(() => child.settings.configure({ auto: false }, …))`).
+  //
+  // The same injection is where the settings WRITE surface this plugin needs
+  // lives: the follow switch (issue #29) rebinds `accounts.<region>` through
+  // `settings.update`. Kept narrow (configure + update + describe) rather than
+  // a blanket `any`, matching how the interface above treats `configure`.
+  let writeSettings: ((patch: Record<string, unknown>) => Promise<void>) | undefined
   ctx.inject(['settings'], settingsCtx => {
     const settings = settingsCtx.settings as unknown as SettingsShapes
     ctx.effect(() => settings.configure({ auto: true }, ctx.fiber))
+    writeSettings = async patch => {
+      // Read the CURRENT revision right before writing: `update` refuses a
+      // stale revision (SETTINGS_CONFLICT), and the card may have written
+      // between our read and our write. Only that refusal is retried — a
+      // genuine failure (read-only profile, bad field) is rethrown, because
+      // swallowing it would make the follow switch look applied while the
+      // binding never moved. The retry re-reads the revision inside the same
+      // helper, so it converges on the next attempt at worst.
+      const revision = () => settings.describe().find(entry => entry.ns === settingsNs)?.revision
+      const conflict = (error: unknown): boolean =>
+        typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 'SETTINGS_CONFLICT'
+      try {
+        await settings.update(settingsNs, patch, revision())
+      } catch (error: unknown) {
+        if (!conflict(error)) throw error
+        await settings.update(settingsNs, patch, revision())
+      }
+    }
+    ctx.effect(() => () => { writeSettings = undefined })
   })
 
   // 0.1.7 hands volatile values back as live references and announces each
@@ -889,7 +984,47 @@ export function apply(ctx: Context, config: Config): void {
   ;(ctx as unknown as { on(name: string, listener: () => void): unknown })
     .on('loader/volatile-update', () => {
       applySelection(current())
+      void maybeFollowAppLogin()
     })
+
+  /**
+   * Follow the app's sign-in on every settings change when the switch is ON
+   * (issue #29). Runs AFTER `applySelection` so this pass binds the previous
+   * document, reads the app's live login against it, and — if they differ —
+   * writes `accounts.<region>` once; that write emits `volatile-update` again,
+   * which re-runs `applySelection` on the NEW document. The loop terminates on
+   * its own the moment `liveLogin()` reports no mismatch (the second pass binds
+   * the live account, so `preferred` and `current` agree). The guard below
+   * additionally forbids two writes in flight, so a stuck mismatch can never
+   * turn into a write storm: the next settings change retries from scratch.
+   *
+   * The switch reads FALSE for an existing config (see {@link Config}), so a
+   * user who never opted in never gets a rebind — the card's one-click hint is
+   * their path instead.
+   */
+  let followInFlight = false
+  const maybeFollowAppLogin = async (): Promise<void> => {
+    if (followInFlight || !followAppLoginEnabled(current())) return
+    followInFlight = true
+    try {
+      for (const region of REGION_KEYS) {
+        if (!regionEnabled(current(), region)) continue
+        await followAppLogin(region)
+      }
+    } catch (error: unknown) {
+      // A refused write (read-only profile, conflict) must not crash the
+      // settings listener; the next change retries.
+      ctx.logger.warn('dsh-connect-trae: follow-app-login rebind skipped', error)
+    } finally {
+      followInFlight = false
+    }
+  }
+  // Startup pass (issue #29): the listener below only fires on LATER settings
+  // changes, so a user who turns the switch on and restarts DSH would never
+  // get the rebind without one. Safe to fire here because `maybeFollowAppLogin`
+  // is now defined, the in-flight guard makes the paths race-free, and a switch
+  // that is OFF (the default) returns before touching the store.
+  void maybeFollowAppLogin()
 
   let stopped = false
   ctx.effect(() => () => {

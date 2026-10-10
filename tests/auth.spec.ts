@@ -161,6 +161,46 @@ describe('TraeCredentialStore', () => {
     expect((await store.accounts()).find(account => account.accountName === 'cn-user')?.selected).toBe(true)
   })
 
+  it('prefers the APP\'S live sign-in over a stale own copy of the previous login (issue #29)', async () => {
+    // The exact #29 report: Trae switched from A to B, so the desktop file
+    // (source: 'desktop') now holds B while the plugin's own refreshed copy of
+    // A (source: 'dsh', expires LATER) still resolves. The default and the
+    // account list must follow the app, not the abandoned login.
+    const dir = await temp(); const file = join(dir, 'storage.json'); const own = join(dir, 'own.json')
+    await writeFile(file, storage('app-b', Date.now() + 3_600_000, undefined, 'user-b'))
+    await writeFile(own, JSON.stringify({ version: 1, credential: {
+      accessToken: 'stale-a', refreshToken: 'rt', userId: 'user-a', host: 'https://api.trae.cn',
+      expiresAtMs: Date.now() + 86_400_000, source: 'dsh', edition: 'cn',
+    } }))
+    const store = new TraeCredentialStore({ storagePath: file, edition: 'cn', ownPath: own, refresh: async () => { throw new Error('unused') } })
+    await expect(store.current()).resolves.toMatchObject({ accessToken: 'app-b', source: 'desktop' })
+    const accounts = await store.accounts()
+    expect(accounts.find(account => account.selected)?.accountName).toBe('user-b')
+    // The stale login is still LISTED (switchable), just not defaulted to.
+    expect(accounts.map(account => account.accountName)).toEqual(['user-b', 'user-a'])
+  })
+
+  it('liveLogin() reports the mismatch only while the bound account differs', async () => {
+    const dir = await temp(); const file = join(dir, 'storage.json'); const own = join(dir, 'own.json')
+    await writeFile(file, storage('app-b', Date.now() + 3_600_000, undefined, 'user-b'))
+    await writeFile(own, JSON.stringify({ version: 1, credential: {
+      accessToken: 'stale-a', refreshToken: 'rt', userId: 'user-a', host: 'https://api.trae.cn',
+      expiresAtMs: Date.now() + 86_400_000, source: 'dsh', edition: 'cn',
+    } }))
+    const store = new TraeCredentialStore({ storagePath: file, edition: 'cn', ownPath: own, refresh: async () => { throw new Error('unused') } })
+    // No explicit bind: the default already IS the live login, so nothing to report.
+    await expect(store.liveLogin()).resolves.toBeUndefined()
+    // Bind to the STALE account the way the #29 reporter was bound.
+    const stale = (await store.accounts()).find(account => account.accountName === 'user-a')
+    store.selectAccount(stale!.id)
+    const live = await store.liveLogin()
+    expect(live).toMatchObject({ accountName: 'user-b', source: 'desktop' })
+    // Rebind to the live account: the mismatch resolves.
+    const liveAccount = (await store.accounts()).find(account => account.accountName === 'user-b')
+    store.selectAccount(liveAccount!.id)
+    await expect(store.liveLogin()).resolves.toBeUndefined()
+  })
+
   it('does not fall back to another account when the selected account disappears', async () => {
     const dir = await temp()
     const cn = join(dir, 'cn.json'); const solo = join(dir, 'solo.json')

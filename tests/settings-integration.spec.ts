@@ -21,7 +21,7 @@ function liveOf<T>(field: () => T): { get: () => T } {
  * The plugin's schema marks exactly these fields volatile — the only fields
  * the 0.1.7 settings write gate accepts (matches `asVolatile` in `src/index.ts`).
  */
-const VOLATILE_FIELDS = new Set(['authFile', 'edition', 'accounts', 'regions'])
+const VOLATILE_FIELDS = new Set(['authFile', 'edition', 'accounts', 'regions', 'showPointsInMainUi', 'followAppLogin'])
 
 /**
  * 0.1.7-shaped in-memory settings service.
@@ -43,6 +43,8 @@ const VOLATILE_FIELDS = new Set(['authFile', 'edition', 'accounts', 'regions'])
 class MemorySettings extends Service {
   readonly document: Record<string, unknown>
   readonly configureCalls: { auto?: boolean }[] = []
+  /** Monotonic write counter — the `revision` the real `describe()` reports. */
+  private revision = 0
   constructor(owner: Context, document: Record<string, unknown> = {}) {
     super(owner, 'settings')
     this.document = document
@@ -51,14 +53,21 @@ class MemorySettings extends Service {
     this.configureCalls.push(presentation)
     return () => {}
   }
-  describe(): { ns: string; writable: boolean; value: unknown }[] {
-    return [{ ns: 'trae', writable: true, value: this.document }]
+  describe(): { ns: string; writable: boolean; value: unknown; revision: number }[] {
+    return [{ ns: 'trae', writable: true, value: this.document, revision: this.revision }]
   }
-  async update(ns: string, patch: Record<string, unknown>): Promise<void> {
+  async update(ns: string, patch: Record<string, unknown>, expectedRevision?: number): Promise<void> {
     for (const key of Object.keys(patch)) {
       if (!VOLATILE_FIELDS.has(key)) throw new Error(`Config field "${key}" is not volatile`)
     }
+    // The real `SettingsForms` refuses a stale revision (SETTINGS_CONFLICT);
+    // the plugin's write helper retries once after re-reading, so modelling
+    // the refusal here is what proves that retry works.
+    if (expectedRevision !== undefined && expectedRevision !== this.revision) {
+      throw new Error(`SettingsConflictError: expected revision ${expectedRevision}, actual ${this.revision}`)
+    }
     Object.assign(this.document, structuredClone(patch))
+    this.revision += 1
     ;(this.ctx as unknown as { emit(name: string): void }).emit('loader/volatile-update')
     void ns
   }
@@ -88,11 +97,13 @@ async function isolatedPlugin(ctx: Context, config: Partial<Trae.Config> = {}): 
   document.edition = config.edition ?? 'auto'
   document.accounts = config.accounts
   document.regions = config.regions
+  document.followAppLogin = config.followAppLogin
   const pluginConfig = {
     authFile: liveOf(() => document.authFile),
     edition: liveOf(() => document.edition),
     accounts: liveOf(() => document.accounts),
     regions: liveOf(() => document.regions),
+    followAppLogin: liveOf(() => document.followAppLogin),
     accountId: config.accountId,
     lastCatalog: config.lastCatalog,
     enabledModelIds: config.enabledModelIds,

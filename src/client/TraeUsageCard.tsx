@@ -10,6 +10,7 @@ import type { ReactNode } from 'react'
 import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client'
 import {
   configuredAccountsOf,
+  followAppLoginEnabled,
   nextRegionEnabled,
   nextRegionSlots,
   regionEnabledOf,
@@ -425,6 +426,39 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
       if (mounted.current) setWriteError(error instanceof Error ? error.message : t('row.requestFailed'))
     } finally {
       if (mounted.current) setSwitchingAccount(false)
+    }
+  }
+
+  /**
+   * Follow the Trae app's current sign-in from the hint row (issue #29).
+   *
+   * One click, and it goes through the SAME `switchAccount` write the account
+   * dropdown uses — so the card has exactly one writer for `accounts`, the Host
+   * sees the change through `loader/volatile-update` like every other card
+   * write, and there is no second settings path to keep in sync. The app's
+   * sign-in is `status.appLogin`, which the Host only reports when it differs
+   * from the bound account, so a click here always moves the binding to what
+   * the app is actually logged into.
+   */
+  const followAppLogin = async (): Promise<void> => {
+    if (status.status !== 'signed-in' || status.appLogin === undefined) return
+    await switchAccount(status.appLogin.id)
+  }
+
+  /**
+   * Toggle the follow-the-app switch (`followAppLogin`, issue #29): the Host's
+   * automatic rebind follows this field, so the card only commits it. OFF by
+   * default in the schema; an existing config keeps the strict bind it shipped
+   * with until the user ticks this.
+   */
+  const toggleFollowAppLogin = async (enabled: boolean): Promise<void> => {
+    if (settingsScope === undefined || settingsScope.getSnapshot().writable !== true) return
+    setWriteError(undefined)
+    try {
+      await writeSettingsField(settingsScope, 'followAppLogin', enabled,
+        readBack => followAppLoginEnabled(readBack) === enabled)
+    } catch (error: unknown) {
+      if (mounted.current) setWriteError(error instanceof Error ? error.message : t('row.requestFailed'))
     }
   }
 
@@ -850,6 +884,23 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
                       <span>{t('row.showPointsInMainUi')}</span>
                     </label>
                   </div>}
+              {/* Follow the Trae app's sign-in (issue #29). Region-agnostic:
+                  both tabs bind an account of their own, so the switch sits
+                  outside the CN-only block above and applies to whichever tab
+                  it is ticked on. Same opt-in semantics as the schema: OFF for
+                  an existing config, because an automatic rebind of the billing
+                  account is the kind of thing a user must ask for. */}
+              <div className="dsm-trae-mainui-switch">
+                <label className="dsm-trae-mainui-switch-label" title={t('row.followAppLoginHint')}>
+                  <input
+                    type="checkbox"
+                    checked={followAppLoginEnabled(settingsValue)}
+                    disabled={settingsScope?.getSnapshot().writable !== true}
+                    onChange={event => { void toggleFollowAppLogin(event.currentTarget.checked) }}
+                  />
+                  <span>{t('row.followAppLogin')}</span>
+                </label>
+              </div>
               <div className="dsm-trae-usage-account">
                 <div className="dsm-trae-usage-account-copy" role="status">
                   <div className="dsm-trae-usage-status">
@@ -910,6 +961,29 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
                           }}
                         >
                           {t('row.creditsAlternativeSwitch')}
+                        </button>
+                      </div>
+                      : null}
+                    {/* The app signed in to a DIFFERENT account than this
+                        plugin is bound to (issue #29). Reported by the Host only
+                        on that mismatch, so the row exists exactly when the
+                        binding is stale — the failure that used to require
+                        opening the dropdown after every Trae sign-out. Reuses
+                        the alternatives row's styling (same class of "your
+                        binding is wrong, one click fixes it") and goes through
+                        the same `switchAccount` write as the dropdown. */}
+                    {status.status === 'signed-in' && status.appLogin !== undefined
+                      ? <div className="dsm-trae-usage-alternative" role="status">
+                        <p className="dsm-trae-usage-alternative-text">
+                          {t('row.appLoginMismatch', { account: status.appLogin.accountName })}
+                        </p>
+                        <button
+                          type="button"
+                          className="dsm-trae-usage-switch-button"
+                          disabled={switchingAccount || settingsScope?.getSnapshot()?.writable !== true}
+                          onClick={() => { void followAppLogin() }}
+                        >
+                          {t('row.appLoginFollow')}
                         </button>
                       </div>
                       : null}

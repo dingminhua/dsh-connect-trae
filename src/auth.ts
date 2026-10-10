@@ -267,13 +267,55 @@ export class TraeCredentialStore {
   }
 
   /**
-   * Deterministic default when no account is explicitly selected: the first
-   * discovered account. This is NOT credit-seeking — it never reorders accounts
-   * to find one with general credits. The plugin bills exactly the account the
-   * user selected, or the first account when nothing has been selected yet.
+   * Deterministic default when no account is explicitly selected: the account
+   * the Trae desktop app is signed in to RIGHT NOW, else the first discovered
+   * one. This is NOT credit-seeking — it never reorders accounts to find one
+   * with general credits. The plugin bills exactly the account the user
+   * selected, the app's current sign-in when nothing has been selected, and
+   * only then the first account.
+   *
+   * The app's live sign-in outranks the plugin's own refreshed copies (issue
+   * #29): after the user switches accounts in Trae, the desktop storage file
+   * holds the NEW login while the plugin's copy of the old one still resolves,
+   * so a bare `credentials[0]` kept defaulting to a sign-in the app has
+   * abandoned — and `dsh-connect-workbuddy`, whose `preferred()` ranks the live
+   * file first, followed the app instead. Ordering only: the VALUE behind an
+   * account id is still whichever copy expires later (`readAll`), so a refresh
+   * the plugin performed is never discarded by this preference.
    */
   private preferred(credentials: TraeCredential[]): TraeCredential | undefined {
-    return credentials[0]
+    return credentials.find(credential => credential.source === 'desktop') ?? credentials[0]
+  }
+
+  /**
+   * The account the Trae app is signed in to right now, when that differs from
+   * the account this store is bound to (issue #29).
+   *
+   * This is a READ, not a rebind: `current()` keeps resolving the bound
+   * account verbatim so billing never moves without a decision — the store
+   * only reports the mismatch, and the card (hint row) or the host (follow
+   * switch) turns it into a settings write the user can see and undo. Absent
+   * when nothing is live, when the live account IS the bound one, or when the
+   * binding itself already fell through to the live account.
+   */
+  async liveLogin(): Promise<TraeAccountChoice | undefined> {
+    // No explicit bind: the default (`preferred`) already IS the live login,
+    // so `current()` resolves it — there is no mismatch to report.
+    if (this.accountId === undefined || this.accountId === '') return undefined
+    const credentials = await this.readAll()
+    const live = this.preferred(credentials)
+    if (live === undefined) return undefined
+    const liveId = traeAccountId(live)
+    if (liveId === this.accountId) return undefined
+    return {
+      id: liveId,
+      accountName: live.accountName ?? (live.userId || `${live.edition} account`),
+      edition: live.edition,
+      region: regionOfCredential(live),
+      source: live.source,
+      tokenExpiresAtMs: live.expiresAtMs,
+      selected: false,
+    }
   }
 
   async accounts(): Promise<TraeAccountChoice[]> {

@@ -205,6 +205,25 @@ export interface TraeWebAccount {
 }
 
 /**
+ * The account the Trae desktop app is signed in to right now, when it differs
+ * from the one this plugin is bound to (issue #29).
+ *
+ * Reported on the usage document so the card can offer one-click follow without
+ * an extra round trip; also written back on a POST to the accounts refresh
+ * route when the client confirms it saw the hint. Absent whenever the two
+ * agree or the app is not readable — a healthy document carries no extra
+ * fields and the plugin never bills from this value directly: the FOLLOW is a
+ * settings write of `accounts.<region>`, made by the card or by the host's
+ * follow switch, never a silent rebind here.
+ */
+export interface TraeWebAppLogin {
+  id: string
+  accountName: string
+  edition: 'cn' | 'sg' | 'solo' | 'solo-sg'
+  region: TraeRegion
+}
+
+/**
  * Another account on this machine that still has credit, surfaced only while
  * the BOUND account is exhausted (issue #25).
  *
@@ -307,6 +326,21 @@ export function unwrapVolatileDeep<T>(value: T): T {
 export function configuredAccountsOf(configured: unknown): Record<string, string> {
   const accounts = (unwrapVolatileDeep(configured) as { accounts?: unknown } | undefined)?.accounts
   return typeof accounts === 'object' && accounts !== null ? accounts as Record<string, string> : {}
+}
+
+/**
+ * Whether the host-side "follow the Trae app's sign-in" switch is on (issue
+ * #29). Absent reads as OFF, so an existing configuration keeps the strict
+ * bind it shipped with and the switch is an opt-in — the same opt-out
+ * semantics as {@link regionEnabledOf}, for the same reason: a config written
+ * before this field existed cannot ask for behavior it never declared.
+ *
+ * Reads the whole settings section (or the bare field); deep-unwraps first
+ * because on DSH 0.1.7 a volatile field arrives as a `{get(): T}` live
+ * reference, whose `typeof === 'object'` would otherwise pass a naive check.
+ */
+export function followAppLoginEnabled(configured: unknown): boolean {
+  return (unwrapVolatileDeep(configured) as { followAppLogin?: unknown } | undefined)?.followAppLogin === true
 }
 
 /**
@@ -464,6 +498,15 @@ export type TraeWebUsage =
      * other case so a healthy account never pays for the extra read.
      */
     alternatives?: readonly TraeWebCreditAlternative[]
+    /**
+     * Present only when the Trae app's CURRENT sign-in differs from the
+     * account this plugin is bound to (issue #29): the card then offers a
+     * one-click follow instead of making the user hunt the account dropdown
+     * after every app-side sign-out. Absent in every other case — a healthy
+     * document costs no extra read beyond the accounts scan the document
+     * already runs.
+     */
+    appLogin?: TraeWebAppLogin
     /**
      * Daily check-in state (CN only). Absent on the international region,
      * whose check-in surface does not exist — probed 2026-09-24: the
