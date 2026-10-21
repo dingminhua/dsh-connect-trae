@@ -56,8 +56,7 @@ export interface TraeSoloRemoteCatalogOptions {
 }
 
 /**
- * Of two rows for the SAME model id, the one that advertises the stronger
- * capacity (issue #23).
+ * Of two rows for the SAME model id, the one the catalog should keep.
  *
  * The gateway groups its directory by function and reports a model's capacity
  * per group, with the group order varying between calls. Keeping the strongest
@@ -65,6 +64,9 @@ export interface TraeSoloRemoteCatalogOptions {
  * LEXICOGRAPHIC and must be applied all the way down, or ordering leaks back in
  * at the next field:
  *
+ *  0. the kept row must also carry the promotional rule, which the groups
+ *     disagree about — the rule is copied onto the capacity winner, and of two
+ *     rules the one that can say more wins (see the comment in the body);
  *  1. a row with a Max tier beats one without (`maxContextWindow` is only set
  *     when the group reported `max_mode: true` with a positive max);
  *  2. two Max rows: the larger max wins;
@@ -85,6 +87,45 @@ export function preferStrongerRow(
   incumbent: TraeDiscoveredModel | undefined,
 ): TraeDiscoveredModel {
   if (incumbent === undefined) return candidate
+  const winner = strongerCapacityRow(candidate, incumbent)
+  // Capacity decides WHICH ROW, but the row it keeps is not necessarily the one
+  // carrying the promotional rule: the groups disagree about
+  // `features.activity_discount`. Measured 2026-10-21 on a live CN credential,
+  // `Doubao-Seed-2.1-Turbo` advertises a `subsidy` rule (50% pay) in some groups
+  // and none at all in others, while the group ORDER varies between calls
+  // (issue #23). Choosing the rule-carrying row instead would throw away a
+  // 1M Max tier, so the rule is carried ACROSS to the capacity winner: both
+  // facts survive, and neither depends on the gateway's mood.
+  const rule = richerRule(candidate.activityDiscount, incumbent.activityDiscount)
+  if (rule === undefined || rule === winner.activityDiscount) return winner
+  return { ...winner, activityDiscount: rule }
+}
+
+/**
+ * Step 0's tie-break: of two rules for the same model id, the one that can say
+ * more about this moment. Every parsed rule already passed `enable: true` (see
+ * parseTraeActivityDiscount), so the ranking is: an upstream "right now"
+ * discount first, then the rule covering more clock. Ties keep the incumbent,
+ * which keeps the result order-free.
+ */
+function richerRule(
+  candidate: TraeDiscoveredModel['activityDiscount'],
+  incumbent: TraeDiscoveredModel['activityDiscount'],
+): TraeDiscoveredModel['activityDiscount'] {
+  if (candidate === undefined) return incumbent
+  if (incumbent === undefined) return candidate
+  const score = (rule: NonNullable<TraeDiscoveredModel['activityDiscount']>): number => {
+    const live = rule.current !== undefined && (rule.current.discountType ?? 'none') !== 'none' ? 1 : 0
+    return live * 1000 + (rule.offPeak?.windows.length ?? 0)
+  }
+  return score(candidate) > score(incumbent) ? candidate : incumbent
+}
+
+/** Steps 1–4 of the documented order: the row advertising the stronger capacity. */
+function strongerCapacityRow(
+  candidate: TraeDiscoveredModel,
+  incumbent: TraeDiscoveredModel,
+): TraeDiscoveredModel {
   const candidateMax = candidate.maxContextWindow
   const incumbentMax = incumbent.maxContextWindow
   if (candidateMax !== undefined && incumbentMax === undefined) return candidate
