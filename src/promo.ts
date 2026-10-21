@@ -265,17 +265,24 @@ function runningWindow(
 ): (TraePromoWindow & { timeZone: string }) | undefined {
   const offPeak = discount.offPeak
   if (offPeak === undefined || offPeak.windows.length === 0) return undefined
-  const timeZone = offPeak.timeZone ?? defaultTimeZone
+  const declaredZone = offPeak.timeZone ?? defaultTimeZone
+  let usedZone = declaredZone
   // The model's own zone decides first; an unusable one (a typo, an old ICU)
   // degrades to the account zone instead of silently judging in local time.
-  const clock = zonedClock(now, timeZone)
-    ?? (timeZone === defaultTimeZone ? undefined : zonedClock(now, defaultTimeZone))
+  let clock = zonedClock(now, declaredZone)
+  if (clock === undefined && declaredZone !== defaultTimeZone) {
+    usedZone = defaultTimeZone
+    clock = zonedClock(now, defaultTimeZone)
+  }
   if (clock === undefined) return undefined
   const match = offPeak.windows.find(window =>
     window.weekdays.includes(clock.isoWeekday)
     && clock.minutes >= window.startMinute
     && clock.minutes < window.endMinute)
-  return match === undefined ? undefined : { ...match, timeZone }
+  // Report the zone the window was ACTUALLY judged in, not the declared one: a
+  // capsule whose hover says "（Mars/Olympus）" while the hours were read in
+  // Asia/Shanghai would name a clock nobody used.
+  return match === undefined ? undefined : { ...match, timeZone: usedZone }
 }
 
 /** `subKey` is upstream's machine name; it is the only honest source for "限时". */

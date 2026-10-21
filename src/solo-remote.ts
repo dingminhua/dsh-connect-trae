@@ -131,8 +131,9 @@ export function preferStrongerRow(
  * Step 0's tie-break: of two rules for the same model id, the one that can say
  * more about this moment. Every parsed rule already passed `enable: true` (see
  * parseTraeActivityDiscount), so the ranking is: an upstream "right now"
- * discount first, then the rule covering more clock. Ties keep the incumbent,
- * which keeps the result order-free.
+ * discount first, then the rule covering more clock. Two rules that rank EQUAL
+ * are compared by their canonical content, so the answer depends on the rule
+ * documents and never on which group the gateway answered first (issue #23).
  */
 function richerRule(
   candidate: TraeDiscoveredModel['activityDiscount'],
@@ -144,7 +145,32 @@ function richerRule(
     const live = rule.current !== undefined && (rule.current.discountType ?? 'none') !== 'none' ? 1 : 0
     return live * 1000 + (rule.offPeak?.windows.length ?? 0)
   }
-  return score(candidate) > score(incumbent) ? candidate : incumbent
+  const candidateScore = score(candidate)
+  const incumbentScore = score(incumbent)
+  if (candidateScore !== incumbentScore) return candidateScore > incumbentScore ? candidate : incumbent
+  return canonicalRule(candidate) < canonicalRule(incumbent) ? candidate : incumbent
+}
+
+/**
+ * Content-only identity for two rules that scored the same.
+ *
+ * The score cannot distinguish, say, two `current: none` rules with two windows
+ * each in different hours — and keeping "whichever arrived first" would let the
+ * gateway's group order decide whether tonight's badge appears. Key order is
+ * normalised (the objects are ours, but a caller may hand us a literal), so
+ * equal documents compare equal and the incumbent is kept unchanged.
+ */
+function canonicalRule(rule: NonNullable<TraeDiscoveredModel['activityDiscount']>): string {
+  const canonical = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(item => canonical(item))
+    if (typeof value !== 'object' || value === null) return value
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+        .map(([key, item]) => [key, canonical(item)]),
+    )
+  }
+  return JSON.stringify(canonical(rule))
 }
 
 /** Steps 1–4 of the documented order: the row advertising the stronger capacity. */

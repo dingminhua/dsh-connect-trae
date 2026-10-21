@@ -512,6 +512,33 @@ describe('cross-group dedupe keeps the row that carries the promotion', () => {
     expect(preferStrongerRow(windowed, wide).activityDiscount).toBe(wide.activityDiscount)
   })
 
+  it('resolves two equally ranked rules by content, not by arrival order', () => {
+    // Both rules have no live `current` and one window each, so the score cannot
+    // separate them — yet one covers the morning and the other the evening, so
+    // "whichever group answered first" would decide whether tonight's badge
+    // appears at all (issue #23's nondeterminism, one layer down).
+    const morning = row({
+      activityDiscount: {
+        offPeak: {
+          timeZone: 'Asia/Shanghai',
+          windows: [{ weekdays: [1, 2, 3, 4, 5], startMinute: 0, endMinute: 540 }],
+        },
+      },
+    })
+    const evening = row({
+      activityDiscount: {
+        offPeak: {
+          timeZone: 'Asia/Shanghai',
+          windows: [{ weekdays: [1, 2, 3, 4, 5], startMinute: 1080, endMinute: 1440 }],
+        },
+      },
+    })
+    const first = preferStrongerRow(morning, evening).activityDiscount
+    const second = preferStrongerRow(evening, morning).activityDiscount
+    expect(first).toBe(second)
+    expect(JSON.stringify(first)).toBe(JSON.stringify(second))
+  })
+
   it('picks the same row for every group order when one group carries the rule', async () => {
     const groups = {
       builder_v3: [{ name: 'Doubao-Seed-2.1-Turbo', display_name: 'Seed-2.1-Turbo', multimodal: true, max_mode: false, context_window_tokens: { dev: 116000, max: 0 } }],

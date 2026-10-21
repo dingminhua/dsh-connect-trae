@@ -241,6 +241,19 @@ describe('selectTraePromoBadge', () => {
     expect(badge).toMatchObject({ kind: 'offPeak', timeZone: TRAE_PROMO_DEFAULT_TIME_ZONE })
   })
 
+  it('reports the zone the window was judged in when upstream names an unusable one', () => {
+    // A typo'd zone must not reach the hover line: the hours are read in the
+    // account zone, so that is the clock the capsule names. (Measured live
+    // 2026-10-21: no such zone has appeared yet — this is the degradation path
+    // for one that does.)
+    const badge = selectTraePromoBadge(
+      parseTraeActivityDiscount(offPeakDocument({ timeZone: 'Mars/Olympus' })),
+      WED_0820,
+      TRAE_PROMO_DEFAULT_TIME_ZONE,
+    )
+    expect(badge).toMatchObject({ kind: 'offPeak', timeZone: TRAE_PROMO_DEFAULT_TIME_ZONE, fromClock: '00:00', untilClock: '09:00' })
+  })
+
   it('carries no verdict of its own: the same rule answers differently at different times', () => {
     const rule: TraeActivityDiscount | undefined = parseTraeActivityDiscount(offPeakDocument())
     expect(selectTraePromoBadge(rule, new Date('2026-10-21T00:20:00.000Z'))?.kind).toBe('offPeak')

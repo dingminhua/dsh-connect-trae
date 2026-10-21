@@ -15,7 +15,7 @@
 | 来源 | 字段位置 | 实测（CN，2026-10-21） |
 |---|---|---|
 | Remote 目录 `GET https://solo.trae.cn/api/remote/v1/models` | 每个模型行的 `features`（JSON 字符串）里的 `activity_discount` | 7 组 / 126 行 / **33 个不同模型**，其中 4–7 个带规则（见 §5 的组间差异） |
-| Wire 名单 `POST https://trae-api-cn.mchost.guru/api/ide/v1/get_detail_param` | 每行的 `display_contact_config`（JSON 字符串）里的 `activity_discount` | 54 行，8 行带规则；同一时刻 3 行正在打折 |
+| Wire 名单 `POST https://trae-api-cn.mchost.guru/api/ide/v1/get_detail_param` | 每行的 `display_contact_config`（JSON 字符串）里的 `activity_discount` | 5 个聊天 function 共 214 行（去重前）、26 行带规则 → **9 个不同模型**；同一时刻 2 个在打折（2026-10-21 17:14 复测） |
 
 wire 这份更全（同一模型两边 `subKey` 可能不同），所以 `mergeTraeModelSources` 里 **wire 覆盖 remote**
 （`src/catalog.ts:330`），与 `creditMultiplier` 的既有优先级一致。
@@ -69,6 +69,10 @@ wire 这份更全（同一模型两边 `subKey` 可能不同），所以 `mergeT
 - `current` 是**上游自己算好的「此刻状态」**。实测把请求头 `x-trae-user-timezone` 从
   `Asia/Shanghai` 换成 `America/Los_Angeles`，`current` 完全不变——它是服务端时钟算的，
   **不跟随请求时区**；`time_windows` 才需要客户端自己按模型声明的时区算。
+- 判不了窗口直接丢弃：缺周几、`start >= end`（含 `start === end`）、越界的条目都不进规则表。
+  上游目前只发**同日**时段（`0–540`、`1080–1440`、周末 `0–1440`），所以插件**不推断**
+  「`start === end` 即全天」，也不拼跨零点窗口——宁可少画一枚，不留一个自己发明的时段。
+  时区写坏（不是合法 IANA 名）时退回账号时区，悬停里报**实际用来判定的那个时区**。
 
 ## 3. 判定规则（为什么必须在渲染时刻判定）
 
@@ -102,7 +106,7 @@ wire 这份更全（同一模型两边 `subKey` 可能不同），所以 `mergeT
 | 文案 | `badge.label / labelEn` | ❌ 无 | 插件按 `subKey` + `discount` 生成 |
 | 颜色 | `badge.color`（#rgb） | ❌ 无 | 插件按类型定色（见 `src/client/styles.ts:315`） |
 | 悬停说明 | `hover.textZh / textEn` | ❌ 无 | 插件拼「原价 x → 现价 y」「时段 …」 |
-| 时段 | `schedule.daily` + `validFrom/validUntil` | `off_peak.time_windows`，**无绝对起止** | 时段能算，「活动什么时候彻底结束」不可知 |
+| 时段 | `schedule.daily` + `validFrom/validUntil` | `off_peak.time_windows`；wire 的 `limited` 分支另有 `end_at`（插件不读，见 §7） | 闲时能算；「活动什么时候彻底结束」只有限时活动说过，而限时活动当前由 `current` 表达 |
 | 优先级 | `priority` 数字 | ❌ 无 | 同一模型一般只有一条规则 |
 | 常驻展示型 | `display !== 'activeOnly'` | ❌ 无 | 只有「此刻真的在打折」才画，不常驻 |
 | 国际区 | 全球区有 5 条 | **无**（订阅制，连 `consumption_rate` 都没有） | 徽标只在 CN 出现，代码路径同一条 |
@@ -138,12 +142,19 @@ remote groups: 7   rows: 33   rows carrying a rule: 7
 `limited_discount` 的文案敢写「限时」**；其余只写折扣数字。这与 #91「徽标只说上游的话」同一原则：
 上游没说的，不编。
 
+带规则那 7 行的实际构成（2026-10-21 17:14 复核）：3 个 `off_peak`（`off_peak_discount` ×2 +
+`off_peak_member_discount_18_9` ×1）、2 个 `limited_discount`、2 个 `subsidy_member_discount`。
+平移计数据此而来：窗口开合是**时钟**的函数，同一份规则在不同时刻画的枚数不同（上表 15:58 是
+2/3/5/2/5；17:14 复跑是 2/5/5/2/5，因为 21:58 与 23:14 落在不同的闲时窗口里）。
+
 ### 组间不一致：规则会随分组出现/消失
 
 同一次响应里，`Doubao-Seed-2.1-Turbo` 在部分 group 带规则、在部分 group 完全没有
 `features.activity_discount`，而**分组顺序每次调用都可能不同**（issue #23 已记录同一现象）。
 因此 `preferStrongerRow`（`src/solo-remote.ts`）在按容量选行之后，会把另一行携带的规则**并到赢家身上**
-（`richerRule`：先比「当前是否真在打折」，再比窗口数量）。不这么做，徽标就会出现一半时间消失、
+（`richerRule`：先比「当前是否真在打折」，再比窗口数量，分数相同再比规则内容的规范化 JSON——
+最后这一步是必要的：两条「都没有 current、各 1 个窗口」的规则分数相同，若按先到先得，
+今晚有没有徽标就取决于网关的分组顺序）。不这么做，徽标就会出现一半时间消失、
 且与用户看到的折扣不一致——实测用「先到先得」去重时，两次相邻调用一次 0 枚、一次 1 枚。
 选择「合并规则」而不是「选择带规则的行」，是因为后者会丢掉 1M Max 档：徽标不能以用户失去上下文预算为代价。
 
@@ -151,10 +162,10 @@ remote groups: 7   rows: 33   rows carrying a rule: 7
 
 | 层 | 位置 |
 |---|---|
-| 解析 + 判定 | `src/promo.ts`：`parseTraeActivityDiscount`（`:174`）、`zonedClock`（`:225`）、`selectTraePromoBadge`（`:332`）；默认时区 `TRAE_PROMO_DEFAULT_TIME_ZONE`（`:116`） |
-| remote 行 | `src/model-metadata.ts:78`（`features.activity_discount`）、`:96`（带出字段） |
+| 解析 + 判定 | `src/promo.ts`：`parseTraeActivityDiscount`（`:174`）、`zonedClock`（`:225`）、`selectTraePromoBadge`（`:339`）、`runningWindow`（`:261`）；默认时区 `TRAE_PROMO_DEFAULT_TIME_ZONE`（`:116`） |
+| remote 行 | `src/model-metadata.ts:98`（`features.activity_discount`）、`:116`（带出字段） |
 | wire 行 | `src/solo.ts:190`（`wireActivityDiscount`）、`:351`（读 `display_contact_config`） |
-| 合并 | `src/catalog.ts:330`（wire 覆盖 remote）、`:337`、`:395`（`discoveredCatalog` 透传） |
+| 合并 | `src/catalog.ts:340`（wire 覆盖 remote）、`:439`（`discoveredCatalog` 透传） |
 | 持久化 | `src/index.ts:428`（`activityDiscount: z.any<TraeActivityDiscount>()`，未解析的规则原样存盘，读回后仍按当刻判定） |
 | 送卡片 | `src/status-paths.ts:699`（`TraeWebModel.activityDiscount`）；`src/web-status.ts:610` 用对象展开送出，新字段自动抵达 |
 | 渲染 | `src/client/TraeUsageCard.tsx:230`（`PROMO_LABELS`）、`:255`（`promoBadge`）、`:1151`（每次渲染取一次 `nowForPromo`）、`:1993`（挂在模型名旁边） |
@@ -164,10 +175,15 @@ remote groups: 7   rows: 33   rows carrying a rule: 7
 
 ## 7. 已知限制
 
-- **不能吹「限时」**：只有 `limited_discount` 有依据，其余只写折扣数字。
+- **「限时」目前不会真的出现**：只有 `limited_discount` 有依据，其余只写折扣数字。而实测的两个
+  `limited_discount` 行（`Doubao-Seed-2.1-Pro`、`Doubao-Seed-Evolving`）`current` 都报
+  `discount_type: none`（活动已结束），且没有 `off_peak` 窗口，所以不画徽标——如实转述。
+  wire 的 `limited` 分支还带一个绝对结束时间 `end_at`（实测 2026-10-15 已过期），
+  解析层**有意不收**它：活动是否生效由上游的 `current` 说，插件不自己推断；
+  若上游哪天把限时活动标成 `current.discount_type != none`，文案会直接跟着出现。
 - **国际区恒无徽标**：订阅制没有 `consumption_rate`，更无 `activity_discount`；上游哪天补上即自动生效。
 - **`current` 可能滞后**：服务端算的，缓存或时钟差会让徽标比真实窗口晚几分钟出现/消失；接受。
 - **不动倍率那行**：`creditMultiplier` 照旧显示在 `x{rate}` 处（企业版不显示），徽标是额外的、
   只在活动时出现的信息。
-- **`limited_discount` 没有窗口**：上游只标了活动类型，没给起止时间。所以它在 `current` 报
-  「没打折」时不会自己算出一个时段——这一点和其它两类不同，属于如实转述。
+- **`limited_discount` 没有窗口**：它只有 `current` 一个判断，不给 `off_peak.time_windows`。
+  所以它在 `current` 报「没打折」时不会自己算出一个时段——这一点和其它两类不同，属于如实转述。
