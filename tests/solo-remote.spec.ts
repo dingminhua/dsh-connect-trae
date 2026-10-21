@@ -455,3 +455,114 @@ describe('restricted network end-to-end: issue #19 models survive', () => {
     expect(callable.find(m => m.id === 'glm-5.2')?.wireFunction).toBeUndefined()
   })
 })
+
+/**
+ * The same gateway also disagrees about the promotional rule: measured
+ * 2026-10-21 on a live CN credential, `Doubao-Seed-2.1-Turbo` carried a
+ * `subsidy` rule in some groups and no `features.activity_discount` at all in
+ * others, while the group order varies between calls. Capacity-first dedupe
+ * would then discard the only row able to paint a badge, so whether the row
+ * advertised a 5折 subsidy would be decided by the gateway's mood.
+ */
+describe('cross-group dedupe keeps the row that carries the promotion', () => {
+  const subsidy = { subsidy: { beforeRate: 0.4, rate: 0.2, discountPercent: 50 } }
+  const row = (over: Partial<TraeDiscoveredModel>): TraeDiscoveredModel => ({
+    id: 'Doubao-Seed-2.1-Turbo', name: 'Seed-2.1-Turbo', multimodal: true, reasoningSupported: false, ...over,
+  })
+
+  it('carries the rule onto the capacity winner instead of trading capacity for it', () => {
+    const promoted = row({ contextWindow: 116000, activityDiscount: subsidy })
+    const plain = row({ contextWindow: 256000, maxContextWindow: 1000000 })
+    for (const [first, second] of [[promoted, plain], [plain, promoted]] as const) {
+      const kept = preferStrongerRow(first, second)
+      // The badge comes from the row that has the rule…
+      expect(kept.activityDiscount).toBe(subsidy)
+      // …and the window still comes from the row that advertises more, so
+      // keeping a promotion can never cost the user their 1M budget.
+      expect(kept.contextWindow).toBe(256000)
+      expect(kept.maxContextWindow).toBe(1000000)
+    }
+  })
+
+  it('ranks two rule-carrying rows by what they can say, not by arrival order', () => {
+    const live = row({ activityDiscount: { ...subsidy, current: { discountType: 'subsidy', discountPercent: 50 } } })
+    const windowed = row({
+      activityDiscount: {
+        offPeak: {
+          timeZone: 'Asia/Shanghai',
+          discountPercent: 50,
+          windows: [{ weekdays: [1, 2, 3, 4, 5], startMinute: 1080, endMinute: 1440 }],
+        },
+      },
+    })
+    expect(preferStrongerRow(live, windowed).activityDiscount).toBe(live.activityDiscount)
+    expect(preferStrongerRow(windowed, live).activityDiscount).toBe(live.activityDiscount)
+    const wide = row({
+      activityDiscount: {
+        offPeak: {
+          timeZone: 'Asia/Shanghai',
+          windows: [
+            { weekdays: [1, 2, 3, 4, 5], startMinute: 0, endMinute: 540 },
+            { weekdays: [1, 2, 3, 4, 5], startMinute: 1080, endMinute: 1440 },
+          ],
+        },
+      },
+    })
+    expect(preferStrongerRow(wide, windowed).activityDiscount).toBe(wide.activityDiscount)
+    expect(preferStrongerRow(windowed, wide).activityDiscount).toBe(wide.activityDiscount)
+  })
+
+  it('resolves two equally ranked rules by content, not by arrival order', () => {
+    // Both rules have no live `current` and one window each, so the score cannot
+    // separate them — yet one covers the morning and the other the evening, so
+    // "whichever group answered first" would decide whether tonight's badge
+    // appears at all (issue #23's nondeterminism, one layer down).
+    const morning = row({
+      activityDiscount: {
+        offPeak: {
+          timeZone: 'Asia/Shanghai',
+          windows: [{ weekdays: [1, 2, 3, 4, 5], startMinute: 0, endMinute: 540 }],
+        },
+      },
+    })
+    const evening = row({
+      activityDiscount: {
+        offPeak: {
+          timeZone: 'Asia/Shanghai',
+          windows: [{ weekdays: [1, 2, 3, 4, 5], startMinute: 1080, endMinute: 1440 }],
+        },
+      },
+    })
+    const first = preferStrongerRow(morning, evening).activityDiscount
+    const second = preferStrongerRow(evening, morning).activityDiscount
+    expect(first).toBe(second)
+    expect(JSON.stringify(first)).toBe(JSON.stringify(second))
+  })
+
+  it('picks the same row for every group order when one group carries the rule', async () => {
+    const groups = {
+      builder_v3: [{ name: 'Doubao-Seed-2.1-Turbo', display_name: 'Seed-2.1-Turbo', multimodal: true, max_mode: false, context_window_tokens: { dev: 116000, max: 0 } }],
+      chat_v3: [{
+        name: 'Doubao-Seed-2.1-Turbo', display_name: 'Seed-2.1-Turbo', multimodal: true, max_mode: true,
+        context_window_tokens: { dev: 256000, max: 1000000 },
+        features: JSON.stringify({ activity_discount: { enable: true, subKey: 'subsidy_member_discount', data: { current: { discount_type: 'subsidy', before_consumption_rate: 0.4, consumption_rate: 0.2, discount: 50 } } } }),
+      }],
+    }
+    const permutations: string[][] = []
+    for (const a of Object.keys(groups)) for (const b of Object.keys(groups)) {
+      if (a !== b) permutations.push([a, b])
+    }
+    const observed: string[] = []
+    for (const order of permutations) {
+      const fetchImpl = vi.fn(async () => new Response(JSON.stringify({
+        code: 0,
+        data: { list: order.map(fn => ({ function: fn, models: groups[fn as keyof typeof groups] })) },
+      }), { status: 200 }))
+      const client = new TraeSoloRemoteCatalogClient({ credential: async () => credential, fetchImpl: fetchImpl as unknown as typeof fetch })
+      const models = await client.fetchModels()
+      observed.push(`${String(models.length)}/${String(models[0]?.activityDiscount !== undefined)}`)
+    }
+    expect(permutations).toHaveLength(2)
+    expect(new Set(observed)).toEqual(new Set(['1/true']))
+  })
+})

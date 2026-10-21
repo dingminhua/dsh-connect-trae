@@ -50,7 +50,8 @@
     "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.client.json",
     "check": "pnpm run typecheck && pnpm run test && pnpm run build",
     "verify:release": "node scripts/verify-release.mjs",
-    "card:shot": "vitest run --config vitest.card.config.ts"
+    "card:shot": "vitest run --config vitest.card.config.ts",
+    "promo:shot": "vitest run --config vitest.card.config.ts -t \"promo shot\""
   },
   "dsh": {
     "bundle": {

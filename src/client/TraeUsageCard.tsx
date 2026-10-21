@@ -29,6 +29,7 @@ import {
 import type { TraeModelProbeVerdict, TraeModelsTestResponse, TraeWebAccount, TraeWebAccountState, TraeWebCheckinClaim, TraeWebCreditExpiry, TraeWebModel, TraeWebUsage } from '../status-paths.ts'
 import type { TraeCreditPosition } from '../status-paths.ts'
 import { regionOfPanel, type TraePanel } from '../region.ts'
+import { selectTraePromoBadge, type TraePromoKind } from '../promo.ts'
 import { TRAE_PLUGIN_ICON } from './icon.ts'
 import { TRAE_CARD_CSS } from './styles.ts'
 import { BusyOverlay } from './BusyOverlay.tsx'
@@ -209,6 +210,79 @@ function probeBadge(
   return (
     <span className={`dsm-trae-model-probe dsm-trae-model-probe-${probe.verdict}`} title={probe.detail}>
       {t(PROBE_LABELS[probe.verdict])}
+    </span>
+  )
+}
+
+/**
+ * How each promotion kind is phrased.
+ *
+ * The wording is PLUGIN copy, not upstream's: Trae publishes a rule — a pay
+ * ratio plus optional cheap-hours windows — and never a label (contrast
+ * WorkBuddy's `badge.label`, see docs/PROMO_BADGE.md §3). Two things
+ * follow, and both are deliberate:
+ *
+ *  - only `limited_discount` says 限时 / "limited"; upstream gives no end time
+ *    for the other kinds, so claiming one would be inventing urgency;
+ *  - the number shown is upstream's own pay ratio (`discount: 50` ⇒ 五折 /
+ *    "50% off"), never a re-derived price.
+ */
+const PROMO_LABELS: Record<TraePromoKind, TraeSettingsKey> = {
+  limited: 'row.promoLimited',
+  subsidy: 'row.promoSubsidy',
+  offPeak: 'row.promoOffPeak',
+}
+
+/** Pay ratio as the "折" figure a Chinese price tag uses: 50 → "5", 25 → "2.5". */
+function promoZhe(discountPercent: number): string {
+  const zhe = Math.round(discountPercent * 10) / 100
+  return Number.isInteger(zhe) ? String(zhe) : zhe.toFixed(1)
+}
+
+/**
+ * The model row's promotion capsule, or nothing.
+ *
+ * Judged HERE, at paint time, not when the directory was parsed: the rule's
+ * windows are wall clocks in an upstream-named zone (00:00–09:00 on weekdays,
+ * …), so a verdict frozen into a saved catalog would still be shouting about
+ * last night's discount tomorrow afternoon. The card re-renders on its poll, so
+ * the capsule appears and disappears with the window.
+ *
+ * One capsule at most, and it sits BESIDE the name rather than inside it: the
+ * name is ellipsis-truncated, so a badge placed inside would be clipped away
+ * exactly on the long model names.
+ */
+function promoBadge(
+  model: TraeWebModel,
+  t: TraeUsageCardInjected['t'],
+  now: Date,
+): ReactNode {
+  const badge = selectTraePromoBadge(model.activityDiscount, now)
+  if (badge === undefined) return null
+  const zhe = promoZhe(badge.discountPercent)
+  // Upstream's own figures go into the hover only; the capsule stays short so a
+  // 24-model list does not turn into a wall of numbers.
+  const hints: string[] = []
+  if (badge.beforeRate !== undefined && badge.rate !== undefined) {
+    hints.push(t('row.promoHintRate', { before: String(badge.beforeRate), rate: String(badge.rate) }))
+  }
+  if (badge.fromClock !== undefined && badge.untilClock !== undefined && badge.timeZone !== undefined) {
+    hints.push(t('row.promoHintWindow', { from: badge.fromClock, until: badge.untilClock, zone: badge.timeZone }))
+  }
+  if (badge.memberDiscountPercent !== undefined) {
+    // Both phrasings are passed: the zh locale says "另 {zhe} 折", en says
+    // "{percent}% off", and one of them will use the other placeholder.
+    hints.push(t('row.promoHintMember', {
+      zhe: promoZhe(badge.memberDiscountPercent),
+      percent: String(100 - badge.memberDiscountPercent),
+    }))
+  }
+  return (
+    <span
+      className={`dsm-trae-model-promo dsm-trae-model-promo-${badge.kind}`}
+      title={hints.length === 0 ? t(PROMO_LABELS[badge.kind], { zhe, percent: String(badge.percentOff) }) : hints.join(' · ')}
+    >
+      {t(PROMO_LABELS[badge.kind], { zhe, percent: String(badge.percentOff) })}
     </span>
   )
 }
@@ -1066,6 +1140,15 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
   // model id (= Trae name); context budgets work the same way.
   const draft = drafts[activeRegion]
   const visibleModels = draft?.models ?? (status.status === 'signed-in' ? status.models : [])
+  /**
+   * One clock reading for the whole model list.
+   *
+   * Promotion badges are judged against it (see `promoBadge`): reading the clock
+   * once per render keeps every row's verdict consistent with the others, and
+   * because the card re-renders on its poll, a badge still appears and vanishes
+   * with its window instead of sticking until the next manual refresh.
+   */
+  const nowForPromo = new Date()
   const savedEnabledIds = status.status === 'signed-in' ? new Set(status.enabledModelIds) : new Set<string>()
   const activeEnabledIds = draft?.enabledIds ?? savedEnabledIds
   const activeImageIds = draft?.imageIds ?? savedImageIds
@@ -1902,6 +1985,12 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
                                       : <span className="dsm-trae-model-name-rate">· x{model.creditMultiplier.toFixed(2)}</span>}
                                     {probeBadge(probeByRegion[activeRegion][model.id], t)}
                                   </span>
+                                  {/* Outside the name span on purpose: the
+                                      name is ellipsis-truncated, so a capsule
+                                      inside it would be clipped on exactly the
+                                      long model names. Judged at paint time
+                                      (see promoBadge). */}
+                                  {promoBadge(model, t, nowForPromo)}
                                 </span>
                               </label>
                               <div className="dsm-trae-model-options">

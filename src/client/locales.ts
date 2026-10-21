@@ -188,6 +188,15 @@ export const en = {
   'row.probeRateLimited': 'throttled',
   'row.probeAuth': 'sign-in rejected',
   'row.probeUnknown': 'not determined',
+  // Promotion capsule (src/promo.ts). Trae publishes a pay ratio and never a
+  // label, so this wording is the plugin's own: it reports what upstream did
+  // say — the ratio, and 限时 only where `limited_discount` says so.
+  'row.promoLimited': 'Limited {percent}% off',
+  'row.promoSubsidy': '{percent}% off',
+  'row.promoOffPeak': 'Off-peak {percent}% off',
+  'row.promoHintRate': 'was {before} credits/Mtoken, now {rate}',
+  'row.promoHintWindow': 'off-peak hours {from}–{until} ({zone})',
+  'row.promoHintMember': 'subscription price is a further {percent}% off',
   'row.modelEnabled': 'Enabled',
   'row.discard': 'Discard changes',
   'row.save': 'Save',
@@ -528,6 +537,14 @@ export const zh: Record<TraeSettingsKey, string> = {
   'row.probeRateLimited': '被限流',
   'row.probeAuth': '登录凭据被拒',
   'row.probeUnknown': '本次未测出',
+  // 活动徽标（src/promo.ts）。Trae 只给「付款比例」，不给文案，所以这几个字是插件
+  // 自己的说法：只把上游给的事实说出来——比例，以及只有 `limited_discount` 才有的「限时」。
+  'row.promoLimited': '限时 {zhe} 折',
+  'row.promoSubsidy': '{zhe} 折',
+  'row.promoOffPeak': '闲时 {zhe} 折',
+  'row.promoHintRate': '原价 {before} 积分/百万 token，现价 {rate}',
+  'row.promoHintWindow': '闲时时段 {from}–{until}（{zone}）',
+  'row.promoHintMember': '会员价另有 {zhe} 折',
   'row.modelEnabled': '启用模型',
   'row.discard': '放弃修改',
   'row.save': '保存',

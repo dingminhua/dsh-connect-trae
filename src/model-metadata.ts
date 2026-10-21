@@ -1,3 +1,5 @@
+import { parseTraeActivityDiscount } from './promo.ts'
+import type { TraeActivityDiscount } from './promo.ts'
 import type { TraeReasoningEffort } from './reasoning.ts'
 
 export interface TraeModelContextWindows {
@@ -32,6 +34,11 @@ export interface TraeDiscoveredModel {
    * `config_info_list` for the chat functions).
    */
   function?: string
+  /**
+   * Trae's discount rule for this row (`features.activity_discount`), kept whole
+   * so the card can judge it against the clock at paint time (src/promo.ts).
+   */
+  activityDiscount?: TraeActivityDiscount
 }
 
 interface RawTraeRemoteModel {
@@ -85,6 +92,10 @@ export function parseTraeRemoteModel(value: unknown, groupFunction?: string): Tr
   const creditMultiplier = consumption?.['enable'] === true ? finitePositive(consumptionData?.['rate']) : undefined
   const reasoningFeature = record(features?.['reasoning'])
   const reasoningSupported = reasoningFeature?.['enable'] === true
+  // Upstream publishes the promotion rule as a sibling of `consumption_rate` in
+  // the SAME features document this parser already walks, so reading it costs
+  // no extra request and no extra response field.
+  const activityDiscount = parseTraeActivityDiscount(features?.['activity_discount'])
   const reasoningConfig = record(raw.reasoning_effort_config)
   const rawOptions = Array.isArray(reasoningConfig?.['options']) ? reasoningConfig['options'] : []
   const supported = rawOptions.flatMap(option => {
@@ -102,6 +113,7 @@ export function parseTraeRemoteModel(value: unknown, groupFunction?: string): Tr
     ...dev === undefined ? {} : { contextWindow: dev },
     ...max === undefined ? {} : { maxContextWindow: max },
     ...creditMultiplier === undefined ? {} : { creditMultiplier },
+    ...activityDiscount === undefined ? {} : { activityDiscount },
     reasoningSupported,
     ...supported.length === 0 ? {} : { reasoning: { supported, ...defaultEffort === undefined ? {} : { defaultEffort } } },
     ...groupFunction === undefined || groupFunction === '' ? {} : { function: groupFunction },
