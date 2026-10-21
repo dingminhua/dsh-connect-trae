@@ -26,15 +26,17 @@ import {
   withTraeRegion,
   withTraeRegionFastDetail,
 } from '../status-paths.ts'
-import type { TraeModelProbeVerdict, TraeModelsTestResponse, TraeWebAccount, TraeWebAccountState, TraeWebCheckinClaim, TraeWebCreditExpiry, TraeWebModel, TraeWebUsage } from '../status-paths.ts'
+import type { TraeModelProbeVerdict, TraeModelsTestResponse, TraeWebAccount, TraeWebAccountState, TraeWebCheckinClaim, TraeWebModel, TraeWebUsage } from '../status-paths.ts'
 import type { TraeCreditPosition } from '../status-paths.ts'
-import { regionOfPanel, type TraePanel } from '../region.ts'
+import { providerOfPanel, regionOfPanel, type TraePanel } from '../region.ts'
 import { selectTraePromoBadge, type TraePromoKind } from '../promo.ts'
 import { TRAE_PLUGIN_ICON } from './icon.ts'
 import { TRAE_CARD_CSS } from './styles.ts'
 import { BusyOverlay } from './BusyOverlay.tsx'
-import { AccountPool } from './AccountPool.tsx'
-import { AccountTransfer } from './AccountTransfer.tsx'
+import { TraeAccountPanel } from './TraeAccountPanel.tsx'
+import type { TraeAccountRowView } from './TraeAccountPanel.tsx'
+import type { TraePoolRowDetail } from './AccountPool.tsx'
+import { dotStyle, formatDateTime, formatNumber, refreshTokenWarning } from './display.ts'
 import { planVerdict as payVerdict } from './plan-text.ts'
 import type { TraeSettingsKey } from './locales.ts'
 
@@ -132,51 +134,6 @@ if (typeof document !== 'undefined') {
     styleTag.textContent = TRAE_CARD_CSS
     document.head.appendChild(styleTag)
   }
-}
-
-function formatNumber(value: number): string {
-  return new Intl.NumberFormat(undefined, {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  }).format(value)
-}
-
-function formatDateTime(value: number): string {
-  return new Intl.DateTimeFormat(undefined, {
-    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
-  }).format(new Date(value))
-}
-
-/** How close a refresh token must be to lapsing before the card warns, in days. */
-const REFRESH_WARN_DAYS = 30
-
-/**
- * The refresh-token warning for one account, or undefined when there is nothing
- * worth saying.
- *
- * The access token renews itself every few minutes, so its own expiry answers
- * "when does this need attention" with "never, until the refresh token lapses".
- * The refresh token is therefore the only honest countdown on this card, and it
- * has to be shown BEFORE it runs out: once it lapses the plugin cannot renew at
- * all and the only recovery is signing in to Trae again, which a user who has
- * been reading "auto-renewal" for months has no reason to expect.
- *
- * Three tones, matching the credit-expiry notice: `lapsed` (renewal already
- * dead), `soon` (inside the warning window), and nothing otherwise — a healthy
- * token must not add a line to every account row forever.
- */
-function refreshTokenWarning(
-  expiresAtMs: number | undefined,
-  nowMs: number,
-  t: (key: TraeSettingsKey, params?: Record<string, unknown>) => string,
-  formatTime: (value: number) => string,
-): { tone: 'lapsed' | 'soon', text: string } | undefined {
-  if (expiresAtMs === undefined) return undefined
-  const text = formatTime(expiresAtMs)
-  if (expiresAtMs <= nowMs) return { tone: 'lapsed', text: t('row.refreshTokenLapsed', { expiresAt: text }) }
-  const days = Math.ceil((expiresAtMs - nowMs) / 86_400_000)
-  if (days > REFRESH_WARN_DAYS) return undefined
-  return { tone: 'soon', text: t('row.refreshTokenExpiring', { expiresAt: text, days }) }
 }
 
 function formatCapacity(value: number | undefined, unknown: string): string {
@@ -287,64 +244,6 @@ function promoBadge(
   )
 }
 
-function dotStyle(status: TraeWebUsage['status']): Record<string, string> {
-  const color = status === 'signed-in'
-    ? 'var(--dsw-alias-state-success-primary, #22a06b)'
-    : status === 'error'
-      ? 'var(--dsw-alias-state-error-primary, #d92d20)'
-      : 'var(--dsw-alias-label-dimmed, #9aa0a6)'
-  return { background: color }
-}
-
-/**
- * A warning that credit is about to lapse.
- *
- * The balance alone cannot express this: a pack lapsing in an hour and one
- * lapsing next month both render as "150", so a user watching only the total
- * loses the first one silently. The notice names the amount, the pack count and
- * the soonest expiry, and escalates 7d → 24h → already-lapsed.
- *
- * Renders nothing when the upstream reported no end times at all — absence of
- * expiry data is not evidence that nothing lapses, so the component stays
- * silent rather than reassuring.
- */
-function ExpiryNotice({ expiry, t, formatNumber: fmt, formatDateTime: fmtTime }: {
-  expiry: TraeWebCreditExpiry
-  /** Required here: the card throws before rendering if its own `t` is absent,
-   *  so this component is only ever reached with a translation function. */
-  t: TraeUsageCardInjected['t']
-  formatNumber: (value: number) => string
-  formatDateTime: (value: number) => string
-}): ReactNode {
-  const { expired, within24h, within7d } = expiry
-  let message: string | undefined
-  let soonest: number | undefined
-  let tone: string
-  // Escalation order: a live expiry the user can still act on outranks a lapsed
-  // one they cannot, even when the lapsed amount is larger.
-  if (within24h.packs > 0) {
-    message = t('row.expiryWarningSoon', { total: fmt(within24h.total), packs: String(within24h.packs) })
-    soonest = within24h.earliestExpiresAtMs
-    tone = 'dsm-trae-expiry-soon'
-  } else if (within7d.packs > 0) {
-    message = t('row.expiryWarningWeek', { total: fmt(within7d.total), packs: String(within7d.packs) })
-    soonest = within7d.earliestExpiresAtMs
-    tone = 'dsm-trae-expiry-week'
-  } else if (expired.packs > 0) {
-    message = t('row.expiryWarningLapsed', { total: fmt(expired.total), packs: String(expired.packs) })
-    tone = 'dsm-trae-expiry-lapsed'
-  } else {
-    return null
-  }
-  return (
-    <div className={`dsm-trae-expiry ${tone}`} role="status">
-      <span>{message}</span>
-      {soonest === undefined
-        ? null
-        : <span className="dsm-trae-expiry-detail">{t('row.expiryEarliest', { time: fmtTime(soonest) })}</span>}
-    </div>
-  )
-}
 
 /** Render Trae sign-in state and the total usage summary as one expandable card. */
 export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
@@ -355,6 +254,27 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
   const [open, setOpen] = useState(view === 'page')
   /** The region whose tab is on screen; each tab is its own provider stack. */
   const [activeRegion, setActiveRegion] = useState<TraePanel>('cn')
+  /**
+   * Which of the card's three sections is on screen (learned from the sibling
+   * `dsh-connect-workbuddy` card, whose settings page split for the same
+   * reason).
+   *
+   * The card had grown into one long column mixing two unrelated jobs —
+   * operating an account (who serves, how much is left, the check-in, the pool)
+   * and editing the catalog (which models, image input, context budget) — and
+   * the two do not even commit the same way: an account change lands on the
+   * click, a catalog change is a draft until 「保存」. One column therefore put
+   * the save button screens away from what it saves.
+   *
+   * The region row above stays the SCOPE (which provider this whole card is
+   * about); these tabs are the sections of that one scope. Only the ACTIVE
+   * section is visible, and the others stay MOUNTED through the `hidden`
+   * attribute, so switching back never refetches, a half-filled model draft
+   * survives the trip, and the pool keeps its log. `hidden` also takes the
+   * inactive panel out of the accessibility tree, which is exactly what
+   * `role="tabpanel"` wants.
+   */
+  const [panel, setPanel] = useState<'accounts' | 'models' | 'diag'>('accounts')
   /**
    * Last-known usage per region, so tab dots survive tab switches.
    *
@@ -709,6 +629,17 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
   const loading = loaded === undefined
 
   const status: TraeWebUsage = loaded ?? { status: 'signed-out', accounts: [] }
+
+  /**
+   * Whether the ACTIVE panel has a usable sign-in.
+   *
+   * The section tabs render only here: a signed-out card is one screen of
+   * instructions ("sign in once in the Trae app" plus the probed paths), and
+   * splitting that into panels would hide the only thing it has to say behind a
+   * tab the user cannot see the point of. The sibling WorkBuddy card made the
+   * same call for the same reason.
+   */
+  const signedIn = status.status === 'signed-in'
 
   /**
    * Clear in-flight claim state when the tab changes. `activeRegion` is a single
@@ -1445,29 +1376,69 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
       settled: claimed ? 'claimed' : deviceSpent ? 'device' : undefined,
     }
   }
-  const checkinControl = (account: TraeWebAccount, state: TraeWebAccountState | undefined): ReactNode => {
-    const view = claimViewOf(account.id, state)
-    // Nothing left to do: a disabled "已领取" button is a control that can never
-    // fire again. Say what happened in the cell instead.
-    if (!view.claimable) {
-      return (
-        <span className="dsm-trae-account-checkin-state">
-          {view.settled === 'claimed' ? t('row.poolCheckedIn') : t('row.poolDeviceUsed')}
-        </span>
-      )
-    }
-    return (
-      <button
-        type="button"
-        className="dsm-trae-account-checkin"
-        disabled={view.disabled}
-        title={view.title}
-        onClick={() => { void claimFor(account.id) }}
-      >
-        {view.label}
-      </button>
-    )
-  }
+  /**
+   * The account roster, ALREADY JUDGED — one row per locally detected sign-in.
+   *
+   * Every verdict the table draws is decided here rather than in the section
+   * component, because each one is a rule with a write or a Host answer behind
+   * it: which account is serving (the document's own `accountId`, or the
+   * roster's `selected` flag when signed out), what an account is worth
+   * (`rowValue`, judged by CREDENTIAL region so the enterprise panel reads CN
+   * balances), and whether a row may claim (`claimViewOf`, which knows the
+   * device-wide check-in rule). A section that re-derived any of them could
+   * disagree with the pool table below it, which reads the same three answers.
+   */
+  const accountRows: TraeAccountRowView[] = status.status === 'error'
+    ? []
+    : (status.accounts ?? []).map(account => {
+      const current = status.status === 'signed-in'
+        ? account.id === status.accountId
+        : account.selected === true
+      const state = accountStatusByRegion[activeRegion][account.id]
+      const error = claimErrorByRegion[activeRegion][account.id]
+      return {
+        id: account.id,
+        accountName: account.accountName,
+        current,
+        selected: account.selected === true,
+        meta: `${editionLabel(account.edition)} · ${sourceLabel(account.source)}`,
+        value: rowValue(state),
+        refreshExpiresAtMs: account.refreshExpiresAtMs,
+        error: error === undefined ? undefined : t('row.checkinError', { message: error }),
+        claim: isCnPool
+          ? (() => {
+              const view = claimViewOf(account.id, state)
+              return {
+                label: view.label,
+                title: view.title,
+                disabled: view.disabled,
+                busy: view.busy,
+                claimable: view.claimable,
+                settled: view.settled,
+              }
+            })()
+          : undefined,
+      }
+    })
+
+  /**
+   * The pool's per-row details, joined from the roster above by id.
+   *
+   * The pool document carries the accounts but not their edition, source or
+   * refresh-token countdown, so those three are spliced in here — by the same
+   * `editionLabel` / `sourceLabel` / `refreshTokenWarning` the roster uses, so
+   * one account cannot read "国内版 · 桌面端" in one table and something else in
+   * the next.
+   */
+  const poolDetails: Record<string, TraePoolRowDetail> = Object.fromEntries(
+    (status.status === 'signed-in' ? status.accounts : []).map(account => {
+      const warn = refreshTokenWarning(account.refreshExpiresAtMs, Date.now(), t, formatDateTime)
+      return [account.id, {
+        meta: `${editionLabel(account.edition)} · ${sourceLabel(account.source)}`,
+        ...warn === undefined ? {} : { warn: warn.text, warnTone: warn.tone },
+      }]
+    }),
+  )
   // `loading` outranks the document's own status: before anything has answered,
   // the only true word is "loading" (issue #77 — a signed-out label over a slow
   // fetch is a claim about a user who may well be signed in).
@@ -1548,375 +1519,135 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
               {regionOn(activeRegion)
                 ? null
                 : <p className="dsm-trae-tab-off-notice" role="status">{t('row.tabOffNotice')}</p>}
-              {/* The preference switch, as a BARE LINE — no bordered box, no
-                  heading, no 「保存」/「放弃」 footer.
-                  
-                  That is the sibling dsh-connect-workbuddy card's shape, and the
-                  reason it is the better one here: a card that asks the user to
-                  press Save for a boolean is asking them to remember something
-                  with no reason to need remembering. The box now writes on its
-                  own click (see `writePreference`), exactly like the region
-                  on/off boxes in the tab bar above it — so the whole card has
-                  ONE commit model instead of two.
-                  
-                  The label IS the checkbox's own <label>, so the text is a
-                  larger click target and the accessible name needs no ARIA.
-                  
-                  `showPointsInMainUi` describes a CN BALANCE readout. The
-                  international tab's readout is its plan, which the account row
-                  below already names — so the switch is carried in BOTH regions
-                  instead of hidden on the international one, where turning it on
-                  is what makes that readout appear at all (see the
-                  `activeRegion !== 'cn'` guard that used to drop it). */}
-              <div className="dsm-trae-prefs">
-                {/* REGION-AGNOSTIC, both tabs: a readout exists on either side
-                    (CN credits, international plan), so the switch that turns it
-                    on belongs on either side. The hint below names whichever
-                    figure THIS tab's readout would show, so the same box answers
-                    "what do I get if I tick this?" without the reader having to
-                    switch tabs to find out. */}
-                <label className="dsm-trae-pref" title={t(isCnPool ? 'row.showPointsInMainUiHint' : 'row.showPointsInMainUiHintAi')}>
-                  <input
-                    type="checkbox"
-                    className="dsm-trae-pref-check"
-                    checked={settingsEdits.showPointsInMainUi}
-                    disabled={settingsScope?.getSnapshot().writable !== true || savingSettings}
-                    aria-describedby={creditsHintId}
-                    onChange={event => { void writePreference('showPointsInMainUi', event.currentTarget.checked) }}
-                  />
-                  <span className="dsm-trae-pref-copy">
-                    <span className="dsm-trae-pref-label" id={creditsLabelId}>{t('row.showPointsInMainUi')}</span>
-                    <span className="dsm-trae-pref-hint" id={creditsHintId}>
-                      {t(isCnPool ? 'row.showPointsInMainUiHint' : 'row.showPointsInMainUiHintAi')}
-                    </span>
-                  </span>
-                </label>
-                {/* WHERE that readout sits (learned from workbuddy #62). It sits
-                    directly beside the show/hide box because the two answer one
-                    question together ("show it, and where"), and because a user
-                    only reaches for this when the default seat is unavailable —
-                    typically after installing another plugin that occupies the
-                    composer row. A region that is switched off gets a disabled
-                    control rather than none: it still has no readout to place,
-                    but the control's ABSENCE would look like the feature went
-                    away. The value comes from the committed settings document,
-                    the same source the readout's own gate reads (see
-                    `creditPositionOn`). */}
-                <label className="dsm-trae-pref dsm-trae-credit-position-pref" title={t('row.creditPositionHint')}>
-                  <span className="dsm-trae-pref-copy">
-                    <span className="dsm-trae-pref-lead">
-                      <span className="dsm-trae-pref-label">{t('row.creditPositionLabel')}</span>
-                      <select
-                        className="dsm-trae-credit-position"
-                        value={activeRegionOn ? creditPositionOn(activeRegion) : 'composer'}
-                        disabled={!activeRegionOn || settingsScope?.getSnapshot().writable !== true || savingSettings}
-                        aria-label={t('row.creditPositionAria', { region: activeRegion === 'cn' ? t('row.tabCn') : activeRegion === 'enterprise' ? t('row.tabEnterprise') : t('row.tabAi') })}
-                        onChange={event => {
-                          void changeCreditPosition(activeRegion, event.currentTarget.value === 'stats' ? 'stats' : 'composer')
-                        }}
-                      >
-                        <option value="composer">{t('row.creditPositionComposer')}</option>
-                        <option value="stats">{t('row.creditPositionStats')}</option>
-                      </select>
-                    </span>
-                    <span className="dsm-trae-pref-hint">{t('row.creditPositionHint')}</span>
-                  </span>
-                </label>
-              </div>
-              {/* The account table: one row per locally detected sign-in, with
-                  the action that matters on a multi-account machine — bind this
-                  one — at its end. The switch is per ACCOUNT and never a sweep:
-                  Trae spends one check-in per DEVICE per day, so there is
-                  deliberately no "for every account" control anywhere in this
-                  block (the check-in button below stays a single-account click). */}
-              {/* ONE account table, not two. Once the pool document exists the
-                  pool's member table below lists the same accounts with the same
-                  credits and the same check-in state, so this roster would be a
-                  verbatim second copy of it — the row names, balances and check-in
-                  words all appeared twice on one screen. Its unique controls
-                  (rescan, import/export, the manual binding) move into the pool
-                  block's settings, which is also where the WorkBuddy card keeps
-                  them. */}
-              {status.status === 'signed-in' && status.pool !== undefined
-                ? null
-                : <section className="dsm-trae-accounts" aria-label={t('row.accountsTitle')}>
-                <div className="dsm-trae-accounts-head">
-                  <div>
-                    <h3 className="dsm-trae-accounts-title">{t('row.accountsTitle')}</h3>
-                    <p className="dsm-trae-accounts-hint">{t('row.accountsHint')}</p>
+              {/* THE CARD'S THREE SECTIONS. Above this row, the region tabs are
+                  the SCOPE — which provider the whole card is about — and they
+                  scroll with the content like any other header. These are the
+                  sections of that one scope, so they are deliberately drawn in
+                  the app's own settings idiom (an underlined strip) rather than
+                  as a second row of boxed chips: two rows of boxes would read as
+                  one six-way choice, and the region chips already mean "pick a
+                  provider".
+                  Rendered only while signed in: a signed-out card is one screen
+                  of instructions, and a tab that hides the only thing it has to
+                  say would be worse than no tab. */}
+              {signedIn
+                ? <div className="dsm-trae-panels" role="tablist" aria-label={t('row.panelAria')}>
+                    <button
+                      type="button"
+                      role="tab"
+                      id="dsm-trae-tab-accounts"
+                      aria-controls="dsm-trae-panel-accounts"
+                      aria-selected={panel === 'accounts'}
+                      className={`dsm-trae-panel-tab${panel === 'accounts' ? ' dsm-trae-panel-tab-active' : ''}`}
+                      onClick={() => { setPanel('accounts') }}
+                    >
+                      {t('row.panelAccounts')}
+                    </button>
+                    <button
+                      type="button"
+                      role="tab"
+                      id="dsm-trae-tab-models"
+                      aria-controls="dsm-trae-panel-models"
+                      aria-selected={panel === 'models'}
+                      className={`dsm-trae-panel-tab${panel === 'models' ? ' dsm-trae-panel-tab-active' : ''}`}
+                      onClick={() => { setPanel('models') }}
+                    >
+                      {t('row.panelModels')}
+                    </button>
+                    <button
+                      type="button"
+                      role="tab"
+                      id="dsm-trae-tab-diag"
+                      aria-controls="dsm-trae-panel-diag"
+                      aria-selected={panel === 'diag'}
+                      className={`dsm-trae-panel-tab${panel === 'diag' ? ' dsm-trae-panel-tab-active' : ''}`}
+                      onClick={() => { setPanel('diag') }}
+                    >
+                      {t('row.panelDiag')}
+                    </button>
                   </div>
-                  <button
-                    type="button"
-                    className="dsm-btn dsm-btn-outline"
-                    disabled={busy}
-                    onClick={() => { void rescanAccounts() }}
-                  >
-                    {busy ? t('row.accountsScanning') : t('row.refreshTokens')}
-                  </button>
-                </div>
-                {/* A signed-out panel still lists what the Host FOUND, and the
-                    reason it refuses to use it. Dropping the table in this
-                    state is what made a dead binding a dead end: the Host
-                    returns the roster alongside the reason, and the card used
-                    to throw the roster away — so "the bound account's token
-                    cannot be refreshed" arrived with no rows to act on, and
-                    the only way out was editing the settings file by hand.
-                    The status line stays (it carries the reason), the rows now
-                    stay with it, so a dead account is followed by the one
-                    press that fixes it. */}
-                {status.status !== 'signed-in' || status.accounts.length === 0
-                  ? <div className="dsm-trae-usage-account" role="status">
-                      <div className="dsm-trae-usage-account-copy">
-                        <div className="dsm-trae-usage-status">
-                          <span aria-hidden="true" className="dsm-trae-usage-dot" style={dotStyle(status.status)} />
-                          <span>{label}</span>
-                        </div>
-                        {status.status === 'signed-in'
-                          ? <span className="dsm-trae-usage-expiry">
-                              {t('row.tokenExpiry', { expiresAt: formatDateTime(status.tokenExpiresAtMs) })}
-                            </span>
-                          : null}
-                      </div>
-                    </div>
-                  : null}
-                {status.status !== 'error' && status.accounts.length > 0
-                  ? <div className={`dsm-trae-account-table${isCnPool ? ' dsm-trae-account-table-checkin' : ''}`}>
-                      {/* Column header, as the sibling WorkBuddy card has one:
-                          four values line up in four fixed tracks, so the eye
-                          reads DOWN a column instead of re-finding the field on
-                          every row. Widths are fractions of the container, not
-                          content — that is what stops the "columns drift with
-                          the text" problem the previous table had. */}
-                      <div className="dsm-trae-account-row dsm-trae-account-row-head" role="row">
-                        <span>{t('row.accountColumnAccount')}</span>
-                        <span>{t('row.accountColumnValue')}</span>
-                        {isCnPool ? <span>{t('row.accountColumnCheckin')}</span> : null}
-                        {/* The actions column carries no header: the buttons
-                            speak for themselves, and a label here would just be
-                            the word "操作" above two words. */}
-                        <span />
-                      </div>
-                      {status.accounts.map(account => {
-                        {/* `accountId` exists only on the signed-in variant.
-                            A signed-out panel still knows which account the
-                            binding points AT (the roster's own `selected`
-                            flag), and naming that row is the difference
-                            between "this panel is broken" and "THAT binding is
-                            the broken one, switch to another row". */}
-                        const current = status.status === 'signed-in'
-                          ? account.id === status.accountId
-                          : account.selected === true
-                        const state = accountStatusByRegion[activeRegion][account.id]
-                        const error = claimErrorByRegion[activeRegion][account.id]
-                        return (
-                          /* One grid row per account: identity, worth, the day's
-                             check-in, then the actions. The serving row is marked
-                             by a LEFT ACCENT BAR plus the tint — a 7%-opacity
-                             wash alone reads as a zebra stripe in a long table,
-                             which is exactly what the WorkBuddy card below does
-                             and why. */
-                          <div
-                            key={account.id}
-                            className={`dsm-trae-account-row${current ? ' dsm-trae-account-row-current' : ''}`}
-                            role="row"
-                          >
-                            <span className="dsm-trae-account-who">
-                              <span aria-hidden="true" className="dsm-trae-usage-dot" style={dotStyle(account.selected ? 'signed-in' : 'signed-out')} />
-                              <span className="dsm-trae-account-name">
-                                <b>{account.accountName}</b>
-                                {/* Which account is serving, in WORDS. The tint
-                                    alone answers nothing when the question IS
-                                    "which one is it?". */}
-                                {current ? <span className="dsm-trae-account-badge">{t('row.accountCurrentBadge')}</span> : null}
-                                {/* edition · source. The region is NOT repeated:
-                                    the edition already names which app the
-                                    credential came from (issue #25), and
-                                    "国内版 · 国内 · 桌面端" said it twice. */}
-                                <span className="dsm-trae-account-meta">
-                                  {editionLabel(account.edition)}
-                                  <i aria-hidden="true">·</i>
-                                  {sourceLabel(account.source)}
-                                </span>
-                                {/* The countdown that actually ends automatic
-                                    renewal. Per ACCOUNT, because the expiry is
-                                    a property of each credential (a CLI token
-                                    carries none at all), and rendered only when
-                                    it is close or already past — a healthy
-                                    token must not add a permanent line to every
-                                    row (issue #37 follow-up). */}
-                                {(() => {
-                                  const warning = refreshTokenWarning(account.refreshExpiresAtMs, Date.now(), t, formatDateTime)
-                                  return warning === undefined
-                                    ? null
-                                    : <span className={`dsm-trae-refresh-warn dsm-trae-refresh-warn-${warning.tone}`} role="status">
-                                        {warning.text}
-                                      </span>
-                                })()}
-                                {error === undefined
-                                  ? null
-                                  : <span className="dsm-trae-account-note" role="alert">{t('row.checkinError', { message: error })}</span>}
-                              </span>
-                            </span>
-                            {/* The worth column, its own track at tabular-nums
-                                so digits in different rows sit on the same
-                                column of the grid. */}
-                            <span className="dsm-trae-account-worth">{rowValue(state)}</span>
-                            {isCnPool
-                              ? <span className="dsm-trae-account-checkin-cell">{checkinControl(account, state)}</span>
-                              : null}
-                            <span className="dsm-trae-account-actions">
-                              {/* The bound row offers no switch: it is already
-                                  the one in use, and a disabled copy of the
-                                  badge beside the badge said nothing. */}
-                              {current
-                                ? null
-                                : <button
-                                    type="button"
-                                    className="dsm-btn dsm-btn-outline dsm-trae-account-switch"
-                                    disabled={switchingAccount || settingsScope?.getSnapshot()?.writable !== true}
-                                    onClick={() => { void switchAccount(account.id) }}
-                                  >
-                                    {switchingAccount ? t('row.accountSwitching') : t('row.accountSwitch')}
-                                  </button>}
-                            </span>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  : null}
-                {/* The enterprise tab has no balance by design: nothing the
-                    plugin can reach reports tenant spend, so the figure lives
-                    only in the enterprise console. Said plainly instead of
-                    leaving an empty area the user would read as a failure. */}
-                {/*
-                  Import / export (issue #37). Rendered on BOTH sign-in states,
-                  and outside the `signed-in` branch above on purpose: a machine
-                  that has never signed in is exactly where importing a file
-                  exported elsewhere matters most, and the export button simply
-                  stays disabled while there is nothing to select.
-                */}
-                <AccountTransfer
+                : null}
+              {/* ACCOUNT — the default section: who is serving, what is left,
+                  the check-in, the pool, and every notice about the credential.
+                  All of it commits on the click, which is why it is the section
+                  that has nothing to save. The markup lives in
+                  `TraeAccountPanel` because it was a third of this file; the
+                  RULES that feed it stay here, next to the writes they belong
+                  to. */}
+              <div
+                className="dsm-trae-panel"
+                role="tabpanel"
+                id="dsm-trae-panel-accounts"
+                aria-labelledby="dsm-trae-tab-accounts"
+                /* `signedIn &&` — a signed-out card renders no section tabs, so
+                   nothing may hide that one screen behind a tab the user cannot
+                   see or change. */
+                hidden={signedIn && panel !== 'accounts'}
+              >
+                <TraeAccountPanel
                   t={t}
-                  // Import/export moves CREDENTIALS, which belong to a region,
-                  // not a billing pool: the enterprise tab shares the cn store.
-                  region={activeRegion === 'ai' ? 'ai' : 'cn'}
-                  accounts={status.status === 'signed-in'
-                    ? status.accounts.map(account => ({ id: account.id, accountName: account.accountName }))
-                    : []}
-                  onChanged={async () => {
+                  settingsScope={settingsScope}
+                  panel={activeRegion}
+                  status={status}
+                  statusLabel={label}
+                  credentialRegionIsAi={credentialRegionIsAi}
+                  regionOn={activeRegionOn}
+                  showPointsInMainUi={settingsEdits.showPointsInMainUi}
+                  onToggleShowPoints={value => { void writePreference('showPointsInMainUi', value) }}
+                  creditPosition={creditPositionOn(activeRegion)}
+                  onCreditPositionChange={position => { void changeCreditPosition(activeRegion, position) }}
+                  savingPreferences={savingSettings}
+                  creditsLabelId={creditsLabelId}
+                  creditsHintId={creditsHintId}
+                  rows={accountRows}
+                  busy={busy}
+                  rescanNote={rescanNote}
+                  onRescan={() => { void rescanAccounts() }}
+                  switchingAccount={switchingAccount}
+                  onSwitchAccount={accountId => { void switchAccount(accountId) }}
+                  onClaim={accountId => { void claimFor(accountId) }}
+                  onTransferChanged={async () => {
                     // Re-read this region's snapshot so an imported account
                     // appears without the user closing and reopening settings.
-                    // `refreshUsage` is the same read the card's normal poll
-                    // uses, and it also returns the fresh accounts list.
                     const fresh = await refreshUsage(activeRegion)
                     if (fresh !== undefined) setStatusByRegion(current => ({ ...current, [activeRegion]: fresh }))
                   }}
+                  poolDetails={poolDetails}
+                  poolClaims={status.status === 'signed-in' && status.pool?.checkinSupported === true
+                    ? Object.fromEntries(status.accounts.map(account =>
+                        [account.id, claimViewOf(account.id, accountStatusByRegion[activeRegion][account.id])]))
+                    : undefined}
+                  models={visibleModels}
+                  deviceClaimed={deviceClaimedToday}
+                  onPoolChanged={async () => {
+                    const fresh = await refreshUsage(activeRegion)
+                    if (fresh !== undefined) setStatusByRegion(current => ({ ...current, [activeRegion]: fresh }))
+                  }}
+                  onPoolRefresh={async () => {
+                    const fresh = await refreshUsage(activeRegion)
+                    if (fresh !== undefined) setStatusByRegion(current => ({ ...current, [activeRegion]: fresh }))
+                  }}
+                  creditsUnavailable={status.status === 'signed-in' ? status.creditsUnavailable : undefined}
+                  creditsExpiry={status.status === 'signed-in' ? status.credits?.expiry : undefined}
+                  alternatives={status.status === 'signed-in' ? status.alternatives : undefined}
+                  onSwitchToAlternative={accountId => { void switchAccount(accountId) }}
                 />
-              </section>}
-              {status.status === 'signed-in' && status.creditsUnavailable === 'enterprise'
-                ? <p className="dsm-trae-credits-unavailable" role="note">{t('row.enterpriseCreditsNotice')}</p>
-                : null}
-              {status.status === 'signed-in' && status.alternatives !== undefined && status.alternatives.length > 0
-                ? <div className="dsm-trae-usage-alternative" role="status">
-                  <p className="dsm-trae-usage-alternative-text">
-                    {t('row.creditsExhausted', { account: status.accountName })}
-                    {' '}
-                    {t('row.creditsAlternative', {
-                      accounts: status.alternatives
-                        .map(alt => `${alt.accountName}（${t(`row.edition${alt.edition === 'cn' ? 'Cn' : alt.edition === 'sg' ? 'Sg' : alt.edition === 'solo' ? 'Solo' : 'SoloSg'}`)}：${formatNumber(alt.workAvailable + alt.generalAvailable)}）`)
-                        .join('、'),
-                    })}
-                  </p>
-                  <button
-                    type="button"
-                    className="dsm-trae-usage-switch-button"
-                    disabled={switchingAccount || settingsScope?.getSnapshot()?.writable !== true}
-                    onClick={() => {
-                      const target = status.alternatives?.[0]
-                      if (target !== undefined) void switchAccount(target.id)
-                    }}
-                  >
-                    {t('row.creditsAlternativeSwitch')}
-                  </button>
-                </div>
-                : null}
-              {/* Credit about to lapse. Sits in the usage tab, right after the
-                  exhausted/alternative rows, because it answers the same
-                  question those do — "is there anything I should do about my
-                  balance?" — and unlike them it is actionable while the account
-                  still works. */}
-              {status.status === 'signed-in' && status.credits?.expiry !== undefined
-                ? <ExpiryNotice
-                    expiry={status.credits.expiry}
-                    t={t}
-                    formatNumber={formatNumber}
-                    formatDateTime={formatDateTime}
-                  />
-                : null}
-              {rescanNote === undefined ? null : <p className="dsm-trae-usage-note" role="status">{rescanNote}</p>}
-              {status.status === 'signed-in'
-                ? <>
-                    {status.pool !== undefined
-                      ? <AccountPool
-                          panel={activeRegion}
-                          pool={status.pool}
-                          models={visibleModels}
-                          t={t}
-                          settingsScope={settingsScope}
-                          topActions={<button
-                            type="button"
-                            className="dsm-btn dsm-btn-outline"
-                            disabled={busy}
-                            onClick={() => { void rescanAccounts() }}
-                          >
-                            {busy ? t('row.accountsScanning') : t('row.poolRescan')}
-                          </button>}
-                          tools={<div className="dsm-trae-pool-tool-row">
-                            <span className="dsm-trae-pool-tool-label">{t('row.poolToolsLabel')}</span>
-                            <AccountTransfer
-                              t={t}
-                              // The row already carries its own label; the
-                              // section's heading would be a second one.
-                              hideLabel
-                              region={activeRegion === 'ai' ? 'ai' : 'cn'}
-                              accounts={status.accounts.map(account => ({ id: account.id, accountName: account.accountName }))}
-                              onChanged={async () => {
-                                const fresh = await refreshUsage(activeRegion)
-                                if (fresh !== undefined) setStatusByRegion(current => ({ ...current, [activeRegion]: fresh }))
-                              }}
-                            />
-                          </div>}
-                          details={Object.fromEntries(status.accounts.map(account => {
-                            const warn = refreshTokenWarning(account.refreshExpiresAtMs, Date.now(), t, formatDateTime)
-                            return [account.id, {
-                              meta: `${editionLabel(account.edition)} · ${sourceLabel(account.source)}`,
-                              ...warn === undefined ? {} : { warn: warn.text, warnTone: warn.tone },
-                            }]
-                          }))}
-                          claims={status.pool.checkinSupported === true
-                            ? Object.fromEntries(status.accounts.map(account =>
-                                [account.id, claimViewOf(account.id, accountStatusByRegion[activeRegion][account.id])]))
-                            : undefined}
-                          onClaim={(accountId) => { void claimFor(accountId) }}
-                          deviceClaimed={deviceClaimedToday}
-                          onBind={(accountId) => { void switchAccount(accountId) }}
-                          bindingBusy={switchingAccount}
-                          onChanged={async () => {
-                            const fresh = await refreshUsage(activeRegion)
-                            if (fresh !== undefined) setStatusByRegion(current => ({ ...current, [activeRegion]: fresh }))
-                          }}
-                          onRefresh={async () => {
-                            const fresh = await refreshUsage(activeRegion)
-                            if (fresh !== undefined) setStatusByRegion(current => ({ ...current, [activeRegion]: fresh }))
-                          }}
-                        />
-                      : null}
-                    {status.checkin !== undefined && !status.checkin.enabled
-                      ? <p className="dsm-trae-usage-error">{t('row.checkinDisabled')}</p>
-                      : null}
-                    {status.checkinError === undefined
-                      ? null
-                      : <p className="dsm-trae-usage-error">{t('row.checkinError', { message: status.checkinError })}</p>}
+              </div>
+
+              {/* MODELS — the catalog section, and the only one whose edits are
+                  a DRAFT: the checkboxes below stage state that 「保存」 commits,
+                  which is precisely why it lives in a section of its own instead
+                  of at the bottom of a column whose other half had already
+                  committed on the click. */}
+              <div
+                className="dsm-trae-panel"
+                role="tabpanel"
+                id="dsm-trae-panel-models"
+                aria-labelledby="dsm-trae-tab-models"
+                hidden={!signedIn || panel !== 'models'}
+              >
+                {signedIn
+                  ? <>
                     <section className="dsm-trae-models" aria-label={t('row.modelsTitle')}>
                       <div className="dsm-trae-models-head">
                         <div>
@@ -2086,6 +1817,126 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
                     </section>
                   </>
                 : null}
+              </div>
+              {/* DIAGNOSTICS — the third section, and the one that earns its tab
+                  by holding nothing the other two already say: the facts a bug
+                  report needs (which panel, which provider id, which account,
+                  which expiry, how big the catalog actually is) plus every
+                  upstream error text this panel last reported, verbatim rather
+                  than summarised. Deliberately no control lives here: a
+                  diagnostics panel that can change settings is a settings panel
+                  with a worse name. */}
+              <div
+                className="dsm-trae-panel"
+                role="tabpanel"
+                id="dsm-trae-panel-diag"
+                aria-labelledby="dsm-trae-tab-diag"
+                hidden={!signedIn || panel !== 'diag'}
+              >
+                {/* The TWO other panels stay mounted on purpose (a half-filled
+                    model draft and the pool's log must survive a look at
+                    another section). This one is the exception, and it is a
+                    deliberate one: it derives every value from the current
+                    document and holds no state at all, so there is nothing a
+                    remount could lose — while keeping its text in the tree
+                    would put a second copy of the account name (and of every
+                    error string) where a reader scrolling the account section
+                    can already see the first. */}
+                {status.status !== 'signed-in' || panel !== 'diag'
+                  ? null
+                  : <>
+                      <div className="dsm-trae-diag">
+                        <div className="dsm-trae-diag-row">
+                          <span className="dsm-trae-diag-label">{t('row.diagRegion')}</span>
+                          <span className="dsm-trae-diag-value">
+                            {activeRegion === 'cn' ? t('row.tabCn') : activeRegion === 'enterprise' ? t('row.tabEnterprise') : t('row.tabAi')}
+                          </span>
+                        </div>
+                        <div className="dsm-trae-diag-row">
+                          <span className="dsm-trae-diag-label">{t('row.diagProvider')}</span>
+                          <span className="dsm-trae-diag-value dsm-trae-diag-mono">{providerOfPanel(activeRegion)}</span>
+                        </div>
+                        <div className="dsm-trae-diag-row">
+                          <span className="dsm-trae-diag-label">{t('row.diagAccount')}</span>
+                          <span className="dsm-trae-diag-value">{status.accountName}</span>
+                        </div>
+                        <div className="dsm-trae-diag-row">
+                          <span className="dsm-trae-diag-label">{t('row.diagToken')}</span>
+                          <span className="dsm-trae-diag-value dsm-trae-diag-mono">{formatDateTime(status.tokenExpiresAtMs)}</span>
+                        </div>
+                        <div className="dsm-trae-diag-row">
+                          <span className="dsm-trae-diag-label">{t('row.diagRefresh')}</span>
+                          {/* The horizon that actually ends automatic renewal.
+                              A credential that carries no refresh token (a CLI
+                              token does not) says so instead of printing a date
+                              that does not exist. */}
+                          <span className="dsm-trae-diag-value dsm-trae-diag-mono">
+                            {status.refreshExpiresAtMs === undefined
+                              ? t('row.diagRefreshNone')
+                              : formatDateTime(status.refreshExpiresAtMs)}
+                          </span>
+                        </div>
+                        <div className="dsm-trae-diag-row">
+                          <span className="dsm-trae-diag-label">{t('row.diagCatalog')}</span>
+                          <span className="dsm-trae-diag-value">{formatNumber(status.models.length)}</span>
+                        </div>
+                        <div className="dsm-trae-diag-row">
+                          <span className="dsm-trae-diag-label">{t('row.diagEnabled')}</span>
+                          <span className="dsm-trae-diag-value">{formatNumber(status.enabledModelIds.length)}</span>
+                        </div>
+                        <div className="dsm-trae-diag-row">
+                          <span className="dsm-trae-diag-label">{t('row.diagPool')}</span>
+                          <span className="dsm-trae-diag-value">
+                            {status.pool === undefined
+                              ? t('row.diagPoolOff')
+                              : status.pool.enabled
+                                ? t('row.diagPoolOn', { count: status.pool.effectiveMemberAccountIds?.length ?? status.pool.accounts.length })
+                                : t('row.diagPoolOff')}
+                          </span>
+                        </div>
+                        <div className="dsm-trae-diag-row">
+                          <span className="dsm-trae-diag-label">{t('row.diagCheckin')}</span>
+                          <span className="dsm-trae-diag-value">
+                            {/* Judged from the CHECK-IN DOCUMENT first, not from
+                                the pool: the pool is a separate, opt-in feature
+                                and its absence says nothing about whether this
+                                panel's upstream offers the daily reward. Reading
+                                `pool.checkinSupported` alone reported 「本面板不
+                                提供」 on every profile that had not turned the
+                                pool on — the opposite of the truth on a CN
+                                account, which is the only panel that HAS it. */}
+                            {status.checkin !== undefined || status.pool?.checkinSupported === true
+                              ? t('row.diagCheckinOn')
+                              : t('row.diagCheckinOff')}
+                          </span>
+                        </div>
+                        <div className="dsm-trae-diag-row">
+                          <span className="dsm-trae-diag-label">{t('row.diagRaw')}</span>
+                          <span className="dsm-trae-diag-value dsm-trae-diag-mono">
+                            {status.rawChat === undefined ? t('row.diagRawOff') : status.rawChat.state}
+                          </span>
+                        </div>
+                        <div className="dsm-trae-diag-row">
+                          <span className="dsm-trae-diag-label">{t('row.diagFailures')}</span>
+                          {(() => {
+                            // The upstream's OWN text, joined — not a rewritten
+                            // sentence. This panel exists to be quoted.
+                            const failures: string[] = []
+                            if (status.creditsError !== undefined) failures.push(status.creditsError)
+                            if (status.payStatusError !== undefined) failures.push(status.payStatusError)
+                            if (status.checkinError !== undefined) failures.push(status.checkinError)
+                            if (writeError !== undefined) failures.push(writeError)
+                            return failures.length === 0
+                              ? <span className="dsm-trae-diag-value">{t('row.diagNoFailures')}</span>
+                              : <span className="dsm-trae-diag-value dsm-trae-diag-bad dsm-trae-diag-mono">
+                                  {failures.join(' · ')}
+                                </span>
+                          })()}
+                        </div>
+                      </div>
+                      <p className="dsm-trae-diag-hint">{t('row.diagHint')}</p>
+                    </>}
+              </div>
               {status.status === 'signed-out' && loading
                 ? <>
                   {/* Nothing has answered yet. Saying "not signed in" here would be a

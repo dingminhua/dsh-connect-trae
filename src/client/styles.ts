@@ -53,6 +53,45 @@ export const TRAE_CARD_CSS = `
 .dsm-trae-tab-switch{flex:none;margin-left:auto;padding-left:10px;border-left:1px solid var(--dsw-alias-border-l1,rgba(127,127,127,.24))}
 .dsm-trae-tab-dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:7px;vertical-align:baseline}
 .dsm-trae-tab-hint{margin:0;padding:0 2px;color:var(--dsw-alias-label-tertiary,#999);font-size:12px;line-height:18px}
+/* SECTION TABS: the card's own top-level split (account / models / diagnostics).
+ *
+ * Deliberately NOT the boxed chips above. Those are the REGION scope — a
+ * three-way choice of which PROVIDER this whole card is about, each chip
+ * carrying its own on/off switch — while these are panels of ONE document, the
+ * shape a reader already knows from the app's own settings window. Two rows of
+ * boxes would read as one six-way choice.
+ *
+ * The hidden ATTRIBUTE on each panel is what does the work: an inactive panel
+ * stays MOUNTED, so switching back does not refetch, a half-filled model draft
+ * survives the trip, and the account pool keeps its log. It also takes the
+ * inactive panel out of the accessibility tree, which is exactly what
+ * role="tabpanel" wants — unlike display:none reached by a CSS class, the user
+ * agent's own rule for [hidden] cannot be overridden by a later declaration. */
+.dsm-trae-panels{display:flex;align-items:stretch;gap:2px;margin:4px 0 0;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(127,127,127,.24))}
+.dsm-trae-panel-tab{appearance:none;font:inherit;cursor:pointer;border:0;background:transparent;padding:7px 11px;margin-bottom:-1px;border-bottom:2px solid transparent;color:var(--dsw-alias-label-tertiary,#999);font-size:13px;font-weight:600;line-height:20px;white-space:nowrap;transition:color .15s,border-color .15s}
+.dsm-trae-panel-tab:hover:not(.dsm-trae-panel-tab-active){color:var(--dsw-alias-label-primary,#e6e6e6)}
+.dsm-trae-panel-tab:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#5686fe);outline-offset:1px}
+.dsm-trae-panel-tab-active{color:var(--dsw-alias-label-primary,#e6e6e6);border-bottom-color:var(--dsw-alias-brand-primary,#5686fe)}
+/* No top margin of its own: the strip above already carries a border, and the
+   card's 16px stack gap would double the separation. */
+.dsm-trae-panel{margin-top:0}
+/* DIAGNOSTICS: a two-column fact table rather than prose. Each row is one thing
+ * the card actually READ, so a bug report can quote a line instead of
+ * paraphrasing the UI. No control lives here on purpose — a diagnostics panel
+ * that can change settings is a settings panel with a worse name. */
+.dsm-trae-diag{display:flex;flex-direction:column;border:1px solid var(--dsw-alias-border-l2,#36373b);border-radius:10px;overflow:hidden;background:var(--dsw-alias-bg-layer-2,#232529)}
+.dsm-trae-diag-row{display:flex;align-items:baseline;justify-content:space-between;gap:16px;padding:8px 12px}
+.dsm-trae-diag-row+.dsm-trae-diag-row{border-top:1px solid var(--dsw-alias-border-l1,rgba(127,127,127,.24))}
+.dsm-trae-diag-label{flex:none;color:var(--dsw-alias-label-tertiary,#999);font-size:12px;line-height:18px}
+.dsm-trae-diag-value{min-width:0;color:var(--dsw-alias-label-primary,#e6e6e6);font-size:12px;line-height:18px;text-align:right;overflow-wrap:anywhere}
+.dsm-trae-diag-mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+/* A failure line, in the same warn tone the card already uses for an expiring
+   credit — NOT a hand-rolled amber. The token set the card asks DSH for is
+   audited by the card-styles spec (every name must be one the host actually
+   defines), so this deliberately names state-warn-primary rather than the
+   sibling card's label-caution, which this suite has never verified. */
+.dsm-trae-diag-bad{color:var(--dsw-alias-state-warn-primary,#b45309)}
+.dsm-trae-diag-hint{margin:10px 0 0;color:var(--dsw-alias-label-tertiary,#999);font-size:12px;line-height:18px}
 .dsm-trae-credits-unavailable{margin:10px 0 0;padding:10px 12px;border:1px solid var(--dsw-alias-border-l2,#3a3d45);border-radius:10px;color:var(--dsw-alias-label-secondary,#c6c9d0);font-size:12px;line-height:18px;background:var(--dsw-alias-bg-layer-3,#2a2c33)}
 .dsm-trae-account-value-muted{color:var(--dsw-alias-label-secondary,#c6c9d0);font-size:12px}
 .dsm-trae-tab-off-notice{margin:0;padding:10px 12px;border:1px solid var(--dsw-alias-border-l2,#3a3d45);border-radius:10px;color:var(--dsw-alias-label-secondary,#c6c9d0);font-size:12px;line-height:18px;background:var(--dsw-alias-bg-layer-3,#2a2c33)}
@@ -235,6 +274,17 @@ export const TRAE_CARD_CSS = `
 .dsm-trae-models-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
 .dsm-trae-models-title{margin:0;color:var(--dsw-alias-label-primary,#e6e6e6);font-size:14px;font-weight:600;line-height:20px}
 .dsm-trae-models-summary{margin:2px 0 0;color:var(--dsw-alias-label-tertiary,#999);font-size:12px;line-height:18px}
+/* EVERY model is on the page — no inner scroller, no max-height.
+ *
+ * A capped list with its own scrollbar was tried and rejected by the user: it
+ * turned a settings section into a little window that has to be scrolled inside
+ * a page that already scrolls, and put the models a user is looking for behind a
+ * gesture that does not match the rest of the card. The section is allowed to be
+ * as tall as the catalog is; the card's own page scroll is the only scroll.
+ *
+ * overflow:hidden is for the rounded border only (so the row hairlines cannot
+ * paint outside the radius). It is deliberately NOT auto: nothing here clips
+ * content vertically. */
 .dsm-trae-model-list{display:flex;flex-direction:column;border:1px solid var(--dsw-alias-border-l2,#36373b);border-radius:10px;overflow:hidden}
 .dsm-trae-model{display:grid;grid-template-columns:minmax(0,1fr);gap:7px;padding:10px 12px;background:var(--dsw-alias-bg-layer-2,#232529);transition:opacity .16s}
 .dsm-trae-model-disabled{opacity:.55}

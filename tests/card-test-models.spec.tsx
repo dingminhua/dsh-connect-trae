@@ -93,6 +93,11 @@ function stubFetch(document: Record<string, unknown>): { probes: string[] } {
 async function renderOpen(scope: unknown): Promise<[HTMLButtonElement, HTMLButtonElement]> {
   render(<TraeUsageCard t={t} settingsScope={scope as never} />)
   fireEvent.click(screen.getByRole('button', { name: /row\.title/ }))
+  // The card splits into sections (account / models / diagnostics) once it is
+  // signed in, so the model controls live behind the MODELS tab. The tab strip
+  // itself only appears after the first usage read lands, which is what the
+  // `findBy` waits for.
+  fireEvent.click(await screen.findByRole('tab', { name: 'row.panelModels' }))
   await waitFor(() => { expect(screen.getAllByRole('button', { name: /row\.modelsTest(Enabled|All)/ })).toHaveLength(2) })
   // The「test all」button is the one whose label is not the enabled variant.
   const buttons = screen.getAllByRole('button', { name: /row\.modelsTest(Enabled|All)/ }) as HTMLButtonElement[]

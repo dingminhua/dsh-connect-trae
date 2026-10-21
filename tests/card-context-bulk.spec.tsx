@@ -82,6 +82,9 @@ function stubFetch(document: Record<string, unknown>): void {
 async function renderOpenBulk(scope: unknown): Promise<{ max: HTMLButtonElement, reset: HTMLButtonElement }> {
   render(<TraeUsageCard t={t} settingsScope={scope as never} />)
   fireEvent.click(screen.getByRole('button', { name: /row\.title/ }))
+  // The bulk buttons belong to the MODELS section (the card splits into
+  // account / models / diagnostics once signed in), so open that tab first.
+  fireEvent.click(await screen.findByRole('tab', { name: 'row.panelModels' }))
   await waitFor(() => {
     expect(screen.getByRole('button', { name: 'row.contextAllMax' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'row.contextAllDefault' })).toBeTruthy()

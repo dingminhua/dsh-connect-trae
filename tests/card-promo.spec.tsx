@@ -79,6 +79,9 @@ async function renderOpen(catalog: TraeWebModel[]): Promise<void> {
   const { scope } = makeScope()
   render(<TraeUsageCard t={t} settingsScope={scope as never} />)
   fireEvent.click(screen.getByRole('button', { name: /row\.title/ }))
+  // The model rows live in the MODELS section of the split card, so the tab has
+  // to be opened before the list is on screen.
+  fireEvent.click(await screen.findByRole('tab', { name: 'row.panelModels' }))
   await waitFor(() => { expect(screen.getByRole('region', { name: 'row.modelsTitle' })).toBeTruthy() })
 }
 

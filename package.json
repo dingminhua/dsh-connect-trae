@@ -2,7 +2,7 @@
   "name": "dsh-connect-trae",
   "displayName": "DSH Connect Trae",
   "description": "把本机登录的 Trae 模型接入 DeepSeek Harness：国内版与国际版双供应商并行，提供用量/积分概览与每日签到领取。",
-  "version": "4.2.0",
+  "version": "4.3.0",
   "author": "dingminhua",
   "copyright": "Copyright (c) 2026 LaoDing",
   "license": "MIT",
@@ -51,7 +51,8 @@
     "check": "pnpm run typecheck && pnpm run test && pnpm run build",
     "verify:release": "node scripts/verify-release.mjs",
     "card:shot": "vitest run --config vitest.card.config.ts",
-    "promo:shot": "vitest run --config vitest.card.config.ts -t \"promo shot\""
+    "promo:shot": "vitest run --config vitest.card.config.ts -t \"promo shot\"",
+    "panels:shot": "vitest run --config vitest.card.config.ts -t \"panels shot\""
   },
   "dsh": {
     "bundle": {
