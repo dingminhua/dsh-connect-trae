@@ -22,6 +22,7 @@ import { configuredAccountsOf, unwrapVolatile, unwrapVolatileDeep } from './stat
 import type { TraeAdapter } from './adapter.ts'
 import { isTraeAccountId, traeAccountId, TraeCredentialStore } from './auth.ts'
 import { piAiRuntimeInfo } from './pi-ai-runtime.ts'
+import type { TraeActivityDiscount } from './promo.ts'
 import { applyImageSelection, deriveCatalog, discoveredCatalog, FALLBACK_TRAE_MODELS, fallbackModelsFor, mergeTraeModelSources, sanitizeCatalog, TraeCatalog, traeInputModalities, traeModelDisplayName, withChatCallableFunctions, type TraeModelInfo } from './catalog.ts'
 import { refreshTraeCredential, type TraeRefreshDevice } from './refresh.ts'
 import { readTraeIdentity, resolveTraeIdentity, type TraeIdentity } from './identity.ts'
@@ -415,6 +416,16 @@ const modelConfig = z.object({
   // restart (issue #16). Absent on rows saved before this field existed, which
   // reads as "not capable" rather than "assume capable".
   multimodal: z.boolean(),
+  // Upstream's promotion rule for this row (src/promo.ts).
+  //
+  // Declared with `z.any()` on purpose: it is an upstream document whose shape
+  // is upstream's to change, and re-deriving it through a nested schema would
+  // silently drop whichever branch a future promotion adds. It rides in
+  // `lastCatalog` for the same reason every other field does — the settings
+  // channel rebuilds this document on every save, so a field absent here
+  // disappears the moment the user ticks a checkbox, and the badge would then
+  // wait for the next live refresh to come back.
+  activityDiscount: z.any<TraeActivityDiscount>(),
 })
 
 /**

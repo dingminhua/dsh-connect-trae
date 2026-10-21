@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { TraeCredential } from './auth.ts'
 import type { TraeIdentity } from './identity.ts'
 import { buildTraeCnHeaders, traeEndpoint } from './protocol.ts'
+import { parseTraeActivityDiscount, type TraeActivityDiscount } from './promo.ts'
 import { REGION_GATEWAYS, TRAE_ENTERPRISE_HOST, regionOfCredential, type TraeRegion } from './region.ts'
 import { parseReasoningCapability, type TraeReasoningCapability } from './reasoning.ts'
 import type { TraeChatResult, TraeUpstreamErrorKind } from './upstream.ts'
@@ -160,8 +161,34 @@ export interface TraeSoloModel {
   reasoning?: TraeReasoningCapability
   /** Effective (post-discount) credit multiplier, as the Trae IDE shows it. */
   creditMultiplier?: number
+  /**
+   * The row's `activity_discount` rule, read from `display_contact_config`.
+   * Display data only: src/promo.ts decides at paint time whether a badge shows.
+   */
+  activityDiscount?: TraeActivityDiscount
   /** The directory function that listed this config (replayed when calling it). */
   function?: string
+}
+
+/**
+ * Parse this row's `display_contact_config` document.
+ *
+ * It is a *string* holding a second JSON document, and three different readers
+ * (the credit multiplier, the promotion rule, and whatever upstream adds next)
+ * need it — so it is decoded once here rather than three times.
+ */
+function wireContactConfig(config: Record<string, unknown>): Record<string, unknown> | undefined {
+  const raw = config['display_contact_config']
+  if (typeof raw !== 'string' || raw === '') return undefined
+  let parsed: unknown
+  try { parsed = JSON.parse(raw) } catch { return undefined }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return undefined
+  return parsed as Record<string, unknown>
+}
+
+/** The promotion rule from `display_contact_config`, when the row carries one. */
+function wireActivityDiscount(config: Record<string, unknown>): TraeActivityDiscount | undefined {
+  return parseTraeActivityDiscount(wireContactConfig(config)?.['activity_discount'])
 }
 
 /**
@@ -180,12 +207,9 @@ export interface TraeSoloModel {
  * field keep their bare name — parsed-but-absent, never fabricated.
  */
 function wireCreditMultiplier(config: Record<string, unknown>): number | undefined {
-  const raw = config['display_contact_config']
-  if (typeof raw !== 'string' || raw === '') return undefined
-  let parsed: unknown
-  try { parsed = JSON.parse(raw) } catch { return undefined }
-  if (typeof parsed !== 'object' || parsed === null) return undefined
-  const consumption = (parsed as Record<string, unknown>)['consumption_rate']
+  const parsed = wireContactConfig(config)
+  if (parsed === undefined) return undefined
+  const consumption = parsed['consumption_rate']
   if (typeof consumption !== 'object' || consumption === null) return undefined
   const entry = consumption as Record<string, unknown>
   if (entry['enable'] !== true) return undefined
@@ -324,6 +348,7 @@ export class TraeSoloUpstreamClient {
       const maxTokens = finitePositive(detail['max_tokens'])
       const reasoning = parseReasoningCapability({ ...config, ...detail })
       const creditMultiplier = wireCreditMultiplier(config)
+      const activityDiscount = wireActivityDiscount(config)
       // First function to list a config_name owns it: TRAE_DIRECTORY_FUNCTIONS
       // is ordered by precedence, and this is what makes a model callable (the
       // chat call replays this exact function).
@@ -335,6 +360,7 @@ export class TraeSoloUpstreamClient {
         ...maxTokens === undefined ? {} : { maxTokens },
         ...reasoning === undefined ? {} : { reasoning },
         ...creditMultiplier === undefined ? {} : { creditMultiplier },
+        ...activityDiscount === undefined ? {} : { activityDiscount },
         function: directoryFunction,
       })
     }

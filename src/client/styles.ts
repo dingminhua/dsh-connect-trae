@@ -307,6 +307,15 @@ export const TRAE_CARD_CSS = `
 .dsm-trae-model-probe-gated,.dsm-trae-model-probe-unsupported{color:var(--dsw-alias-state-warn-primary,#f59e0b);border:1px solid color-mix(in srgb,var(--dsw-alias-state-warn-primary,#f59e0b) 40%,transparent)}
 .dsm-trae-model-probe-auth{color:var(--dsw-alias-state-error-primary,#d92d20);border:1px solid color-mix(in srgb,var(--dsw-alias-state-error-primary,#d92d20) 40%,transparent)}
 .dsm-trae-model-probe-rate-limited,.dsm-trae-model-probe-unknown{color:var(--dsw-alias-label-tertiary,#999);border:1px solid color-mix(in srgb,var(--dsw-alias-label-tertiary,#999) 35%,transparent)}
+/* Promotion capsule (src/promo.ts). Unlike WorkBuddy's badge there is NO
+   upstream colour to honour — Trae publishes a pay ratio and nothing else — so
+   these three colours are the plugin's own choice, picked only so the kinds stay
+   distinguishable at a glance: red = subsidy price, orange = explicitly
+   "limited", blue = off-peak hours. */
+.dsm-trae-model-promo{flex:none;border-radius:999px;padding:1px 7px;font-size:10px;font-weight:500;line-height:15px;white-space:nowrap;border:1px solid transparent}
+.dsm-trae-model-promo-subsidy{color:var(--dsw-alias-state-error-primary,#d92d20);border-color:color-mix(in srgb,var(--dsw-alias-state-error-primary,#d92d20) 40%,transparent);background:color-mix(in srgb,var(--dsw-alias-state-error-primary,#d92d20) 10%,transparent)}
+.dsm-trae-model-promo-limited{color:var(--dsw-alias-state-warn-primary,#f59e0b);border-color:color-mix(in srgb,var(--dsw-alias-state-warn-primary,#f59e0b) 45%,transparent);background:color-mix(in srgb,var(--dsw-alias-state-warn-primary,#f59e0b) 12%,transparent)}
+.dsm-trae-model-promo-offPeak{color:var(--dsw-alias-brand-primary,#5686fe);border-color:color-mix(in srgb,var(--dsw-alias-brand-primary,#5686fe) 40%,transparent);background:color-mix(in srgb,var(--dsw-alias-brand-primary,#5686fe) 10%,transparent)}
 .dsm-trae-model-meta{display:flex;align-items:center;gap:7px 12px;flex-wrap:wrap;color:var(--dsw-alias-label-tertiary,#999);font-size:11px;line-height:16px}
 .dsm-trae-model-options{display:flex;align-items:center;justify-content:flex-end;gap:12px;flex:none}
 .dsm-trae-model-image{display:inline-flex;align-items:center;gap:4px;color:var(--dsw-alias-label-secondary,#c6c9d0);font-size:11px;line-height:16px;cursor:pointer}
