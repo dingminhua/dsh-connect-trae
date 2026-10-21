@@ -4,6 +4,7 @@
  * stays consistent with that project's external presentation.
  */
 import type { TraeEdition } from './paths.ts'
+import type { TraeActivityDiscount } from './promo.ts'
 import { TRAE_PANELS, type TraePanel, type TraeRegion } from './region.ts'
 
 /** Plugin-owned usage endpoint consumed by its browser half. */
@@ -689,6 +690,13 @@ export interface TraeWebModel {
   probe?: TraeModelProbeVerdict
   /** Upstream's own words for the verdict, when it gave any. */
   probeDetail?: string
+  /**
+   * Trae's discount rule for this row, straight from the directory that
+   * advertised it (see src/promo.ts). The CARD decides whether it is live right
+   * now: the rule carries weekday/time windows in an upstream-declared zone, so
+   * a verdict baked in here would be stale by the next morning.
+   */
+  activityDiscount?: TraeActivityDiscount
 }
 
 /**

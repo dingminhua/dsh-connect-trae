@@ -1,4 +1,5 @@
 import type { TraeDiscoveredModel, TraeDiscoveredReasoning } from './model-metadata.ts'
+import type { TraeActivityDiscount } from './promo.ts'
 import type { TraeReasoningEffort } from './reasoning.ts'
 import type { TraeReasoningCapability } from './reasoning.ts'
 import type { TraeRegion } from './region.ts'
@@ -42,6 +43,16 @@ export interface TraeModelInfo {
    * image to a model that cannot read one burns credits for a silent failure.
    */
   multimodal?: boolean
+  /**
+   * Trae's discount RULE for this model, exactly as published (see src/promo.ts).
+   *
+   * Kept unflattened and unjudged: whether a badge is painted depends on the
+   * clock, so the card judges it at paint time rather than trusting a verdict
+   * frozen into a saved catalog. Absent means the model carries no promotion
+   * document — including every `ai` (international) row, whose subscription
+   * models publish no `consumption_rate` at all.
+   */
+  activityDiscount?: TraeActivityDiscount
 }
 
 /**
@@ -205,6 +216,15 @@ export interface TraeWireModel {
    * therefore has to replay the directory's own function.
    */
   function?: string
+  /**
+   * The row's own `activity_discount`, read from `display_contact_config`.
+   *
+   * The wire roster is the richer of the two directories (8 rows carrying a
+   * discount vs the Remote directory's 4), and the same model can name a
+   * different campaign on each side, so this value wins over the Remote one
+   * during the merge — the precedence `creditMultiplier` already follows.
+   */
+  activityDiscount?: TraeActivityDiscount
 }
 
 /** Normalise a display name for cross-source joining. */
@@ -303,12 +323,18 @@ export function mergeTraeModelSources(
     // directory's own `consumption_rate` can report up to 10x the undiscounted
     // value under a live promotion (e.g. 0.80 vs the IDE's 0.08).
     const creditMultiplier = wireModel?.creditMultiplier ?? model.creditMultiplier
+    // Same precedence for the promotion rule: the wire row is the richer
+    // directory, the Remote row is the fallback. Never merged field-by-field —
+    // a half-merged rule (a wire `off_peak` with a Remote `current`) would
+    // describe a campaign upstream never published.
+    const activityDiscount = wireModel?.activityDiscount ?? model.activityDiscount
     result.push({
       id: model.id,
       name: model.name,
       ...model.contextWindow === undefined ? {} : { contextWindow: model.contextWindow },
       ...model.maxContextWindow === undefined ? {} : { maxContextWindow: model.maxContextWindow },
       ...creditMultiplier === undefined ? {} : { creditMultiplier },
+      ...activityDiscount === undefined ? {} : { activityDiscount },
       input: ['text'],
       // The wire's `model_detail_list[].max_tokens` — the ONLY place upstream
       // publishes the max OUTPUT cap. The Remote directory has no such field, so
@@ -363,6 +389,10 @@ export function discoveredCatalog(models: readonly TraeDiscoveredModel[]): TraeM
       ...model.maxContextWindow === undefined ? {} : { maxContextWindow: model.maxContextWindow },
       input: ['text'],
       ...model.creditMultiplier === undefined ? {} : { creditMultiplier: model.creditMultiplier },
+      // A live refresh keeps the promotion rule on the row so the card can
+      // judge it at paint time; it is display data only and never affects what
+      // DSH is told about the model.
+      ...model.activityDiscount === undefined ? {} : { activityDiscount: model.activityDiscount },
       // See mergeTraeModelSources: the upstream flag travels with the row so the
       // one later image pass can union it with the user's explicit opt-ins.
       ...model.multimodal === undefined ? {} : { multimodal: model.multimodal },
