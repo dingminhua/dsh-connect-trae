@@ -22,14 +22,14 @@ import { configuredAccountsOf, unwrapVolatile, unwrapVolatileDeep } from './stat
 import type { TraeAdapter } from './adapter.ts'
 import { isTraeAccountId, traeAccountId, TraeCredentialStore } from './auth.ts'
 import { piAiRuntimeInfo } from './pi-ai-runtime.ts'
-import { applyImageSelection, deriveCatalog, discoveredCatalog, FALLBACK_TRAE_MODELS, fallbackModelsFor, mergeTraeModelSources, sanitizeCatalog, TraeCatalog, traeInputModalities, traeModelDisplayName, type TraeModelInfo } from './catalog.ts'
+import { applyImageSelection, deriveCatalog, discoveredCatalog, FALLBACK_TRAE_MODELS, fallbackModelsFor, mergeTraeModelSources, sanitizeCatalog, TraeCatalog, traeInputModalities, traeModelDisplayName, withChatCallableFunctions, type TraeModelInfo } from './catalog.ts'
 import { refreshTraeCredential, type TraeRefreshDevice } from './refresh.ts'
 import { readTraeIdentity, resolveTraeIdentity, type TraeIdentity } from './identity.ts'
 import { traeStorageCandidates, type TraeEdition } from './paths.ts'
 import { panelOfProvider, providerOfPanel, regionOfCredential, regionOfEdition, regionOfHost, regionOfPanel, regionOfUserRegion, REGION_GATEWAYS, TRAE_PANELS, type TraePanel, type TraeRegion, type TraeRegionGateways } from './region.ts'
 import { createTraeShim } from './shim.ts'
 import type { TraeShim, TraeShimPool, TraeShimRoute } from './shim.ts'
-import { TraeSoloUpstreamClient } from './solo.ts'
+import { TRAE_DIRECTORY_FUNCTIONS, TraeSoloUpstreamClient } from './solo.ts'
 import type { TraeChatRoute } from './solo.ts'
 import type { TraeChatResult, TraeUpstreamClient, TraeUpstreamErrorKind } from './upstream.ts'
 import { TraeSoloBridge, wireTargetsOf } from './solo-bridge.ts'
@@ -900,7 +900,13 @@ export function apply(ctx: Context, config: Config): void {
       ...panel === 'enterprise' ? { route: 'enterprise' as const } : {},
       log: (message, detail) => ctx.logger.warn(message, detail),
     })
-    const remoteCatalog = new TraeSoloRemoteCatalogClient({ credential: () => store.resolve() })
+    const remoteCatalog = new TraeSoloRemoteCatalogClient({
+      credential: () => store.resolve(),
+      // The directory falls back to the chat-gateway base in restricted
+      // networks; surface when that happened (and when the fallback is reused)
+      // so "why am I on a different host" is diagnosable in the log.
+      log: (message, detail) => ctx.logger.warn(message, detail),
+    })
     // Keep the native llm_utils_chat bridge as the only chat route: unlike the
     // polling Remote session API, it preserves Trae's structured tool_calls so
     // DSH can execute local read/write/bash tools and continue the agent loop.
@@ -1106,12 +1112,28 @@ export function apply(ctx: Context, config: Config): void {
         const remote = await withDirectoryRetry(() => remoteCatalog.fetchModels(signal))
         const wireModels = await solo.fetchModels(signal)
         const merged = mergeTraeModelSources(remote, wireModels)
+        // A row whose function is a NON-chat roster (solo_agent, builder_v3) is
+        // not callable through llm_utils_chat BY THAT FUNCTION — asking answers
+        // 4011/4001. The row is KEPT and only the function is cleared, so the
+        // bridge falls back to the default chat function. Dropping it would
+        // re-hide the nine `solo_agent`-only models issue #19 was opened about
+        // (gpt-5.5, gpt-5.6-*, gpt-6-astra, glm-5.2, kimi-k2.7-code,
+        // Dola-Seed-2.0-Code, deepseek-v4-flash-0731) precisely on a restricted
+        // network, where the directory group is the only attribution there is —
+        // and those models DO answer under the default function (measured). See
+        // `withChatCallableFunctions` for the full trail.
+        const callable = withChatCallableFunctions(merged, TRAE_DIRECTORY_FUNCTIONS[region])
+        const chatFunctions = TRAE_DIRECTORY_FUNCTIONS[region]
+        for (const model of merged) {
+          if (model.wireFunction === undefined || chatFunctions.includes(model.wireFunction)) continue
+          ctx.logger.warn(`model directory row is pinned to a non-chat function and will be called through the default chat function instead: ${model.id} (pinned to function ${model.wireFunction})`)
+        }
         // Record every callable display key (id and name) so stale saved
         // catalogs are filtered against the live wire map and dead
         // config_names cannot be resurrected from an old `lastCatalog` /
         // `models` / `enabledModelIds`.
         wire.callableKeys.clear()
-        for (const model of merged) {
+        for (const model of callable) {
           wire.callableKeys.add(model.id.trim().toLowerCase())
           wire.callableKeys.add(model.name.trim().toLowerCase())
         }
@@ -1121,13 +1143,13 @@ export function apply(ctx: Context, config: Config): void {
         // filter delete every model it did not mention — including the
         // built-in fallback set, which Remote never advertised and so can
         // never appear in `callableKeys`.
-        wire.resolved = merged.length > 0
+        wire.resolved = callable.length > 0
         // Populate the startup wire resolver (display id and display name →
         // wire config_name + the directory function it was discovered under) so
         // the chat bridge resolves the real wire target even when the persisted
         // catalog lacks the row entirely.
         //
-        // EVERY merged row is registered, not only the ones whose wire
+        // EVERY callable row is registered, not only the ones whose wire
         // config_name differs from the display id. A pool can name a target
         // model the user never enabled for chat: the runtime catalog filters by
         // `enabledModelIds`, so the bridge then sees no row at all -- and with
@@ -1135,7 +1157,7 @@ export function apply(ctx: Context, config: Config): void {
         // which answers `4001 config_name rejected` (Doubao-Seed-Code is
         // served only by `solo_agent_remote`; `solo_work_lite` rejects it).
         // The identity mapping is what keeps that function knowledge alive.
-        const wireTargets = wireTargetsOf(merged)
+        const wireTargets = wireTargetsOf(callable)
         wire.byId = wireTargets.byId
         wire.byName = wireTargets.byName
         // Discovery is a pure data return (workbuddy semantics): the card's
@@ -1145,8 +1167,8 @@ export function apply(ctx: Context, config: Config): void {
         // but the merge is KEPT on the stack: applySelection re-merges the
         // wire fields into the saved rows on every settings write.
         latestDiscovery.length = 0
-        latestDiscovery.push(...merged)
-        return merged
+        latestDiscovery.push(...callable)
+        return callable
       },
       /**
      * One-click availability test. The ids come from the card, so each one is

@@ -36,4 +36,13 @@ describe('Trae remote model metadata', () => {
       id: 'm', name: 'm', multimodal: false, reasoningSupported: false,
     })
   })
+
+  it('attaches the directory group function when one is supplied', () => {
+    expect(parseTraeRemoteModel({ name: 'glm-5.3', display_name: 'GLM-5.3' }, 'solo_work_remote')).toEqual({
+      id: 'glm-5.3', name: 'GLM-5.3', multimodal: false, reasoningSupported: false, function: 'solo_work_remote',
+    })
+    // Without the group the row carries no function at all.
+    expect(parseTraeRemoteModel({ name: 'glm-5.3', display_name: 'GLM-5.3' })).not.toHaveProperty('function')
+    expect(parseTraeRemoteModel({ name: 'glm-5.3', display_name: 'GLM-5.3' }, '')).not.toHaveProperty('function')
+  })
 })

@@ -3,6 +3,7 @@ import type { TraeDiscoveredModel } from '../src/model-metadata.ts'
 import {
   applyContextBudgets,
   applyImageSelection,
+  withChatCallableFunctions,
   deriveCatalog,
   discoveredCatalog,
   FALLBACK_TRAE_MODELS,
@@ -15,6 +16,7 @@ import {
   traeModelAcceptsImage,
   traeModelDisplayName,
 } from '../src/catalog.ts'
+import { TRAE_DIRECTORY_FUNCTIONS } from '../src/solo.ts'
 
 const RAW = discoveredCatalog([{
   id: 'qwen3.8-max', name: 'Qwen3.8-Max', multimodal: true,
@@ -344,6 +346,73 @@ describe('mergeTraeModelSources', () => {
     const merged = mergeTraeModelSources(remote, wire)
     // The first row carrying that display name wins, deterministically.
     expect(merged[0]?.wireConfigName).toBe('Doubao_1_6')
+  })
+})
+
+describe('directory group function backs up the wire function', () => {
+  it('falls back to the directory group function when the wire roster has no row', () => {
+    // A restricted network often returns an empty get_detail_param for the chat
+    // functions; the merge must then derive wireFunction from the directory's
+    // own group, so solo_work_remote models keep their function and the bridge
+    // does not 4001 under the default solo_work_lite.
+    const remote: TraeDiscoveredModel[] = [
+      { id: 'glm-5.3', name: 'GLM-5.3', multimodal: false, reasoningSupported: false, function: 'solo_work_remote' },
+      { id: 'Doubao-Seed-Code', name: 'Seed-Code', multimodal: false, reasoningSupported: false, function: 'solo_agent_remote' },
+    ]
+    const merged = mergeTraeModelSources(remote, [])
+    expect(merged.find(model => model.id === 'glm-5.3')?.wireFunction).toBe('solo_work_remote')
+    expect(merged.find(model => model.id === 'Doubao-Seed-Code')?.wireFunction).toBe('solo_agent_remote')
+  })
+
+  it('lets the wire function win over the directory group function', () => {
+    // The roster knows the paid/entitled state the directory cannot, so its
+    // get_detail_param function is authoritative whenever a wire row exists.
+    const remote: TraeDiscoveredModel[] = [
+      { id: 'glm-5.3', name: 'GLM-5.3', multimodal: false, reasoningSupported: false, function: 'solo_work_remote' },
+      { id: 'kimi-k2.8-preview', name: 'Kimi-K2.8-Preview', multimodal: false, reasoningSupported: false, function: 'solo_agent' },
+    ]
+    const wire = [{ id: 'glm-5.3', name: 'GLM-5.3', function: 'solo_work_lite' }]
+    const merged = mergeTraeModelSources(remote, wire)
+    expect(merged.find(model => model.id === 'glm-5.3')?.wireFunction).toBe('solo_work_lite')
+    // A model with no wire row keeps its (non-chat) directory attribution at
+    // the merge layer; `withChatCallableFunctions` later CLEARS it (it does not
+    // drop the row) so the bridge uses the default chat function.
+    expect(merged.find(model => model.id === 'kimi-k2.8-preview')?.wireFunction).toBe('solo_agent')
+  })
+
+  it('carries the discovered function onto catalog rows with no wire row at all', () => {
+    const rows = discoveredCatalog([
+      { id: 'glm-5.3', name: 'GLM-5.3', multimodal: false, reasoningSupported: false, function: 'solo_work_remote' },
+    ])
+    expect(rows[0]?.wireFunction).toBe('solo_work_remote')
+  })
+})
+
+describe('withChatCallableFunctions', () => {
+  it('keeps chat-function rows and functionless rows, and CLEARS a non-chat function instead of dropping the row', () => {
+    // Dropping the row was a regression: the directory lists exactly these
+    // models under `solo_agent` ALONE (docs/ISSUE19_DIAGNOSIS.md) and they DO
+    // answer under the default chat function, so hiding them re-undoes issue
+    // #19 on the restricted networks the fallback exists for.
+    const rows = [
+      { id: 'glm-5.3', name: 'GLM-5.3', wireFunction: 'solo_work_remote' },
+      { id: 'glm-5.2', name: 'GLM-5.2' },
+      { id: 'kimi-k2.8-preview', name: 'Kimi-K2.8-Preview', wireFunction: 'solo_agent' },
+      { id: 'studio-agent', name: 'Studio Agent', wireFunction: 'builder_v3' },
+      { id: 'chat-only', name: 'Chat Only', wireFunction: 'chat_v3' },
+    ]
+    const callable = withChatCallableFunctions(rows, TRAE_DIRECTORY_FUNCTIONS['cn'])
+    // Every row survives -- no model is silently hidden.
+    expect(callable.map(model => model.id)).toEqual(['glm-5.3', 'glm-5.2', 'kimi-k2.8-preview', 'studio-agent', 'chat-only'])
+    // Chat functions are untouched; the non-chat pin is cleared so the bridge
+    // sends the region's DEFAULT chat function instead of a roster that 4011s.
+    expect(callable.map(model => model.wireFunction)).toEqual(['solo_work_remote', undefined, undefined, undefined, 'chat_v3'])
+  })
+
+  it('respects the region list (solo_coder is chat for cn but not for ai)', () => {
+    const rows = [{ id: 'glm-5', name: 'GLM-5', wireFunction: 'solo_coder' }]
+    expect(withChatCallableFunctions(rows, TRAE_DIRECTORY_FUNCTIONS['cn'])[0]?.wireFunction).toBe('solo_coder')
+    expect(withChatCallableFunctions(rows, TRAE_DIRECTORY_FUNCTIONS['ai'])[0]?.wireFunction).toBeUndefined()
   })
 })
 

@@ -223,6 +223,30 @@ describe('TraeSoloBridge', () => {
     expect(forwardedBody).not.toHaveProperty('function')
   })
 
+  it('uses the directory function when the catalog row carries only wireFunction', async () => {
+    let forwarded = ''
+    const upstream: TraeUpstreamClient = {
+      async chatStream(bodyJson) {
+        forwarded = bodyJson
+        return { ok: true, response: traeStream(['event: done\ndata: {"finish_reason":"stop"}\n\n']) }
+      },
+    }
+    // The restricted-network shape: the directory group fallback attributed the
+    // function, but the empty get_detail_param roster produced NO wireConfigName
+    // (id is the config_name). The default solo_work_lite would 4001 for this
+    // model, so the function alone must still reach the request.
+    const catalog = {
+      current: () => [{ id: 'glm-5.3', name: 'GLM-5.3', input: ['text'] as ('text' | 'image')[], wireFunction: 'solo_work_remote' }],
+    }
+    const result = await new TraeSoloBridge(upstream, catalog).chatStream(JSON.stringify({
+      model: 'glm-5.3', messages: [{ role: 'user', content: '1+1' }],
+    }))
+    expect(result.ok).toBe(true)
+    const forwardedBody = JSON.parse(forwarded) as Record<string, unknown>
+    expect(forwardedBody['model']).toBe('glm-5.3')
+    expect(forwardedBody['function']).toBe('solo_work_remote')
+  })
+
   it('registers every discovered row, including the ones whose id is their config_name', () => {
     const { byId, byName } = wireTargetsOf([
       // The failing case: the pool targets a model the user never enabled for

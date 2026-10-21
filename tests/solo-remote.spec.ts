@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { preferStrongerRow, TraeSoloRemoteCatalogClient } from '../src/solo-remote.ts'
+import { mergeTraeModelSources, withChatCallableFunctions } from '../src/catalog.ts'
+import { TRAE_DIRECTORY_FUNCTIONS } from '../src/solo.ts'
 import type { TraeDiscoveredModel } from '../src/model-metadata.ts'
 import type { TraeCredential } from '../src/auth.ts'
 
@@ -19,17 +21,29 @@ describe('TraeSoloRemoteCatalogClient', () => {
     ] } }), { status: 200 }))
     const client = new TraeSoloRemoteCatalogClient({ credential: async () => credential, fetchImpl: fetchImpl as unknown as typeof fetch })
     const models = await client.fetchModels()
-    expect(models[0]).toEqual({
+    expect(models[1]).toEqual({
       id: 'qwen3.8-max', name: 'Qwen3.8-Max', multimodal: true,
       contextWindow: 200000, maxContextWindow: 1000000, creditMultiplier: 1.5,
       reasoningSupported: true,
       reasoning: { supported: ['low', 'high', 'xhigh'], defaultEffort: 'high' },
+      // The group function travels with the row so the wire join can replay the
+      // model's own SOLO function instead of the default (see
+      // mergeTraeModelSources / chatCallableModels).
+      function: 'solo_agent_remote',
     })
     // Every group is read, not just the preferred one (issue #19): `solo_agent`
     // is where gpt-5.6-* / gpt-6-astra / glm-5.2 live. Rows are passed through
     // as-is — callability is decided by the wire join in mergeTraeModelSources,
-    // never here.
-    expect(models.map(model => model.id)).toEqual(['qwen3.8-max', 'gpt-5.6-sol', 'ignored'])
+    // never here. Rows are unioned in `TRAE_DIRECTORY_FUNCTIONS` precedence
+    // order, NOT the gateway's group order — that one is unstable (issue #23
+    // measured five different orders in five calls), so the catalog order is
+    // deterministic and agrees with the wire roster's own precedence.
+    expect(models.map(model => model.id)).toEqual(['ignored', 'qwen3.8-max', 'gpt-5.6-sol'])
+    // Chat-capable groups are attributed; `solo_agent` (an IDE/agent roster,
+    // 4011/4001 for llm_utils_chat) is NOT — a model that only it lists keeps
+    // no function and is called through the default chat function, where it
+    // actually answers (issue #19 / docs/ISSUE19_DIAGNOSIS.md).
+    expect(models.map(model => model.function)).toEqual(['solo_work_remote', 'solo_agent_remote', undefined])
     expect(fetchImpl.mock.calls[0]?.[0]).toBe('https://solo.trae.cn/api/remote/v1/models?functions=solo_agent,solo_agent_remote,solo_work_remote,solo_work_lite,chat_v3,solo_coder,builder_v3')
   })
 
@@ -114,6 +128,206 @@ describe('region-scoped directory gateway', () => {
     expect(url).toContain('solo_coder')
     expect(url).toContain('chat_v3')
     expect(url).toContain('solo_work_lite')
+  })
+})
+
+describe('catalog host fallback', () => {
+  it('falls back to the chat-gateway base when the official host fails to connect', async () => {
+    const fetchImpl = vi.fn(async (url: string | URL | Request) => {
+      if (String(url).startsWith('https://solo.trae.cn/')) throw new TypeError('fetch failed')
+      return new Response(JSON.stringify({ code: 0, data: { list: [
+        { function: 'solo_work_remote', models: [{ name: 'glm-5.3', display_name: 'GLM-5.3' }] },
+      ] } }), { status: 200 })
+    })
+    const client = new TraeSoloRemoteCatalogClient({ credential: async () => credential, fetchImpl: fetchImpl as unknown as typeof fetch })
+    const models = await client.fetchModels()
+    expect(models).toMatchObject([{ id: 'glm-5.3' }])
+    // The backup request carries the SAME path and query as the official one.
+    const urls = fetchImpl.mock.calls.map(([url]) => String(url))
+    expect(urls[0]).toBe('https://solo.trae.cn/api/remote/v1/models?functions=solo_agent,solo_agent_remote,solo_work_remote,solo_work_lite,chat_v3,solo_coder,builder_v3')
+    expect(urls[1]).toBe('https://trae-api-cn.mchost.guru/api/remote/v1/models?functions=solo_agent,solo_agent_remote,solo_work_remote,solo_work_lite,chat_v3,solo_coder,builder_v3')
+  })
+
+  it('does not fall back when the official host answers a semantic rejection', async () => {
+    const fetchImpl = vi.fn(async () => new Response('Unauthorized', { status: 401 }))
+    const client = new TraeSoloRemoteCatalogClient({ credential: async () => credential, fetchImpl: fetchImpl as unknown as typeof fetch })
+    await expect(client.fetchModels()).rejects.toThrow('SOLO remote models returned HTTP 401')
+    expect(fetchImpl.mock.calls).toHaveLength(1)
+  })
+
+  it('falls back when the official host answers 5xx', async () => {
+    const fetchImpl = vi.fn(async (url: string | URL | Request) => String(url).startsWith('https://solo.trae.cn/')
+      ? new Response('boom', { status: 500 })
+      : new Response(JSON.stringify({ code: 0, data: { list: [{ function: 'solo_work_remote', models: [{ name: 'glm-5.3' }] }] } }), { status: 200 }))
+    const client = new TraeSoloRemoteCatalogClient({ credential: async () => credential, fetchImpl: fetchImpl as unknown as typeof fetch })
+    await expect(client.fetchModels()).resolves.toMatchObject([{ id: 'glm-5.3' }])
+    expect(fetchImpl.mock.calls).toHaveLength(2)
+  })
+
+  it('tries the next base on an empty catalog and remembers nothing', async () => {
+    // A 200-but-empty answer is a statement about THAT host, not the end of the
+    // chain: the official host may be served by a mirror that has not synced.
+    // Both bases answer empty here, so the final error is the empty-catalog one.
+    const fetchImpl = vi.fn(async (_url: string | URL | Request) => new Response(JSON.stringify({ code: 0, data: { list: [] } }), { status: 200 }))
+    const client = new TraeSoloRemoteCatalogClient({ credential: async () => credential, fetchImpl: fetchImpl as unknown as typeof fetch })
+    await expect(client.fetchModels()).rejects.toThrow(/contained no models/)
+    expect(fetchImpl.mock.calls).toHaveLength(2)
+    // Nothing was remembered: the next refresh starts from the official host.
+    fetchImpl.mockClear()
+    await expect(client.fetchModels()).rejects.toThrow(/contained no models/)
+    expect(String(fetchImpl.mock.calls[0]?.[0])).toContain('https://solo.trae.cn/')
+  })
+
+  it('does not let an empty backup shadow a healthy official host', async () => {
+    // Refresh 1: official blocked, backup answers 200-but-empty -> refresh
+    // fails, but the backup must NOT be remembered as successful.
+    let officialBlocked = true
+    const fetchImpl = vi.fn(async (url: string | URL | Request) => {
+      if (String(url).startsWith('https://solo.trae.cn/')) {
+        if (officialBlocked) throw new TypeError('fetch failed')
+        return new Response(JSON.stringify({ code: 0, data: { list: [{ function: 'solo_work_remote', models: [{ name: 'glm-5.3' }] }] } }), { status: 200 })
+      }
+      return new Response(JSON.stringify({ code: 0, data: { list: [] } }), { status: 200 })
+    })
+    const client = new TraeSoloRemoteCatalogClient({ credential: async () => credential, fetchImpl: fetchImpl as unknown as typeof fetch })
+    await expect(client.fetchModels()).rejects.toBeInstanceOf(Error)
+    // The network heals. The next refresh must REACH the official host and take
+    // its catalog. Before the fix the empty backup had been remembered as
+    // successful, so it was tried first and its empty answer aborted the whole
+    // refresh without the official host ever being asked.
+    officialBlocked = false
+    fetchImpl.mockClear()
+    await expect(client.fetchModels()).resolves.toMatchObject([{ id: 'glm-5.3' }])
+    const urls = fetchImpl.mock.calls.map(([url]) => String(url))
+    expect(urls.some(url => url.startsWith('https://solo.trae.cn/'))).toBe(true)
+  })
+
+  it('remembers the last successful host and starts later refreshes from it', async () => {
+    const fetchImpl = vi.fn(async (url: string | URL | Request) => String(url).startsWith('https://solo.trae.cn/')
+      ? (() => { throw new TypeError('fetch failed') })()
+      : new Response(JSON.stringify({ code: 0, data: { list: [{ function: 'solo_work_remote', models: [{ name: 'glm-5.3' }] }] } }), { status: 200 }))
+    const client = new TraeSoloRemoteCatalogClient({ credential: async () => credential, fetchImpl: fetchImpl as unknown as typeof fetch })
+    await client.fetchModels()
+    await client.fetchModels()
+    const urls = fetchImpl.mock.calls.map(([url]) => String(url))
+    // First refresh: official (blocked), then the backup succeeds. Second
+    // refresh: the official host is in its post-failure cooldown, so the
+    // remembered backup is tried FIRST and answers; the official host is
+    // re-probed once the cooldown expires (see the cooldown test below), which
+    // is what lets a healed network take over.
+    expect(urls[0]).toContain('https://solo.trae.cn/')
+    expect(urls[1]).toBe('https://trae-api-cn.mchost.guru/api/remote/v1/models?functions=solo_agent,solo_agent_remote,solo_work_remote,solo_work_lite,chat_v3,solo_coder,builder_v3')
+    expect(urls[2]).toBe(urls[1])
+    expect(urls).toHaveLength(3)
+  })
+
+  it('re-probes the official host after the cooldown so a healed network takes over', async () => {
+    let officialBlocked = true
+    const fetchImpl = vi.fn(async (url: string | URL | Request) => {
+      if (String(url).startsWith('https://solo.trae.cn/')) {
+        if (officialBlocked) throw new TypeError('fetch failed')
+        return new Response(JSON.stringify({ code: 0, data: { list: [{ function: 'solo_work_remote', models: [{ name: 'glm-5.3' }] }] } }), { status: 200 })
+      }
+      return new Response(JSON.stringify({ code: 0, data: { list: [{ function: 'solo_work_remote', models: [{ name: 'glm-5.3' }] }] } }), { status: 200 })
+    })
+    const client = new TraeSoloRemoteCatalogClient({ credential: async () => credential, fetchImpl: fetchImpl as unknown as typeof fetch })
+    await client.fetchModels()
+    await client.fetchModels()
+    // Still inside the 5-minute cooldown: the official host is skipped.
+    expect(fetchImpl.mock.calls.map(([url]) => String(url)).filter(url => url.startsWith('https://solo.trae.cn/'))).toHaveLength(1)
+    // Jump past the cooldown with the network healed: the official host is
+    // probed FIRST again and its catalog wins.
+    officialBlocked = false
+    vi.useFakeTimers({ now: Date.now() + 6 * 60_000 })
+    try {
+      fetchImpl.mockClear()
+      await expect(client.fetchModels()).resolves.toMatchObject([{ id: 'glm-5.3' }])
+      expect(String(fetchImpl.mock.calls[0]?.[0])).toContain('https://solo.trae.cn/')
+      expect(fetchImpl.mock.calls).toHaveLength(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps every model when the gateway repeats a function name', async () => {
+    // Nothing documents a function appearing at most once; the old name->group
+    // Map kept only the LAST one and silently lost the earlier models.
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ code: 0, data: { list: [
+      { function: 'solo_work_remote', models: [{ name: 'model-a' }] },
+      { function: 'solo_work_remote', models: [{ name: 'model-b' }] },
+    ] } }), { status: 200 }))
+    const client = new TraeSoloRemoteCatalogClient({ credential: async () => credential, fetchImpl: fetchImpl as unknown as typeof fetch })
+    const models = await client.fetchModels()
+    expect(models.map(model => model.id).sort()).toEqual(['model-a', 'model-b'])
+    expect(models.map(model => model.function)).toEqual(['solo_work_remote', 'solo_work_remote'])
+  })
+
+  it('pins a single host when an explicit baseUrl is given', async () => {
+    const fetchImpl = vi.fn(async (_url: string | URL | Request) => { throw new TypeError('fetch failed') })
+    const client = new TraeSoloRemoteCatalogClient({
+      credential: async () => credential,
+      baseUrl: 'https://custom.example/api/remote/v1',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    })
+    await expect(client.fetchModels()).rejects.toThrow('fetch failed')
+    expect(fetchImpl.mock.calls).toHaveLength(1)
+    expect(String(fetchImpl.mock.calls[0]?.[0])).toContain('https://custom.example/api/remote/v1/models?functions=')
+  })
+})
+
+describe('directory group function attribution', () => {
+  it('attributes each model to the first chat-capable group in the request order', async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ code: 0, data: { list: [
+      // Response order deliberately differs from the request's functions= order.
+      { function: 'chat_v3', models: [{ name: 'glm-5.2', display_name: 'GLM-5.2' }] },
+      { function: 'solo_agent_remote', models: [
+        { name: 'Doubao-Seed-Code', display_name: 'Seed-Code' },
+        { name: 'glm-5.2', display_name: 'GLM-5.2' },
+      ] },
+      // An IDE/agent roster listed FIRST in the request must not claim a model
+      // that a chat function also lists.
+      { function: 'solo_agent', models: [{ name: 'Doubao-Seed-Code', display_name: 'Seed-Code' }] },
+      { function: 'solo_work_remote', models: [{ name: 'glm-5.3', display_name: 'GLM-5.3' }] },
+    ] } }), { status: 200 }))
+    const client = new TraeSoloRemoteCatalogClient({ credential: async () => credential, fetchImpl: fetchImpl as unknown as typeof fetch })
+    const models = await client.fetchModels()
+    const byId = new Map(models.map(model => [model.id, model]))
+    // solo_agent_remote comes before chat_v3 in the request's functions= order,
+    // so glm-5.2 (listed by both) is attributed to the former.
+    expect(byId.get('glm-5.2')?.function).toBe('solo_agent_remote')
+    // Doubao-Seed-Code is listed by solo_agent AND solo_agent_remote; the chat
+    // group wins, so the chat call replays solo_agent_remote — where it
+    // answers — instead of the 4011/4001 IDE roster.
+    expect(byId.get('Doubao-Seed-Code')?.function).toBe('solo_agent_remote')
+    expect(byId.get('glm-5.3')?.function).toBe('solo_work_remote')
+  })
+
+  it('leaves models only a non-chat group lists with NO function (called through the default)', async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ code: 0, data: { list: [
+      { function: 'solo_agent', models: [{ name: 'gpt-5.6-sol', display_name: 'GPT-5.6-Sol' }] },
+      { function: 'builder_v3', models: [{ name: 'studio-agent', display_name: 'Studio Agent' }] },
+    ] } }), { status: 200 }))
+    const client = new TraeSoloRemoteCatalogClient({ credential: async () => credential, fetchImpl: fetchImpl as unknown as typeof fetch })
+    const models = await client.fetchModels()
+    expect(models.map(model => model.function)).toEqual([undefined, undefined])
+  })
+
+  it('re-asserts the attributed function even when capacity comes from a later group', async () => {
+    // The response lists Doubao-Seed-2.1-Pro under solo_agent (Max, widest dev),
+    // solo_work_remote (no Max) and chat_v3 (Max, narrower dev). The capacity
+    // winner is solo_agent's row — but the FUNCTION must stay the first CHAT
+    // group (solo_work_remote precedes chat_v3 in the request order), or the
+    // chat call would replay the IDE roster.
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ code: 0, data: { list: [
+      { function: 'solo_agent', models: [{ name: 'Doubao-Seed-2.1-Pro', display_name: 'Seed-2.1-Pro', max_mode: true, context_window_tokens: { dev: 256000, max: 1000000 } }] },
+      { function: 'solo_work_remote', models: [{ name: 'Doubao-Seed-2.1-Pro', display_name: 'Seed-2.1-Pro-0915', max_mode: false, context_window_tokens: { dev: 256000, max: 0 } }] },
+      { function: 'chat_v3', models: [{ name: 'Doubao-Seed-2.1-Pro', display_name: 'Seed-2.1-Pro-0915', max_mode: true, context_window_tokens: { dev: 116000, max: 1000000 } }] },
+    ] } }), { status: 200 }))
+    const client = new TraeSoloRemoteCatalogClient({ credential: async () => credential, fetchImpl: fetchImpl as unknown as typeof fetch })
+    const models = await client.fetchModels()
+    expect(models[0]?.contextWindow).toBe(256000)
+    expect(models[0]?.maxContextWindow).toBe(1000000)
+    expect(models[0]?.function).toBe('solo_work_remote')
   })
 })
 
@@ -211,5 +425,33 @@ describe('cross-group dedupe keeps the most capable row (issue #23)', () => {
     // model without `maxContextWindow` can never honour the user's 1M budget.
     // The point of the assertion is the single-element set, not the value.
     expect(new Set(observed)).toEqual(new Set(['116000/1000000']))
+  })
+})
+
+describe('restricted network end-to-end: issue #19 models survive', () => {
+  it('keeps the nine solo_agent-only models visible and callable-ish', async () => {
+    // The directory answers with the solo_agent group only — exactly the
+    // restricted-network shape docs/ISSUE19_DIAGNOSIS.md describes.
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ code: 0, data: { list: [
+      { function: 'solo_work_remote', models: [{ name: 'glm-5.3', display_name: 'GLM-5.3' }] },
+      { function: 'solo_agent', models: [
+        { name: 'gpt-5.5' }, { name: 'gpt-5.6-sol' }, { name: 'gpt-6-astra' },
+        { name: 'glm-5.2' }, { name: 'kimi-k2.7-code' }, { name: 'Dola-Seed-2.0-Code' },
+        { name: 'deepseek-v4-flash-0731' }, { name: 'gpt-5.6-luna' }, { name: 'gpt-5.6-terra' },
+      ] },
+    ] } }), { status: 200 }))
+    const client = new TraeSoloRemoteCatalogClient({ credential: async () => credential, fetchImpl: fetchImpl as unknown as typeof fetch })
+    const remote = await client.fetchModels()
+    // The wire roster is empty in this scenario.
+    const merged = mergeTraeModelSources(remote, [])
+    const callable = withChatCallableFunctions(merged, TRAE_DIRECTORY_FUNCTIONS['cn'])
+    // Before the fix: callable was 1 (only glm-5.3) — all nine vanished.
+    expect(callable).toHaveLength(10)
+    expect(callable.map(m => m.id)).toContain('gpt-5.5')
+    expect(callable.map(m => m.id)).toContain('glm-5.2')
+    // The chat group keeps its function; the solo_agent ones are demoted to
+    // "no function" so the bridge uses the default chat function.
+    expect(callable.find(m => m.id === 'glm-5.3')?.wireFunction).toBe('solo_work_remote')
+    expect(callable.find(m => m.id === 'glm-5.2')?.wireFunction).toBeUndefined()
   })
 })

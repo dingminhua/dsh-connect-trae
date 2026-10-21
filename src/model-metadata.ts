@@ -19,6 +19,19 @@ export interface TraeDiscoveredModel {
   creditMultiplier?: number
   reasoningSupported: boolean
   reasoning?: TraeDiscoveredReasoning
+  /**
+   * The directory group the model was seen under (`data.list[].function`).
+   *
+   * The Remote `/models` answer is grouped by SOLO function and the group is
+   * the authoritative statement of which function the model belongs to — the
+   * `config_name` the gateway accepts is isolated per function, so a model in
+   * `solo_work_remote` answers 4001 when asked through `solo_work_lite`. The
+   * wire join (see `mergeTraeModelSources`) prefers its own
+   * `get_detail_param` function and uses this as the fallback when the roster
+   * has nothing to say (restricted networks often return an empty
+   * `config_info_list` for the chat functions).
+   */
+  function?: string
 }
 
 interface RawTraeRemoteModel {
@@ -52,8 +65,15 @@ const EFFORT_MAP: Readonly<Record<string, TraeReasoningEffort>> = {
   extra_high: 'xhigh',
 }
 
-/** Parse only capabilities explicitly advertised by Trae's remote model API. */
-export function parseTraeRemoteModel(value: unknown): TraeDiscoveredModel | undefined {
+/**
+ * Parse only capabilities explicitly advertised by Trae's remote model API.
+ *
+ * @param groupFunction The `data.list[].function` of the group this raw row
+ * was read from; attached verbatim so downstream can replay the model's own
+ * function instead of the `llm_utils_chat` default (see
+ * {@link TraeDiscoveredModel.function}).
+ */
+export function parseTraeRemoteModel(value: unknown, groupFunction?: string): TraeDiscoveredModel | undefined {
   const raw = record(value) as RawTraeRemoteModel | undefined
   if (raw === undefined || typeof raw.name !== 'string' || raw.name === '') return undefined
   const context = record(raw.context_window_tokens)
@@ -84,5 +104,6 @@ export function parseTraeRemoteModel(value: unknown): TraeDiscoveredModel | unde
     ...creditMultiplier === undefined ? {} : { creditMultiplier },
     reasoningSupported,
     ...supported.length === 0 ? {} : { reasoning: { supported, ...defaultEffort === undefined ? {} : { defaultEffort } } },
+    ...groupFunction === undefined || groupFunction === '' ? {} : { function: groupFunction },
   }
 }
