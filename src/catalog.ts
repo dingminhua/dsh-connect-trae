@@ -280,7 +280,9 @@ export interface TraeWireModel {
  *    name has nothing to show in the picker.
  *
  * The display-name-collision test lives in the merge itself (it needs the
- * Remote rows to compare against); see {@link mergeTraeModelSources}.
+ * Remote rows to compare against); see {@link mergeTraeModelSources}. It is a
+ * CAPABILITY test there, not a name test: a collision only suppresses a row
+ * when the equally-named row is at least as capable.
  *
  * The survivors are exactly the models a user would recognise and the IDE
  * offers but the plugin hid: `kimi-k2` / `kimi-k2-0905`, `glm-4.6`,
@@ -495,37 +497,75 @@ export function mergeTraeModelSources(
   // is a normal state, not a contradiction.
   //
   // Promotion is NOT unconditional — see {@link isPromotableWireModel} for the
-  // four upstream signals a row must carry (a real model usage, a Trae
-  // preset source, a real display name, and a display name no Remote row
-  // already claims). Measured on the live account, that filter turns 50
-  // wire-only rows into 12 real models and rejects 38 tool/custom/alias rows.
+  // upstream signals a row must carry (a real model usage, a Trae preset
+  // source, a real display name), plus the capability test below for rows whose
+  // display name another row already claims.
   //
   // A promoted row is a full catalog row: it carries the wire's own id (which
   // IS its `config_name`, so no `wireConfigName` is needed), the wire's
   // function, its context window, its output cap, its multiplier and its
   // promotion rule — every field the wire roster already parsed.
   const remoteIds = new Set(remote.map(model => displayKey(model.id)))
-  const remoteNames = new Set(remote.map(model => displayKey(model.name)).filter(name => name !== ''))
+  /**
+   * Display name -> the LARGEST context window claimed under it.
+   *
+   * A name collision does NOT by itself mean "alias". Two rows sharing a
+   * display name are sometimes genuinely different models, and the only
+   * upstream signal that separates them is capability. Measured 2026-10-22 on
+   * a live CN credential:
+   *
+   *  - `kimi-k2` (28000) and `kimi-k2-0905` (168000) BOTH display as
+   *    `Kimi-K2-0905` — and both ANSWER (verified: `kimi-k2-0905` answers
+   *    under `solo_coder` and `chat_v3`). Dropping the second one hid a real
+   *    168k model behind an equally-named 28k one, which is exactly the
+   *    "dated snapshot the IDE offers, the plugin does not" complaint of
+   *    issue #46.
+   *  - `minimax-m2` (100000, `chat_v3`) and `minimax-m2-auto` (168000,
+   *    `solo_coder`) both display as `MiniMax-M2` — again a bigger config
+   *    behind an equally-named smaller one.
+   *  - `glm-4.7` and `glm-4.7-auto` both display as `GLM-4.7` with IDENTICAL
+   *    metadata (100000/16000/`chat_v3`) — a true duplicate, and promoting it
+   *    would list one model twice for no gain.
+   *  - `glm-5.2_advisor_default` (168000) is SMALLER than the skeleton's
+   *    `glm-5.2` (200000), so it is an internal re-routing of a model the user
+   *    already has in full — not worth a second row.
+   *
+   * So the rule is: a collision skips the row UNLESS the new row carries a
+   * STRICTLY LARGER context window, in which case the user is being offered
+   * capability the equally-named row does not have and hiding it would cost
+   * them something real. Names are tracked with their best context so the
+   * comparison is always against the strongest claimant, whatever the order.
+   */
+  const claimedNames = new Map<string, number>()
+  const claim = (name: string, contextWindow: number | undefined): void => {
+    const key = displayKey(name)
+    if (key === '') return
+    claimedNames.set(key, Math.max(claimedNames.get(key) ?? 0, contextWindow ?? 0))
+  }
+  for (const model of remote) claim(model.name, model.contextWindow)
   for (const wireModel of wire) {
     if (remoteIds.has(displayKey(wireModel.id))) continue
     if (!isPromotableWireModel(wireModel)) continue
-    // A display name that is ALREADY CLAIMED means this row is an ALIAS of a
-    // model the catalog exposes, and promoting it would list one model twice
-    // under two ids.
-    //
-    // "Already claimed" covers both sources: the skeleton (measured:
-    // `Doubao_1_6` and `doubao-for-auto` both display as `Seed-Code`;
-    // `glm-5.1_advisor` as `GLM-5.1`; `glm-5.2_advisor_default` /
-    // `glm-5.2_advisor_doubao` as `GLM-5.2`) AND the rows promoted earlier in
-    // this same loop (measured: `glm-4.7` and `glm-4.7-auto` both display as
-    // `GLM-4.7`; `minimax-m2` and `minimax-m2-auto` both as `MiniMax-M2`).
-    // The promoted names are added to the set as they are accepted, so the
-    // first row of a family wins and its `-auto` twin stays out.
-    if (remoteNames.has(displayKey(wireModel.name))) continue
-    remoteNames.add(displayKey(wireModel.name))
+    // A display name already claimed means this row either aliases a model the
+    // catalog exposes or duplicates it. It earns its own row only when it is
+    // strictly more capable than the strongest claimant — see `claimedNames`.
+    const collides = claimedNames.has(displayKey(wireModel.name))
+    if (collides && (wireModel.contextWindow ?? 0) <= (claimedNames.get(displayKey(wireModel.name)) ?? 0)) continue
+    /**
+     * A surviving collision gets the id appended, because the whole point of
+     * promoting it is that the user can TELL IT APART from the equally-named
+     * row: two rows rendering as `MiniMax-M2` is a picker that lies about
+     * having one model. The id is the `config_name` the bridge sends, so it is
+     * also the most actionable disambiguator available.
+     */
+    const name = collides ? `${wireModel.name} (${wireModel.id})` : wireModel.name
+    claim(wireModel.name, wireModel.contextWindow)
+    // Register the disambiguated name too, so no later row can mint the same
+    // one and produce a second indistinguishable pair.
+    claim(name, wireModel.contextWindow)
     result.push({
       id: wireModel.id,
-      name: wireModel.name,
+      name,
       ...wireModel.contextWindow === undefined ? {} : { contextWindow: wireModel.contextWindow },
       ...wireModel.maxTokens === undefined ? {} : { maxTokens: wireModel.maxTokens },
       ...wireModel.creditMultiplier === undefined ? {} : { creditMultiplier: wireModel.creditMultiplier },

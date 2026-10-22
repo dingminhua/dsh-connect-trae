@@ -446,17 +446,87 @@ describe('mergeTraeModelSources', () => {
     expect(merged.map(model => model.id)).toEqual(['Doubao-Seed-Code'])
   })
 
-  it('does not promote a wire-only row whose display name duplicates a skeleton row', () => {
+  it('does not promote a wire-only row whose display name duplicates a skeleton row of equal capability', () => {
     // `glm-5.1_advisor` displays as `GLM-5.1`, which the skeleton already
-    // exposes. Promoting it would list ONE model twice under two ids.
+    // exposes at the same capability. Promoting it would list ONE model twice
+    // under two ids.
     const remote: TraeDiscoveredModel[] = [
-      { id: 'glm-5.1', name: 'GLM-5.1', multimodal: false, reasoningSupported: false },
+      { id: 'glm-5.1', name: 'GLM-5.1', multimodal: false, contextWindow: 100_000, reasoningSupported: false },
     ]
     const wire = [
-      { id: 'glm-5.1_advisor', name: 'GLM-5.1', usage: 'chat_completion', configSource: 1, function: 'chat_v3' },
+      { id: 'glm-5.1_advisor', name: 'GLM-5.1', contextWindow: 100_000, usage: 'chat_completion', configSource: 1, function: 'chat_v3' },
     ]
     const merged = mergeTraeModelSources(remote, wire)
     expect(merged.map(model => model.id)).toEqual(['glm-5.1'])
+  })
+
+  it('does not promote a wire-only row that is WEAKER than the skeleton row sharing its name', () => {
+    // Measured: `glm-5.2_advisor_default` is 168K against the skeleton's 200K
+    // `glm-5.2`. It is an internal re-routing of a model the user already has
+    // in full, so a second row would only add noise.
+    const remote: TraeDiscoveredModel[] = [
+      { id: 'glm-5.2', name: 'GLM-5.2', multimodal: false, contextWindow: 200_000, reasoningSupported: false },
+    ]
+    const wire = [
+      { id: 'glm-5.2_advisor_default', name: 'GLM-5.2', contextWindow: 168_000, usage: 'chat_completion', configSource: 1, function: 'solo_agent_remote' },
+    ]
+    expect(mergeTraeModelSources(remote, wire).map(model => model.id)).toEqual(['glm-5.2'])
+  })
+
+  it('PROMOTES a colliding row that is strictly more capable, disambiguated by id (issue #46)', () => {
+    // The measured case this rule exists for: `kimi-k2` (28K) and
+    // `kimi-k2-0905` (168K) both display as `Kimi-K2-0905`, and BOTH answer.
+    // Dropping the second hid a real 168K model behind an equally-named 28K
+    // one -- the "dated snapshot the IDE offers, the plugin does not" report.
+    const remote: TraeDiscoveredModel[] = [
+      { id: 'kimi-k2', name: 'Kimi-K2-0905', multimodal: false, contextWindow: 28_000, reasoningSupported: false },
+    ]
+    const wire = [
+      { id: 'kimi-k2-0905', name: 'Kimi-K2-0905', contextWindow: 168_000, maxTokens: 32_000, usage: 'chat_completion', configSource: 1, function: 'solo_coder' },
+    ]
+    const merged = mergeTraeModelSources(remote, wire)
+    expect(merged.map(model => model.id)).toEqual(['kimi-k2', 'kimi-k2-0905'])
+    // The names must be TELLABLE APART: two rows rendering as `Kimi-K2-0905`
+    // is a picker that lies about how many models it has.
+    const promoted = merged.find(model => model.id === 'kimi-k2-0905')
+    expect(promoted?.name).toBe('Kimi-K2-0905 (kimi-k2-0905)')
+    expect(promoted?.contextWindow).toBe(168_000)
+    expect(promoted?.wireFunction).toBe('solo_coder')
+    // The skeleton row keeps its own name untouched.
+    expect(merged.find(model => model.id === 'kimi-k2')?.name).toBe('Kimi-K2-0905')
+  })
+
+  it('promotes the bigger `-auto` twin but not an identical one', () => {
+    // Measured: `minimax-m2` is 100K/`chat_v3` while `minimax-m2-auto` is
+    // 168K/`solo_coder` -- different capability, so both belong. By contrast
+    // `glm-4.7` and `glm-4.7-auto` are identical (100K/16000/`chat_v3`), so the
+    // twin adds nothing.
+    const wire = [
+      { id: 'minimax-m2', name: 'MiniMax-M2', contextWindow: 100_000, maxTokens: 16_000, usage: 'chat_completion', configSource: 1, function: 'chat_v3' },
+      { id: 'minimax-m2-auto', name: 'MiniMax-M2', contextWindow: 168_000, maxTokens: 32_000, usage: 'chat_completion', configSource: 1, function: 'solo_coder' },
+      { id: 'glm-4.7', name: 'GLM-4.7', contextWindow: 100_000, maxTokens: 16_000, usage: 'chat_completion', configSource: 1, function: 'chat_v3' },
+      { id: 'glm-4.7-auto', name: 'GLM-4.7', contextWindow: 100_000, maxTokens: 16_000, usage: 'chat_completion', configSource: 1, function: 'chat_v3' },
+    ]
+    const merged = mergeTraeModelSources([], wire)
+    const ids = merged.map(model => model.id)
+    expect(ids).toContain('minimax-m2')
+    expect(ids).toContain('minimax-m2-auto')
+    expect(ids).toContain('glm-4.7')
+    // The identical twin is suppressed regardless of which one came first.
+    expect(ids).not.toContain('glm-4.7-auto')
+    expect(merged.find(model => model.id === 'minimax-m2-auto')?.name).toBe('MiniMax-M2 (minimax-m2-auto)')
+  })
+
+  it('compares a collision against the STRONGEST claimant, whatever the wire order', () => {
+    // A weaker row arriving after a stronger one must still be suppressed: the
+    // comparison is against the best context claimed under the name, not
+    // against whichever row happened to be seen last.
+    const wire = [
+      { id: 'a-strong', name: 'Shared', contextWindow: 200_000, usage: 'chat_completion', configSource: 1, function: 'chat_v3' },
+      { id: 'b-weak', name: 'Shared', contextWindow: 100_000, usage: 'chat_completion', configSource: 1, function: 'chat_v3' },
+    ]
+    const ids = mergeTraeModelSources([], wire).map(model => model.id)
+    expect(ids).toEqual(['a-strong'])
   })
 })
 
