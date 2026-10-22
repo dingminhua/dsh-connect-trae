@@ -95,7 +95,7 @@ export {
   type TraeRegion,
   type TraeRegionGateways,
 } from './region.ts'
-export { applyContextBudgets, applyImageSelection, deriveCatalog, discoveredCatalog, FALLBACK_TRAE_MODELS, FALLBACK_TRAE_MODELS_AI, fallbackModelsFor, mergeTraeModelSources, sanitizeCatalog, TraeCatalog, traeInputModalities, traeModelDisplayName, type TraeContextBudget, type TraeInputModality, type TraeModelInfo, type TraeWireModel } from './catalog.ts'
+export { applyContextBudgets, applyImageSelection, deriveCatalog, discoveredCatalog, FALLBACK_TRAE_MODELS, FALLBACK_TRAE_MODELS_AI, fallbackModelsFor, isPromotableWireModel, mergeTraeModelSources, sanitizeCatalog, TraeCatalog, traeInputModalities, traeModelDisplayName, type TraeContextBudget, type TraeInputModality, type TraeModelInfo, type TraeWireModel } from './catalog.ts'
 export { decryptTraeStorageValue, parseTraeAuthValue, parseTraeStorageDocument } from './decrypt.ts'
 export { identityHeaders, pickTraeStorageIdentity, readTraeCliIdentity, readTraeIdentity, resolveTraeIdentity, type TraeIdentity } from './identity.ts'
 export { parseObservedModelConfig, type TraeObservedModelConfig } from './model-config.ts'

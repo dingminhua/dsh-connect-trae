@@ -168,6 +168,19 @@ export interface TraeSoloModel {
   activityDiscount?: TraeActivityDiscount
   /** The directory function that listed this config (replayed when calling it). */
   function?: string
+  /**
+   * Upstream's `usage` for this config — `chat_completion` for a model,
+   * `custom_model` for the account's own custom model, and one value per
+   * built-in tool config. Absent means upstream did not say.
+   *
+   * The merge layer needs it to tell a MODEL from a TOOL (issue #46).
+   */
+  usage?: string
+  /**
+   * Upstream's `config_source` — 1 for a Trae preset, 3 for the account's own
+   * custom model. Absent means upstream did not say.
+   */
+  configSource?: number
 }
 
 /**
@@ -334,6 +347,21 @@ export class TraeSoloUpstreamClient {
       const display = typeof config['display_config'] === 'object' && config['display_config'] !== null ? config['display_config'] as Record<string, unknown> : {}
       const details = Array.isArray(config['model_detail_list']) ? config['model_detail_list'] : []
       const detail = typeof details[0] === 'object' && details[0] !== null ? details[0] as Record<string, unknown> : {}
+      // The row's OWN display name, kept apart from the fallback below.
+      //
+      // Upstream publishes a DIFFERENT `display_name` for the same config
+      // depending on which function asked (issue #46, measured 2026-10-22 on
+      // a live CN credential): `doubao-for-auto` is `''` under `chat_v3` and
+      // `Seed-Code` under `solo_coder`; `glm-4.7-auto` is `''` and `GLM-4.7`;
+      // `Doubao-Seed-2.0-Code` is `Doubao-Seed-2.1-Turbo` under the two
+      // `solo_work_*` functions and `Doubao-Seed-2.0-Code` under `solo_coder`.
+      //
+      // The first function to list the id wins the row, and with it the
+      // FUNCTION (which is what makes the model callable), so the NAME is
+      // collected separately and the richest one is kept: a function that
+      // publishes an empty name must not blank out a name another function
+      // published for the same config.
+      const rawName = typeof display['display_name'] === 'string' ? display['display_name'] : ''
       // get_detail_param's real field names (verified 2026-08-30): the context
       // window is `model_detail_list[].prompt_max_tokens` (or the top-level
       // `context_window_tokens.dev`), and max output is `model_detail_list[].max_tokens`.
@@ -349,18 +377,49 @@ export class TraeSoloUpstreamClient {
       const reasoning = parseReasoningCapability({ ...config, ...detail })
       const creditMultiplier = wireCreditMultiplier(config)
       const activityDiscount = wireActivityDiscount(config)
+      // What this config is FOR, and where it came from (verified 2026-10-22
+      // on a live CN credential). `usage` is `chat_completion` for a real
+      // model, `custom_model` for the account's own custom model, and one
+      // value per built-in tool config (`summary`, `title_generation`,
+      // `fast_apply`, `input_optimization`, …). `config_source` is 1 for a
+      // Trae preset and 3 for the account's own custom model.
+      //
+      // The merge layer needs both to tell a MODEL from a TOOL and a Trae
+      // preset from the user's own model — without them it would promote the
+      // IDE's helper configs into the model picker (issue #46).
+      const usage = typeof config['usage'] === 'string' && config['usage'] !== '' ? config['usage'] : undefined
+      const configSource = typeof config['config_source'] === 'number' && Number.isFinite(config['config_source']) ? config['config_source'] : undefined
       // First function to list a config_name owns it: TRAE_DIRECTORY_FUNCTIONS
       // is ordered by precedence, and this is what makes a model callable (the
       // chat call replays this exact function).
-      if (byId.has(id)) continue
+      //
+      // The owning ROW is kept as published (its function, its context, its
+      // output cap), but the NAME is upgraded when a later function published a
+      // real one for the same config: the owning function is the one that
+      // decides callability, and it is not the one that always knows the
+      // name. Measured: `doubao-for-auto` is nameless under `chat_v3` (the
+      // owning function) and named `Seed-Code` under `solo_coder`.
+      const existing = byId.get(id)
+      if (existing !== undefined) {
+        // A name is only an UPGRADE when it is a REAL one: upstream publishes
+        // the placeholder `-` for a config it has no name for (`sagitta`,
+        // `aquila`), and adopting that placeholder would put a bare `-` in
+        // front of the user as a model name.
+        if (existing.name === id && rawName !== '' && rawName !== '-') {
+          existing.name = rawName
+        }
+        continue
+      }
       byId.set(id, {
         id,
-        name: typeof display['display_name'] === 'string' && display['display_name'] !== '' ? display['display_name'] : id,
+        name: rawName !== '' && rawName !== '-' ? rawName : id,
         ...contextWindow === undefined ? {} : { contextWindow },
         ...maxTokens === undefined ? {} : { maxTokens },
         ...reasoning === undefined ? {} : { reasoning },
         ...creditMultiplier === undefined ? {} : { creditMultiplier },
         ...activityDiscount === undefined ? {} : { activityDiscount },
+        ...usage === undefined ? {} : { usage },
+        ...configSource === undefined ? {} : { configSource },
         function: directoryFunction,
       })
     }

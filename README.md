@@ -109,11 +109,10 @@ DSH PiAiAdapter（每个 provider 一套）
 
 插件提供的是 Trae **SOLO 通道**的模型（`DeepSeek-V4-Flash-Official`、`DeepSeek-V4-Pro-Official`、`GLM-5.3`、`GLM-5.2`、`Kimi-K3`、`MiniMax-M3`、`Qwen3.8-Max`、`Doubao-Seed-*` 等），三个面板均走这条通道。企业池另有一份名录（例如 `DeepSeek-V4.1-Flash` 只有企业池列），所以两边勾选互不覆盖。
 
-以下 3 个模型目前来自 **TraeCode（Trae IDE）通道**，尚未开放到 SOLO 通道：
+以下 2 个模型目前来自 **TraeCode（Trae IDE）通道**，尚未开放到 SOLO 通道：
 
 | 模型 |
 | --- |
-| `glm-5.3-flash` |
 | `kimi-k2.8-preview` |
 | `qwen3.8-flash` |
 
@@ -138,7 +137,13 @@ Trae does not serve this model under the SOLO function the request used
 > 全部返回 `4001 param is invalid`。**上游后来把它开放到了 SOLO 通道**：当前实时目录里它带
 > `wireFunction: solo_work_remote`，可正常调用（已实测刷新确认）。文档此前未同步，现已从表中移除。
 
-> 注意区分：**`GLM-5.3` 是支持的**（走 SOLO 通道），但 **`glm-5.3-flash` 不支持**——两者是不同的模型。
+> `glm-5.3-flash` 同样曾在此列，**4.4.0 起已移除**：上游后来开放了它，当前实时 wire 名单里它带
+> `wireFunction: solo_work_remote`（实测）。**目录侧那一行一直都在**——它此前被列出来的原因是
+> Remote 目录列出了它而 wire 名单没有，于是既拿不到调用 id、也从未进入可调用名单；
+> 4.4.0 修好了「wire 有而目录没有」与「目录问了但没问全」两处之后，它作为**普通可调用模型**出现。
+
+> 注意区分：**`GLM-5.3` 是支持的**（走 SOLO 通道）。`glm-5.3-flash` 现在**也支持了**——
+> 它与 `GLM-5.3` 始终是两个不同的模型，但前者已开放到 SOLO 通道。
 
 如果你现在就要用这 3 个模型，请直接在 **Trae IDE 本体**中使用。
 

@@ -1171,6 +1171,41 @@ export function nextRegionPool(
   return nextRegionSlots(regionsMapOf(value), panel, { ...regionSlotOf(value, panel), pool })
 }
 
+/**
+ * Build the next `regions` settings value for one panel's MODEL DIRECTORY.
+ *
+ * The model-directory save REPLACES the whole region slot, so every field of
+ * that slot must be carried through — the ones the save does not name are
+ * silently dropped. Two were being dropped this way:
+ *
+ *  - `pool` (issue #44): the account-pool preferences. Enabling the pool and
+ *    then saving the model list turned the pool back OFF, and the card came
+ *    back showing "not saved" — the switch looked broken.
+ *  - `creditPosition`: which seat this region's credit readout occupies, so
+ *    saving the model list silently moved the readout back.
+ *
+ * Both are the user's standing choices, not the model directory's business.
+ * The stored slot is therefore SPREAD and the directory fields override it, so
+ * the save owns exactly the five fields it knows about and inherits the rest.
+ *
+ * `value` may be the whole settings section or the `regions` map; the RETURN
+ * value is always the `regions` map, i.e. exactly what `settingsScope.set(
+ * 'regions', ...)` needs.
+ */
+export function nextRegionDirectory(
+  value: unknown,
+  panel: TraePanel,
+  directory: {
+    enabled: boolean
+    lastCatalog: readonly unknown[]
+    enabledModelIds: readonly string[]
+    imageModelIds: readonly string[]
+    contextBudgets: Record<string, number>
+  },
+): Record<string, unknown> {
+  return nextRegionSlots(regionsMapOf(value), panel, { ...regionSlotOf(value, panel), ...directory })
+}
+
 /** Subscription status of an international (ai) account, rendered instead of the CN credit packs. */
 export interface TraeWebPayStatus {
   isDollarUsageBilling: boolean

@@ -225,6 +225,85 @@ export interface TraeWireModel {
    * during the merge — the precedence `creditMultiplier` already follows.
    */
   activityDiscount?: TraeActivityDiscount
+  /**
+   * Upstream's `usage` for this config — what the config is FOR.
+   *
+   * Read from `get_detail_param`'s top-level `usage` field (verified
+   * 2026-10-22 on a live CN credential): `chat_completion` for a real model,
+   * `custom_model` for a user's own custom model, and one value per built-in
+   * tool config (`summary`, `title_generation`, `fast_apply`,
+   * `input_optimization`, …).
+   *
+   * It is the discriminator that separates a MODEL from a TOOL, and
+   * {@link mergeTraeModelSources} needs it to decide which wire-only rows may
+   * be promoted into the catalog (issue #46). Absent means "upstream did not
+   * say" — never "assume it is a tool", and never "assume it is a model".
+   */
+  usage?: string
+  /**
+   * Upstream's `config_source` for this config.
+   *
+   * `1` is a Trae preset; `3` is the account's own custom model (it carries a
+   * `custom_config` with the user's own base_url and key). The plugin does not
+   * serve a user's custom model, so a `3` row is never promoted (issue #46).
+   * Absent means "upstream did not say".
+   */
+  configSource?: number
+}
+
+/**
+ * Whether a wire row is a USER-FACING MODEL that the catalog may expose.
+ *
+ * Issue #46: the Remote directory is the catalog's SKELETON, but the wire
+ * roster knows models the skeleton does not — and the skeleton systematically
+ * omits one whole CLASS of them: the dated snapshot configs
+ * (`kimi-k2-0905`, `seed-code-pro-0430`, …). Measured 2026-10-22 on a live
+ * CN credential, the Remote skeleton carried **zero** dated config_names
+ * while the wire roster carried three, so every one of them was dropped by
+ * the join and the user could not reach the snapshot the IDE offered them.
+ *
+ * A row qualifies only when ALL of the following hold — each test is an
+ * upstream signal, none of them invented:
+ *
+ *  - `usage === 'chat_completion'` — it is a model, not a tool config. The
+ *    wire roster mixes models with the IDE's own helpers (`summary`,
+ *    `title_generation`, `fast_apply`, `input_optimization`) and with the
+ *    account's custom models (`usage: 'custom_model'`); none of those belong
+ *    in a model picker. Measured: this one test removed 23 of 50 wire-only
+ *    rows, and every row it removed was a tool or a custom model.
+ *  - `config_source === 1` — a Trae preset, not the account's own custom
+ *    model (source 3, which carries the user's own base_url and key). The
+ *    plugin must not offer to bill a model it does not host.
+ *  - a REAL display name — not empty, not the upstream placeholder `-`, not a
+ *    bare config identifier (`search_agent_qwen_fast`,
+ *    `computer_use_subagent`), and not the config's OWN id. A model with no
+ *    name has nothing to show in the picker.
+ *
+ * The display-name-collision test lives in the merge itself (it needs the
+ * Remote rows to compare against); see {@link mergeTraeModelSources}.
+ *
+ * The survivors are exactly the models a user would recognise and the IDE
+ * offers but the plugin hid: `kimi-k2` / `kimi-k2-0905`, `glm-4.6`,
+ * `glm-4.7`, `glm-5-turbo`, `minimax-m2`, `minimax-m2.1`, `qwen3-coder`,
+ * `seed-code-pro-0430`.
+ */
+export function isPromotableWireModel(model: TraeWireModel): boolean {
+  if (model.usage !== 'chat_completion') return false
+  if (model.configSource !== 1) return false
+  const name = model.name.trim()
+  if (name === '' || name === '-') return false
+  // The name is the config's OWN id: upstream published no display name for
+  // it, and the wire client falls back to the id in that case. Measured: the
+  // codename configs `sagitta` and `aquila` are published with the placeholder
+  // `-` by some functions and with nothing at all by others, so their "name"
+  // is just the id — a codename the user cannot act on, offered under a name
+  // that says nothing about what the model is.
+  if (name === model.id.trim()) return false
+  // A bare identifier (`search_agent_qwen_fast`) is a config name wearing a
+  // display-name hat, not a model name: it carries an underscore and no
+  // space, which is how every upstream tool config spells itself.
+  if (!name.includes(' ') && name.includes('_')) return false
+  return true
 }
 
 /** Normalise a display name for cross-source joining. */
@@ -272,6 +351,20 @@ function displayKey(name: string): string {
  *     models whose display id differs from the wire id across Trae versions.
  * When the matched wire `config_name` differs from the remote id it is recorded
  * as `wireConfigName`; otherwise it is left undefined (id is already the wire id).
+ *
+ * The DISPLAY NAME stays the Remote skeleton's (issue #46). The wire roster
+ * was measured as a name source and REJECTED: it disagrees with the Trae
+ * IDE's own roster on 32 of 81 ids, while the skeleton disagrees on 3 of 33.
+ * The wire roster is function-scoped — the same id carries a different
+ * `display_name` per function — and the plugin's wire client reads the CHAT
+ * functions, so it can land on a name the IDE's picker never shows. The wire
+ * keeps its own roles: the `config_name`, the function, the output cap, the
+ * multiplier and the promotion rule.
+ *
+ * Rows the Remote skeleton does not know but the wire roster does are
+ * PROMOTED (issue #46) — subject to {@link isPromotableWireModel}. The
+ * skeleton systematically omits the dated snapshot configs, so without
+ * promotion every snapshot the IDE offers is unreachable from the plugin.
  */
 export function mergeTraeModelSources(
   remote: readonly TraeDiscoveredModel[],
@@ -340,6 +433,25 @@ export function mergeTraeModelSources(
     const activityDiscount = wireModel?.activityDiscount ?? model.activityDiscount
     result.push({
       id: model.id,
+      // The DISPLAY NAME comes from the Remote skeleton (issue #46).
+      //
+      // The wire roster was tried here first and MEASURED WRONG, so the
+      // reason is recorded rather than left as an assertion: measured
+      // 2026-10-22 on a live CN credential, the wire roster
+      // (`get_detail_param`) disagrees with the Trae IDE's own roster
+      // (`batch_get_detail_param`, the source the IDE picker renders) on
+      // **32** of 81 ids, while the Remote skeleton disagrees on only **3**
+      // of 33. The wire roster is the FUNCTION-SCOPED view — the same id
+      // carries a different `display_name` depending on which function asked
+      // (measured: 10 of 102 ids carry more than one name across the IDE's
+      // own functions — `DeepSeek-V4-Pro-Official` is both
+      // `DeepSeek-V4-Pro` and `DeepSeek-V4-Pro 正式版`), and the plugin's
+      // wire client reads the CHAT functions, so it can land on the name a
+      // chat function publishes rather than the one the picker shows.
+      //
+      // So the skeleton stays the authority for the NAME, and the wire keeps
+      // its own roles: it owns the `config_name`, the function, the output
+      // cap, the multiplier and the promotion rule.
       name: model.name,
       ...model.contextWindow === undefined ? {} : { contextWindow: model.contextWindow },
       ...model.maxContextWindow === undefined ? {} : { maxContextWindow: model.maxContextWindow },
@@ -363,6 +475,78 @@ export function mergeTraeModelSources(
       },
       ...wireModel !== undefined && wireModel.id !== '' && wireModel.id !== model.id ? { wireConfigName: wireModel.id } : {},
       ...wireFunction === undefined ? {} : { wireFunction },
+    })
+  }
+  // Rows the Remote skeleton does not know but the wire roster does (issue #46).
+  //
+  // The skeleton is the catalog's SKELETON, but it is not complete: measured
+  // 2026-10-22 on a live CN credential it carried ZERO dated snapshot
+  // config_names (`kimi-k2-0905`, `seed-code-pro-0430`, …) while the wire
+  // roster carried three. Every dated snapshot was therefore dropped by the
+  // join above, and the user could not reach the model the IDE offered them —
+  // the report behind issue #46 ("the IDE lists DeepSeek-V4.1-Flash-1017, the
+  // plugin does not").
+  //
+  // The same reasoning that made issue #19 keep a REMOTE row with no wire
+  // match applies here with the sides swapped: a roster's silence is not
+  // proof that a model is absent, it is proof that THIS directory does not
+  // list it. The rosters are account-scoped and the two directories snapshot
+  // different revisions, so a model present in one and absent from the other
+  // is a normal state, not a contradiction.
+  //
+  // Promotion is NOT unconditional — see {@link isPromotableWireModel} for the
+  // four upstream signals a row must carry (a real model usage, a Trae
+  // preset source, a real display name, and a display name no Remote row
+  // already claims). Measured on the live account, that filter turns 50
+  // wire-only rows into 12 real models and rejects 38 tool/custom/alias rows.
+  //
+  // A promoted row is a full catalog row: it carries the wire's own id (which
+  // IS its `config_name`, so no `wireConfigName` is needed), the wire's
+  // function, its context window, its output cap, its multiplier and its
+  // promotion rule — every field the wire roster already parsed.
+  const remoteIds = new Set(remote.map(model => displayKey(model.id)))
+  const remoteNames = new Set(remote.map(model => displayKey(model.name)).filter(name => name !== ''))
+  for (const wireModel of wire) {
+    if (remoteIds.has(displayKey(wireModel.id))) continue
+    if (!isPromotableWireModel(wireModel)) continue
+    // A display name that is ALREADY CLAIMED means this row is an ALIAS of a
+    // model the catalog exposes, and promoting it would list one model twice
+    // under two ids.
+    //
+    // "Already claimed" covers both sources: the skeleton (measured:
+    // `Doubao_1_6` and `doubao-for-auto` both display as `Seed-Code`;
+    // `glm-5.1_advisor` as `GLM-5.1`; `glm-5.2_advisor_default` /
+    // `glm-5.2_advisor_doubao` as `GLM-5.2`) AND the rows promoted earlier in
+    // this same loop (measured: `glm-4.7` and `glm-4.7-auto` both display as
+    // `GLM-4.7`; `minimax-m2` and `minimax-m2-auto` both as `MiniMax-M2`).
+    // The promoted names are added to the set as they are accepted, so the
+    // first row of a family wins and its `-auto` twin stays out.
+    if (remoteNames.has(displayKey(wireModel.name))) continue
+    remoteNames.add(displayKey(wireModel.name))
+    result.push({
+      id: wireModel.id,
+      name: wireModel.name,
+      ...wireModel.contextWindow === undefined ? {} : { contextWindow: wireModel.contextWindow },
+      ...wireModel.maxTokens === undefined ? {} : { maxTokens: wireModel.maxTokens },
+      ...wireModel.creditMultiplier === undefined ? {} : { creditMultiplier: wireModel.creditMultiplier },
+      ...wireModel.activityDiscount === undefined ? {} : { activityDiscount: wireModel.activityDiscount },
+      input: ['text'],
+      // The wire roster does not publish a multimodal flag (the Remote
+      // directory does), so a promoted row is text-only until the user
+      // opts in — the same safe default as any row without that flag.
+      reasoningSupported: wireModel.reasoning !== undefined,
+      ...wireModel.reasoning === undefined ? {} : {
+        // The wire's reasoning capability is a READ-ONLY list; the catalog row
+        // carries a mutable one, so the list is copied rather than aliased.
+        reasoning: {
+          supported: [...wireModel.reasoning.supported],
+          ...wireModel.reasoning.defaultEffort === undefined ? {} : { defaultEffort: wireModel.reasoning.defaultEffort },
+        },
+        reasoningEfforts: Object.fromEntries(wireModel.reasoning.supported.map(effort => [effort, effort === 'low' ? 'light' : effort === 'xhigh' ? 'extra_high' : 'high'])) as Partial<Record<TraeReasoningEffort, string>>,
+      },
+      // The row's own id IS its wire `config_name` (the roster's ids are the
+      // names `llm_utils_chat` accepts), so no `wireConfigName` is emitted.
+      ...wireModel.function === undefined ? {} : { wireFunction: wireModel.function },
     })
   }
   return result

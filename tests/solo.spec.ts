@@ -110,6 +110,90 @@ describe('Trae SOLO protocol', () => {
     expect(fetchImpl.mock.calls[0]?.[0]).toBe('https://trae-api-cn.mchost.guru/api/ide/v1/get_detail_param')
   })
 
+  it('reads the row purpose and source, so a model can be told from a tool (issue #46)', async () => {
+    // The wire roster mixes real models with the IDE's own helper configs and
+    // with the account's custom models. `usage` says what a config is FOR
+    // (`chat_completion` for a model, `custom_model` for the account's own
+    // model, one value per built-in tool) and `config_source` says where it
+    // came from (1 = Trae preset, 3 = the account's own custom model).
+    //
+    // The merge layer needs both to decide which wire-only rows may be
+    // promoted into the catalog — without them it would put the IDE's helper
+    // configs into the model picker.
+    const fetchImpl = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => new Response(JSON.stringify({ config_info_list: [{
+      config_name: 'kimi-k2-0905', display_config: { display_name: 'Kimi-K2-0905' },
+      usage: 'chat_completion', config_source: 1,
+      model_detail_list: [{ prompt_max_tokens: 200000, max_tokens: 32000 }],
+    }, {
+      config_name: 'title_generation', display_config: { display_name: 'title_generation' },
+      usage: 'title_generation', config_source: 1,
+      model_detail_list: [{ prompt_max_tokens: 100000, max_tokens: 4096 }],
+    }, {
+      // The account's own custom model: source 3, and it carries the user's
+      // own base_url and key.
+      config_name: 'custom_model_gpt-6', display_config: { display_name: 'GPT-5.6' },
+      usage: 'custom_model', config_source: 3,
+      model_detail_list: [{ prompt_max_tokens: 100000, max_tokens: 32000 }],
+    }] }), { status: 200, headers: { 'content-type': 'application/json' } }))
+    const client = new TraeSoloUpstreamClient({ credential: async () => credential, identity: async () => identity, fetchImpl })
+    const models = await client.fetchModels()
+    expect(models.find(model => model.id === 'kimi-k2-0905')).toMatchObject({
+      usage: 'chat_completion',
+      configSource: 1,
+    })
+    expect(models.find(model => model.id === 'title_generation')).toMatchObject({
+      usage: 'title_generation',
+      configSource: 1,
+    })
+    expect(models.find(model => model.id === 'custom_model_gpt-6')).toMatchObject({
+      usage: 'custom_model',
+      configSource: 3,
+    })
+  })
+
+  it('keeps the richest display name when several functions list the same config (issue #46)', async () => {
+    // Upstream publishes a DIFFERENT `display_name` for the same config
+    // depending on which function asked (measured 2026-10-22 on a live CN
+    // credential): `doubao-for-auto` is nameless under `chat_v3` and named
+    // `Seed-Code` under `solo_coder`; `Doubao-Seed-2.0-Code` is
+    // `Doubao-Seed-2.1-Turbo` under the two `solo_work_*` functions and
+    // `Doubao-Seed-2.0-Code` under `solo_coder`.
+    //
+    // The first function to list the config owns the row (its function is what
+    // makes the model callable), but it is not the one that always knows the
+    // name — so a nameless owner must not blank out a name another function
+    // published for the same config.
+    const fetchImpl = vi.fn(async (url: string | URL | Request, _init?: RequestInit) => {
+      const body = JSON.parse(String((_init?.body as string) ?? '{}')) as { function: string }
+      const rows = body.function === 'solo_coder'
+        ? [{ config_name: 'doubao-for-auto', display_config: { display_name: 'Seed-Code' }, usage: 'chat_completion', config_source: 1 }]
+        : [{ config_name: 'doubao-for-auto', display_config: { display_name: '' }, usage: 'chat_completion', config_source: 1 }]
+      return new Response(JSON.stringify({ config_info_list: rows }), { status: 200, headers: { 'content-type': 'application/json' } })
+    })
+    const client = new TraeSoloUpstreamClient({ credential: async () => credential, identity: async () => identity, fetchImpl })
+    const models = await client.fetchModels()
+    const row = models.find(model => model.id === 'doubao-for-auto')
+    // The name comes from the function that knew it …
+    expect(row?.name).toBe('Seed-Code')
+    // … and the FUNCTION still comes from the first (owning) function, because
+    // that is what makes the model callable. `solo_work_remote` is the first
+    // function in the plugin's precedence order that lists this config.
+    expect(row?.function).toBe('solo_work_remote')
+  })
+
+  it('leaves the purpose and source absent when upstream does not say', async () => {
+    // "Upstream did not say" is never "assume it is a model": the fields stay
+    // undefined so the merge layer refuses to promote the row.
+    const fetchImpl = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => new Response(JSON.stringify({ config_info_list: [{
+      config_name: 'glm-5.2', display_config: { display_name: 'GLM-5.2' },
+      model_detail_list: [{ prompt_max_tokens: 168000, max_tokens: 32000 }],
+    }] }), { status: 200, headers: { 'content-type': 'application/json' } }))
+    const client = new TraeSoloUpstreamClient({ credential: async () => credential, identity: async () => identity, fetchImpl })
+    const models = await client.fetchModels()
+    expect(models[0]?.usage).toBeUndefined()
+    expect(models[0]?.configSource).toBeUndefined()
+  })
+
   it('reads the post-discount credit multiplier from display_contact_config', async () => {
     // The Trae IDE renders `consumption_rate.data.rate` from the second-layer
     // JSON in `display_contact_config` (commit 1.4.2). Restoring this parser

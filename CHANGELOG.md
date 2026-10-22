@@ -1,5 +1,95 @@
 # Changelog
 
+## 4.4.0 (2026-10-22)
+
+> **模型表不再系统性排除「带日期的快照配置」；账号池开关不再被模型目录的保存冲掉。**
+>
+> 两条都来自 [issue #46](https://github.com/dingminhua/dsh-connect-trae/issues/46)
+> （yuantao313：「模型列表不对齐，无法获取DeepseekV4.1 Flash 1017模型ID · 插件中无法获取Trae的1017模型，
+> 只能使用正式版」）。诊断见 [`docs/ISSUE46_DIAGNOSIS.md`](https://github.com/dingminhua/dsh-connect-trae/blob/main/docs/ISSUE46_DIAGNOSIS.md)。
+> 版本号取 **minor**：模型名录的行为变了（多出一批此前拿不到的模型），接口与配置项零变更。
+
+### 修复
+
+- **模型表补齐 wire 名单里有、Remote 目录里没有的模型**（`fix(catalog)`，issue #46）。
+  - 目录是「Remote 骨架 × wire 名单」两张表 join 出来的，而 `mergeTraeModelSources()`
+    **只遍历骨架** —— wire 有、骨架没有的行被整体丢掉。这不是零星遗漏，而是**一整类别的系统性缺失**：
+    **实测**本机 CN 账号上，Remote 骨架里带日期的 config_name **一个都没有**（`kimi-k2-0905`、
+    `seed-code-pro-0430`、`search_agent_qwen_fast-0710` 全在 wire 名单里），于是**每一个带日期的
+    模型插件都拿不到**。这正是报告人「IDE 有 `DeepSeek-V4.1-Flash-1017`、插件没有」的直接成因。
+  - 提升**不是无条件的**：`isPromotableWireModel()` 要求四个上游信号同时成立 ——
+    `usage === 'chat_completion'`（真模型，不是 IDE 的工具配置也不是账号的自定义模型）、
+    `config_source === 1`（Trae 预设，不是用户自己的 custom model）、
+    显示名是**真名字**（非空、非上游占位符 `-`、非 config 标识符、且不等于自己的 id）、
+    显示名**未被已存在的行占用**（否则同一模型会以两个 id 出现两次）。
+    **实测**：50 行 wire-only 收敛为 7 个真模型，其余 43 行（工具配置 / 自定义模型 / 别名 /
+    `-auto` 孪生行 / codename config）仍被正确排除。
+  - 被提升的行是**完整的目录行**：带自己的 id（那就是它的 `config_name`，所以不产生
+    `wireConfigName`）、所属 function、上下文窗口、输出上限、倍率与促销规则。
+
+- **Remote 目录多问几个 function**（`fix(solo-remote)`，issue #46）。
+  `TRAE_REMOTE_DIRECTORY_FUNCTIONS` 增加 `chat`、`inline_chat`、`solo_agent_lite`、
+  `solo_design_lite`、`solo_design_remote`。`kimi-k2` 在 Remote 侧**只**归属 `inline_chat`，
+  而插件没问它 —— 这就是 `Kimi-K2-0905` 那一族拿不到的原因。
+  **实测**：Remote 骨架 33 → 35 行，新增 `kimi-k2`（`Kimi-K2-0905`）与 `doubao_1_8`
+  （`Doubao-Seed-1.8`）。问网关不提供的 function 无害（未知名字被忽略，不报错）。
+
+- **账号池开关不再被「保存模型列表」冲掉**（`fix(client)`）。
+  插件有 4 处写 `regions`，其中 3 处都**先展开旧 slot 再覆盖自己管的字段**；只有
+  「保存模型列表」那处是**从零重建整个 region slot** 的，而它并不知道 slot 里还有 `pool`
+  这个字段 —— 整体替换把账号池偏好冲掉了。症状：**开账号池 → 保存模型列表 → 池被关掉 →
+  重开插件显示「未保存」**。
+  修法：新增 `nextRegionDirectory()`（`src/status-paths.ts`），展开旧 slot 再用目录字段覆盖。
+  **顺带修掉**同一处的另一个受害者：`creditPosition`（积分读数的座位）也一直被冲掉，
+  保存模型列表会把读数重置回默认位置。
+  > 这与 issue #42 记录的 `wireConfigName` 丢失是**同一类缺陷**：整块替换 slot 时，
+  > 保存方不知道的字段就消失了。#42 丢的是 `wireConfigName`（每次保存都 4001），
+  > 这次丢的是 `pool` 与 `creditPosition`。
+
+- **同一模型在不同 function 下发布不同显示名时，取最充实的那一份**（`fix(solo)`）。
+  上游对同一个 config 在不同 function 下发布不同的 `display_name`（实测：`doubao-for-auto`
+  在 `chat_v3` 下为空、在 `solo_coder` 下是 `Seed-Code`），而插件的 wire client 是**先到先得**，
+  于是「拥有它的 function 恰好不知道名字」的模型在插件里显示成 config id 本身。
+  现在**行归拥有者**（function 决定可调用性，必须不动）、**名字取最充实的那一份**。
+  上游对无名字 config 发布的占位符 `-` 不算真名字。
+
+### 行为说明
+
+- **显示名仍以 Remote 目录为准，刻意没有改成 wire 名单的**（issue #46）。
+  最初的方案是「以 wire 为准，因为 IDE 渲染的是 wire 的 `display_name`」——
+  **这个假设被实测否掉了**：wire 名单与 IDE 名单**32/81 行不一致**，而 Remote 骨架只有 **3/33**。
+  原因是 wire 名单**按 function 分片**，插件的 wire client 读的是聊天 function，
+  常落在 IDE 选择器并不渲染的那个名字上。代码与回归测试里把这个**被否掉的结论**钉住了，
+  以免日后凭「听起来合理」再改回去。
+
+### 测试
+
+- **978 例测试全绿**（`pnpm run test`），其中新增 **17 例**：
+  - `tests/catalog.spec.ts`（+6）：显示名保持骨架（钉住被否掉的方案）、提升 wire-only 模型、
+    不提升工具/自定义/别名、别名不重复、`isPromotableWireModel` 的五种边界。
+  - `tests/solo.spec.ts`（+4）：读 `usage` / `config_source`、上游没说时保持 undefined、
+    跨 function 取最充实的名字。
+  - `tests/issue46-regressions.spec.ts`（+5，**新文件**）：账号池开关与积分座位在
+    每一种写入后都还在、模型目录多问 function、wire-only 模型被提升、
+    工具/自定义/别名仍被排除。
+  - `tests/solo-remote.spec.ts`：5 处硬编码的 function 列表 URL 改为引用常量。
+
+### 文档
+
+- 新增 [`docs/ISSUE46_DIAGNOSIS.md`](https://github.com/dingminhua/dsh-connect-trae/blob/main/docs/ISSUE46_DIAGNOSIS.md)
+  与 [`docs/ISSUE46_REPLY_DRAFT.md`](https://github.com/dingminhua/dsh-connect-trae/blob/main/docs/ISSUE46_REPLY_DRAFT.md)。
+- 新增三个只读探针（`scripts/probe-issue46-*.mjs`），只读、零额度，输出诊断与修复后验证的全部结论；
+  `scripts/decrypt-block.js` 是从 `probe-toolcalls.mjs` 原样抽出的解密例程，供各探针共用。
+
+### 已知边界
+
+- **取证在维护者本机的 CN 账号上完成。** 名单按账号/套餐裁剪，报告人账号上很可能**真的有**
+  `deepseek-v4.1-flash-1017` 这一行（本机没有）—— 它正好落在「骨架排除、wire 有」这一类，
+  **修复后应当会出现**，但需报告人升级后确认。
+- **新提升的 7 个模型未逐个实测可调用性**（调用会产生额度消耗）。按 issue #19 的既定原则
+  「名单的沉默不能证明模型不可调用」，缺的是证据而不是行；但「能否真的调用」仍需实测。
+- `kimi-k2` 归属 `inline_chat`，而可调用 function 列表里没有它 —— 它的可调用性尚未取证。
+
 ## 4.3.0 (2026-10-22)
 
 > **设置卡片按「账号 / 模型 / 诊断」分栏，模型栏改回全部铺开。**

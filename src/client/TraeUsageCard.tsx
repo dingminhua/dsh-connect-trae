@@ -12,7 +12,7 @@ import {
   configuredAccountsOf,
   nextRegionEnabled,
   nextRegionCreditPosition,
-  nextRegionSlots,
+  nextRegionDirectory,
   regionCreditPositionOf,
   regionEnabledOf,
   TRAE_ACCOUNT_STATUS_PATH,
@@ -1045,8 +1045,13 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
   // same way, see regionStateOf), so a budget set on one region's model is
   // never applied to the other's.
   const region: TraePanel = activeRegion
+  // The slot's type is deliberately OPEN: the model-directory save replaces
+  // the whole slot, so it must be able to carry every field the slot holds —
+  // including the ones this card does not read for its own controls (the
+  // account pool, the credit seat). A narrow type here is what let the save
+  // silently drop them.
   const configuredRegions = typeof settingsValue === 'object' && settingsValue !== null && typeof (settingsValue as { regions?: unknown }).regions === 'object' && (settingsValue as { regions?: unknown }).regions !== null
-    ? (settingsValue as { regions: Record<string, { contextBudgets?: unknown; imageModelIds?: unknown[] }> }).regions
+    ? (settingsValue as { regions: Record<string, Record<string, unknown> & { contextBudgets?: unknown; imageModelIds?: unknown[] }> }).regions
     : {}
   const regionSlot = configuredRegions[region]
   const legacySlot = region === 'cn' && regionSlot === undefined
@@ -1215,6 +1220,21 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
       // freezing a decision the Host owns. `multimodal` must be carried through
       // verbatim: it IS that upstream fact, and dropping it would switch auto
       // image input off for every model the moment the user saved (issue #16).
+      //
+      // The slot is SPREAD and then overridden, not rebuilt from scratch. This
+      // write replaces the whole region slot, so any field of the slot the save
+      // does not name is silently dropped — and two fields were being dropped
+      // this way:
+      //
+      //  - `pool` (issue #44): the account-pool preferences. Enabling the pool
+      //    and then saving the model list turned the pool back OFF, and the
+      //    card came back showing "not saved" — the switch looked broken.
+      //  - `creditPosition`: which seat this region's credit readout occupies,
+      //    so saving the model list silently moved the readout back.
+      //
+      // Both are the user's standing choices, not the model directory's
+      // business, so they are carried through verbatim. The spread is of the
+      // UNWRAPPED slot, so no live reference can leak into the document.
       const nextSlot = {
         enabled: regionOn(activeRegion),
         lastCatalog: visibleModels.map(model => ({
@@ -1227,7 +1247,7 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
         contextBudgets: activeContextBudgets,
       }
       await writeSettingsField(settingsScope, 'regions',
-        nextRegionSlots(configuredRegions, activeRegion, nextSlot),
+        nextRegionDirectory(configuredRegions, activeRegion, nextSlot),
         readBack => {
           // A shallow "is anything there?" check would pass a truncated write;
           // compare the selection that was actually saved.

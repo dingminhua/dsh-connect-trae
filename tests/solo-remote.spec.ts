@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { preferStrongerRow, TraeSoloRemoteCatalogClient } from '../src/solo-remote.ts'
+import { preferStrongerRow, TRAE_REMOTE_DIRECTORY_FUNCTIONS, TraeSoloRemoteCatalogClient } from '../src/solo-remote.ts'
 import { mergeTraeModelSources, withChatCallableFunctions } from '../src/catalog.ts'
 import { TRAE_DIRECTORY_FUNCTIONS } from '../src/solo.ts'
 import type { TraeDiscoveredModel } from '../src/model-metadata.ts'
@@ -44,7 +44,7 @@ describe('TraeSoloRemoteCatalogClient', () => {
     // no function and is called through the default chat function, where it
     // actually answers (issue #19 / docs/ISSUE19_DIAGNOSIS.md).
     expect(models.map(model => model.function)).toEqual(['solo_work_remote', 'solo_agent_remote', undefined])
-    expect(fetchImpl.mock.calls[0]?.[0]).toBe('https://solo.trae.cn/api/remote/v1/models?functions=solo_agent,solo_agent_remote,solo_work_remote,solo_work_lite,chat_v3,solo_coder,builder_v3')
+    expect(fetchImpl.mock.calls[0]?.[0]).toBe(`https://solo.trae.cn/api/remote/v1/models?functions=${TRAE_REMOTE_DIRECTORY_FUNCTIONS.cn.join(',')}`)
   })
 
   it('emits a model listed by two groups only once', async () => {
@@ -83,7 +83,7 @@ describe('region-scoped directory gateway', () => {
     ] } }), { status: 200 }))
     const client = new TraeSoloRemoteCatalogClient({ credential: async () => intlCredential, fetchImpl: fetchImpl as unknown as typeof fetch })
     await expect(client.fetchModels()).resolves.toHaveLength(1)
-    expect(fetchImpl.mock.calls[0]?.[0]).toBe('https://coresg-normal.trae.ai/api/remote/v1/models?functions=solo_agent,solo_agent_remote,solo_work_remote,solo_work_lite,chat_v3,solo_coder,builder_v3')
+    expect(fetchImpl.mock.calls[0]?.[0]).toBe(`https://coresg-normal.trae.ai/api/remote/v1/models?functions=${TRAE_REMOTE_DIRECTORY_FUNCTIONS.ai.join(',')}`)
     const headers = (fetchImpl.mock.calls[0]?.[1] as RequestInit).headers as Record<string, string>
     expect(headers['Referer']).toBe('https://coresg-normal.trae.ai/')
     expect(headers['x-preferenced-language']).toBe('en')
@@ -144,8 +144,8 @@ describe('catalog host fallback', () => {
     expect(models).toMatchObject([{ id: 'glm-5.3' }])
     // The backup request carries the SAME path and query as the official one.
     const urls = fetchImpl.mock.calls.map(([url]) => String(url))
-    expect(urls[0]).toBe('https://solo.trae.cn/api/remote/v1/models?functions=solo_agent,solo_agent_remote,solo_work_remote,solo_work_lite,chat_v3,solo_coder,builder_v3')
-    expect(urls[1]).toBe('https://trae-api-cn.mchost.guru/api/remote/v1/models?functions=solo_agent,solo_agent_remote,solo_work_remote,solo_work_lite,chat_v3,solo_coder,builder_v3')
+    expect(urls[0]).toBe(`https://solo.trae.cn/api/remote/v1/models?functions=${TRAE_REMOTE_DIRECTORY_FUNCTIONS.cn.join(',')}`)
+    expect(urls[1]).toBe(`https://trae-api-cn.mchost.guru/api/remote/v1/models?functions=${TRAE_REMOTE_DIRECTORY_FUNCTIONS.cn.join(',')}`)
   })
 
   it('does not fall back when the official host answers a semantic rejection', async () => {
@@ -216,7 +216,7 @@ describe('catalog host fallback', () => {
     // re-probed once the cooldown expires (see the cooldown test below), which
     // is what lets a healed network take over.
     expect(urls[0]).toContain('https://solo.trae.cn/')
-    expect(urls[1]).toBe('https://trae-api-cn.mchost.guru/api/remote/v1/models?functions=solo_agent,solo_agent_remote,solo_work_remote,solo_work_lite,chat_v3,solo_coder,builder_v3')
+    expect(urls[1]).toBe(`https://trae-api-cn.mchost.guru/api/remote/v1/models?functions=${TRAE_REMOTE_DIRECTORY_FUNCTIONS.cn.join(',')}`)
     expect(urls[2]).toBe(urls[1])
     expect(urls).toHaveLength(3)
   })

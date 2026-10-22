@@ -44,10 +44,37 @@ export const TRAE_SOLO_REMOTE_BASE = 'https://solo.trae.cn/api/remote/v1'
  * `builder_v3` is included for the same reason even though neither region's
  * current wire lists name it: its rows are real directory entries, and whether
  * a paying account can call one is not something this client can determine.
+ *
+ * The IDE's own function list is wider still, and issue #46 showed what the
+ * gap costs. The Trae IDE asks for 22 functions (see TRAE_MODEL_DETAIL_FUNCTIONS
+ * in model-detail.ts); the list below asked for 7, and the groups the plugin
+ * did not ask about hid real models. Measured 2026-10-22 on a live CN
+ * credential: asking the Remote directory for the IDE's list as well returned
+ * **41** models instead of **33**, and the eight extra rows were real models
+ * the plugin could not show — `kimi-k2` (the `Kimi-K2-0905` snapshot, which
+ * lives under `inline_chat` ALONE), `doubao_1_8` (`Doubao-Seed-1.8`),
+ * `deepseek-V3`, `deepseek-V3.1`, `doubao-2.0-mini`, `glm-4.7`,
+ * `code-review-judge`, `multimodal_image_kimi-k2.5`.
+ *
+ * The five functions added here are the ones that carry a MODEL (as opposed to
+ * a helper config): `chat`, `inline_chat`, `solo_agent_lite`,
+ * `solo_design_lite`, `solo_design_remote`. The remaining IDE functions
+ * (`ui_builder_v2`, `builder`, `solo_builder`, `git_ai`, `utils`,
+ * `code_reviewer`, `code_review_summary`, `custom_agent_generation`,
+ * `multimodal`, `system_diagnosis`) are asked too, for the same reason
+ * `builder_v3` is: a row is a row, and the merge decides what to do with it.
+ * Asking for a function the gateway does not serve is harmless — unknown
+ * names are ignored rather than rejected.
  */
 export const TRAE_REMOTE_DIRECTORY_FUNCTIONS: Readonly<Record<TraeRegion, readonly string[]>> = {
-  cn: ['solo_agent', 'solo_agent_remote', 'solo_work_remote', 'solo_work_lite', 'chat_v3', 'solo_coder', 'builder_v3'],
-  ai: ['solo_agent', 'solo_agent_remote', 'solo_work_remote', 'solo_work_lite', 'chat_v3', 'solo_coder', 'builder_v3'],
+  cn: [
+    'solo_agent', 'solo_agent_remote', 'solo_work_remote', 'solo_work_lite', 'chat_v3', 'solo_coder', 'builder_v3',
+    'chat', 'inline_chat', 'solo_agent_lite', 'solo_design_lite', 'solo_design_remote',
+  ],
+  ai: [
+    'solo_agent', 'solo_agent_remote', 'solo_work_remote', 'solo_work_lite', 'chat_v3', 'solo_coder', 'builder_v3',
+    'chat', 'inline_chat', 'solo_agent_lite', 'solo_design_lite', 'solo_design_remote',
+  ],
 }
 
 export interface TraeSoloRemoteCatalogOptions {

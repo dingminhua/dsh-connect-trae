@@ -9,6 +9,7 @@ import {
   FALLBACK_TRAE_MODELS,
   FALLBACK_TRAE_MODELS_AI,
   fallbackModelsFor,
+  isPromotableWireModel,
   mergeTraeModelSources,
   sanitizeCatalog,
   TraeCatalog,
@@ -346,6 +347,148 @@ describe('mergeTraeModelSources', () => {
     const merged = mergeTraeModelSources(remote, wire)
     // The first row carrying that display name wins, deterministically.
     expect(merged[0]?.wireConfigName).toBe('Doubao_1_6')
+  })
+
+  it('keeps the Remote skeleton display name, because the wire roster is NOT the IDE name source (issue #46)', () => {
+    // The wire roster was measured as a name source and REJECTED. Measured
+    // 2026-10-22 on a live CN credential: the wire roster (`get_detail_param`)
+    // disagrees with the Trae IDE's own roster (`batch_get_detail_param`, the
+    // source the picker renders) on 32 of 81 ids, while the Remote skeleton
+    // disagrees on only 3 of 33.
+    //
+    // The reason is that the wire roster is FUNCTION-SCOPED: the same id
+    // carries a different `display_name` depending on which function asked
+    // (10 of 102 ids carry more than one name across the IDE's own
+    // functions), and the plugin's wire client reads the CHAT functions — so
+    // it can land on a name the picker never shows.
+    //
+    // This test pins the REJECTED behaviour, so a future change cannot
+    // reintroduce the wire name as the display name on the strength of a
+    // plausible-sounding assumption.
+    const remote: TraeDiscoveredModel[] = [
+      { id: 'DeepSeek-V4-Pro-Official', name: 'DeepSeek-V4-Pro', multimodal: false, reasoningSupported: false },
+      { id: 'Doubao-Seed-2.0-Code', name: 'Doubao-Seed-2.0-Code', multimodal: false, reasoningSupported: false },
+      { id: 'Doubao-Seed-2.1-Pro', name: 'Seed-2.1-Pro-0915', multimodal: false, reasoningSupported: false },
+    ]
+    const wire = [
+      // The chat functions publish a DIFFERENT name for these ids than the
+      // IDE's picker does.
+      { id: 'DeepSeek-V4-Pro-Official', name: 'DeepSeek-V4-Pro' },
+      { id: 'Doubao-Seed-2.0-Code', name: 'Doubao-Seed-2.1-Turbo' },
+      { id: 'Doubao-Seed-2.1-Pro', name: 'Seed-2.1-Pro-0915' },
+    ]
+    const merged = mergeTraeModelSources(remote, wire)
+    // The skeleton's name wins — it is the closer match to the IDE.
+    expect(merged.find(model => model.id === 'DeepSeek-V4-Pro-Official')?.name).toBe('DeepSeek-V4-Pro')
+    expect(merged.find(model => model.id === 'Doubao-Seed-2.0-Code')?.name).toBe('Doubao-Seed-2.0-Code')
+    expect(merged.find(model => model.id === 'Doubao-Seed-2.1-Pro')?.name).toBe('Seed-2.1-Pro-0915')
+    // The wire still owns the config_name: that part of the join is unchanged.
+    expect(merged.find(model => model.id === 'Doubao-Seed-2.0-Code')?.wireConfigName).toBeUndefined()
+  })
+
+  it('promotes a wire-only MODEL the Remote skeleton does not know (issue #46)', () => {
+    // The Remote skeleton is the catalog's SKELETON but it is not complete: it
+    // carried ZERO dated snapshot config_names on the live account while the
+    // wire roster carried three, so every snapshot the IDE offers was dropped
+    // by the join and unreachable from the plugin. This is the same reasoning
+    // that made issue #19 keep a REMOTE row with no wire match, with the sides
+    // swapped: a roster's silence is not proof that a model is absent.
+    const remote: TraeDiscoveredModel[] = [
+      { id: 'deepseek-v4.1-flash', name: 'DeepSeek-V4.1-Flash', multimodal: true, contextWindow: 200_000, reasoningSupported: true },
+    ]
+    const wire = [
+      // The dated snapshot: present in the wire roster, absent from the skeleton.
+      { id: 'kimi-k2-0905', name: 'Kimi-K2-0905', contextWindow: 200_000, maxTokens: 32_000, function: 'solo_coder', usage: 'chat_completion', configSource: 1 },
+    ]
+    const merged = mergeTraeModelSources(remote, wire)
+    const promoted = merged.find(model => model.id === 'kimi-k2-0905')
+    expect(promoted).toBeDefined()
+    expect(promoted).toMatchObject({
+      id: 'kimi-k2-0905',
+      name: 'Kimi-K2-0905',
+      contextWindow: 200_000,
+      maxTokens: 32_000,
+      wireFunction: 'solo_coder',
+      input: ['text'],
+    })
+    // The row's own id IS its wire config_name, so no `wireConfigName` is needed.
+    expect(promoted?.wireConfigName).toBeUndefined()
+    // The skeleton row is untouched.
+    expect(merged.find(model => model.id === 'deepseek-v4.1-flash')).toBeDefined()
+  })
+
+  it('does NOT promote a wire-only row that is a tool config, a custom model, or an alias', () => {
+    // The wire roster mixes models with the IDE's own helper configs and with
+    // the account's custom models. Measured 2026-10-22 on the live account,
+    // 50 wire-only rows reduced to 12 promotable models by these four tests:
+    // a real `usage`, a Trae-preset `config_source`, a real display name, and a
+    // display name no skeleton row already claims.
+    const remote: TraeDiscoveredModel[] = [
+      { id: 'Doubao-Seed-Code', name: 'Seed-Code', multimodal: false, reasoningSupported: false },
+    ]
+    const wire = [
+      // A tool config: upstream says what it is for, and it is not a model.
+      { id: 'title_generation', name: 'title_generation', usage: 'title_generation', configSource: 1 },
+      { id: 'summary', name: 'summary', usage: 'summary', configSource: 1 },
+      // The account's own custom model (source 3) — the plugin does not host it.
+      { id: 'custom_model_gpt-6', name: 'GPT-5.6', usage: 'custom_model', configSource: 3 },
+      // A codename config with no real display name.
+      { id: 'sagitta', name: '-', usage: 'chat_completion', configSource: 1 },
+      { id: 'aquila', name: '', usage: 'chat_completion', configSource: 1 },
+      // A config identifier wearing a display-name hat.
+      { id: 'search_agent_qwen_fast', name: 'search_agent_qwen_fast', usage: 'chat_completion', configSource: 1 },
+      // An ALIAS of a model the skeleton already exposes.
+      { id: 'Doubao_1_6', name: 'Seed-Code', usage: 'chat_completion', configSource: 1 },
+      // A row with no upstream signals at all (usage/config_source absent).
+      { id: 'unknown-shape', name: 'Unknown Shape', function: 'chat_v3' },
+    ]
+    const merged = mergeTraeModelSources(remote, wire)
+    expect(merged.map(model => model.id)).toEqual(['Doubao-Seed-Code'])
+  })
+
+  it('does not promote a wire-only row whose display name duplicates a skeleton row', () => {
+    // `glm-5.1_advisor` displays as `GLM-5.1`, which the skeleton already
+    // exposes. Promoting it would list ONE model twice under two ids.
+    const remote: TraeDiscoveredModel[] = [
+      { id: 'glm-5.1', name: 'GLM-5.1', multimodal: false, reasoningSupported: false },
+    ]
+    const wire = [
+      { id: 'glm-5.1_advisor', name: 'GLM-5.1', usage: 'chat_completion', configSource: 1, function: 'chat_v3' },
+    ]
+    const merged = mergeTraeModelSources(remote, wire)
+    expect(merged.map(model => model.id)).toEqual(['glm-5.1'])
+  })
+})
+
+describe('isPromotableWireModel', () => {
+  it('accepts a Trae preset model with a real display name', () => {
+    expect(isPromotableWireModel({ id: 'kimi-k2', name: 'Kimi-K2-0905', usage: 'chat_completion', configSource: 1 })).toBe(true)
+  })
+
+  it('rejects a row whose usage is not chat_completion', () => {
+    // A tool config, or the account's own custom model.
+    expect(isPromotableWireModel({ id: 'summary', name: 'summary', usage: 'summary', configSource: 1 })).toBe(false)
+    expect(isPromotableWireModel({ id: 'custom_model_kimi', name: 'Kimi', usage: 'custom_model', configSource: 1 })).toBe(false)
+  })
+
+  it('rejects a row that is not a Trae preset', () => {
+    // `config_source: 3` is the account's own custom model (it carries the
+    // user's own base_url and key); the plugin must not offer to bill it.
+    expect(isPromotableWireModel({ id: 'custom_model_gpt-6', name: 'GPT-5.6', usage: 'chat_completion', configSource: 3 })).toBe(false)
+  })
+
+  it('rejects a row without a real display name', () => {
+    expect(isPromotableWireModel({ id: 'sagitta', name: '-', usage: 'chat_completion', configSource: 1 })).toBe(false)
+    expect(isPromotableWireModel({ id: 'aquila', name: '', usage: 'chat_completion', configSource: 1 })).toBe(false)
+    // A bare identifier is a config name, not a model name.
+    expect(isPromotableWireModel({ id: 'search_agent_qwen_fast', name: 'search_agent_qwen_fast', usage: 'chat_completion', configSource: 1 })).toBe(false)
+  })
+
+  it('rejects a row whose upstream signals are absent', () => {
+    // "Upstream did not say" is never "assume it is a model".
+    expect(isPromotableWireModel({ id: 'unknown', name: 'Unknown' })).toBe(false)
+    expect(isPromotableWireModel({ id: 'unknown', name: 'Unknown', usage: 'chat_completion' })).toBe(false)
+    expect(isPromotableWireModel({ id: 'unknown', name: 'Unknown', configSource: 1 })).toBe(false)
   })
 })
 

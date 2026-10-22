@@ -104,11 +104,10 @@ Notes:
 
 This plugin serves models from Trae's **SOLO channel** (`DeepSeek-V4-Flash-Official`, `DeepSeek-V4-Pro-Official`, `GLM-5.3`, `GLM-5.2`, `Kimi-K3`, `MiniMax-M3`, `Qwen3.8-Max`, `Doubao-Seed-*`, …), for both the domestic and international sides.
 
-The following three models currently come from the **TraeCode (Trae IDE) channel** and have **not** been opened up to the SOLO channel:
+The following two models currently come from the **TraeCode (Trae IDE) channel** and have **not** been opened up to the SOLO channel:
 
 | Model |
 | --- |
-| `glm-5.3-flash` |
 | `kimi-k2.8-preview` |
 | `qwen3.8-flash` |
 
@@ -125,9 +124,11 @@ That is the upstream refusal stated plainly, rather than a silent failure or som
 
 > `deepseek-v4.1-flash` used to be listed here — `docs/DS41_CALLABILITY.md` (evidence gathered 2026-09-15) measured `4001 param is invalid` from all eight SOLO functions. **Trae has since opened it up to the SOLO channel**: it now ships in the live directory with `wireFunction: solo_work_remote` and calls succeed (verified against a live refresh). This page had not caught up, so it is removed from the table.
 
-> Note the distinction: **`GLM-5.3` is supported** (it goes through the SOLO channel), but **`glm-5.3-flash` is not** — they are different models.
+> `glm-5.3-flash` used to be listed here too, and is **removed as of 4.4.0**: Trae has since opened it up, and it now ships in the live wire roster with `wireFunction: solo_work_remote` (verified). The directory side always advertised it — it was listed because the Remote directory named it while the wire roster did not, so it had no callable id and never entered the callable roster. 4.4.0 fixed both "the wire has it but the directory does not" and "the directory was asked for too few groups", and it now appears as an ordinary callable model.
 
-To use these three models today, use the **Trae IDE itself**.
+> Note the distinction: **`GLM-5.3` is supported** (it goes through the SOLO channel). **`glm-5.3-flash` is now supported too** — it was always a different model from `GLM-5.3`, but it has since been opened to the SOLO channel.
+
+To use these two models today, use the **Trae IDE itself**.
 
 ## Max output and context budgets
 
