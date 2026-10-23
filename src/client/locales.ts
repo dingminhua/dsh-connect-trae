@@ -148,6 +148,20 @@ export const en = {
   'row.modelsSummary': '{count} enabled',
   'row.modelsRefresh': 'Refresh from Trae',
   'row.modelsRefreshing': 'Refreshing models…',
+  // CATALOG SHAPE (issue #52): the list is the union of several Trae modes, so
+  // it is grouped by the mode each row is called through, searchable, and
+  // ordered by (mode priority, name) instead of by arrival.
+  'row.modelsSearch': 'Search models',
+  'row.modelsSearchPlaceholder': 'Search by name or config name',
+  'row.modelsSearchCount': '{shown} of {total}',
+  'row.modelsSearchEmpty': 'No model matches 「{query}」.',
+  'row.modelsGroupCount': '{count}',
+  'row.modelsChannelWorkRemote': 'SOLO workspace · remote',
+  'row.modelsChannelWorkLite': 'SOLO workspace · default',
+  'row.modelsChannelAgentRemote': 'SOLO agent · remote',
+  'row.modelsChannelChatV3': 'Chat · v3',
+  'row.modelsChannelCoder': 'Code · solo_coder',
+  'row.modelsChannelDefault': 'No mode announced (uses the default channel)',
   // The only card action that SPENDS quota: one minimal chat call per enabled
   // model. The label says what it tests and the hint says what it costs, so the
   // button is never a surprise charge.
@@ -544,6 +558,19 @@ export const zh: Record<TraeSettingsKey, string> = {
   'row.modelsSummary': '已启用 {count} 个',
   'row.modelsRefresh': '从 Trae 刷新',
   'row.modelsRefreshing': '正在刷新模型…',
+  // 目录的形状（issue #52）：这份列表是 Trae 多个模式的并集，所以按「它被调到哪个模式」
+  // 分组、可搜索，并按（模式优先级，名称）排序，而不是按到达顺序。
+  'row.modelsSearch': '搜索模型',
+  'row.modelsSearchPlaceholder': '按模型名或 config_name 搜索',
+  'row.modelsSearchCount': '{shown} / {total}',
+  'row.modelsSearchEmpty': '没有匹配「{query}」的模型。',
+  'row.modelsGroupCount': '{count} 个',
+  'row.modelsChannelWorkRemote': 'SOLO 工作区 · 远程',
+  'row.modelsChannelWorkLite': 'SOLO 工作区 · 默认',
+  'row.modelsChannelAgentRemote': 'SOLO 智能体 · 远程',
+  'row.modelsChannelChatV3': '对话 · v3',
+  'row.modelsChannelCoder': '代码 · solo_coder',
+  'row.modelsChannelDefault': '未标注模式（走默认通道）',
   'row.modelsTestEnabled': '一键测试启用模型',
   'row.modelsTestAll': '一键测试所有模型',
   'row.modelsTesting': '正在测试 {done}/{total}…',

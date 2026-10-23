@@ -27,9 +27,11 @@ import { applyImageSelection, deriveCatalog, discoveredCatalog, FALLBACK_TRAE_MO
 import { refreshTraeCredential, type TraeRefreshDevice } from './refresh.ts'
 import { readTraeIdentity, resolveTraeIdentity, type TraeIdentity } from './identity.ts'
 import { traeStorageCandidates, type TraeEdition } from './paths.ts'
+import { orderTraeModels } from './model-order.ts'
 import { panelOfProvider, providerOfPanel, regionOfCredential, regionOfEdition, regionOfHost, regionOfPanel, regionOfUserRegion, REGION_GATEWAYS, TRAE_PANELS, type TraePanel, type TraeRegion, type TraeRegionGateways } from './region.ts'
 import { createTraeShim } from './shim.ts'
 import type { TraeShim, TraeShimPool, TraeShimRoute } from './shim.ts'
+import { applyOfficialRoster, TraeOfficialRosterClient } from './official-roster.ts'
 import { TRAE_DIRECTORY_FUNCTIONS, TraeSoloUpstreamClient } from './solo.ts'
 import type { TraeChatRoute } from './solo.ts'
 import type { TraeChatResult, TraeUpstreamClient, TraeUpstreamErrorKind } from './upstream.ts'
@@ -95,13 +97,15 @@ export {
   type TraeRegion,
   type TraeRegionGateways,
 } from './region.ts'
-export { applyContextBudgets, applyImageSelection, deriveCatalog, discoveredCatalog, FALLBACK_TRAE_MODELS, FALLBACK_TRAE_MODELS_AI, fallbackModelsFor, isPromotableWireModel, mergeTraeModelSources, sanitizeCatalog, TraeCatalog, traeInputModalities, traeModelDisplayName, type TraeContextBudget, type TraeInputModality, type TraeModelInfo, type TraeWireModel } from './catalog.ts'
+export { applyContextBudgets, applyImageSelection, deriveCatalog, discoveredCatalog, FALLBACK_TRAE_MODELS, FALLBACK_TRAE_MODELS_AI, fallbackModelsFor, isPromotableWireModel, mergeTraeModelSources, sanitizeCatalog, TraeCatalog, traeInputModalities, traeModelDisplayName, withChatCallableFunctions, type TraeContextBudget, type TraeInputModality, type TraeModelInfo, type TraeWireModel } from './catalog.ts'
 export { decryptTraeStorageValue, parseTraeAuthValue, parseTraeStorageDocument } from './decrypt.ts'
 export { identityHeaders, pickTraeStorageIdentity, readTraeCliIdentity, readTraeIdentity, resolveTraeIdentity, type TraeIdentity } from './identity.ts'
 export { parseObservedModelConfig, type TraeObservedModelConfig } from './model-config.ts'
 export { parseTraeCachedModel, readTraeCachedModel, traeStateDatabaseCandidates, TRAE_STATE_DB_FILENAME, type TraeCachedModelConfig } from './model-cache.ts'
 export { parseTraeModelExtraConfigLogLine, parseTraeRawChatBehaviorConfig, type TraeRawChatBehaviorConfig } from './model-extra-config.ts'
 export { buildTraeModelDetailRequest, TRAE_MODEL_DETAIL_FUNCTIONS, TRAE_MODEL_DETAIL_PATH, type TraeModelDetailRequest } from './model-detail.ts'
+export { applyOfficialRoster, officialVerdictOf, parseTraeOfficialRoster, TraeOfficialRosterClient, TRAE_OFFICIAL_ROSTER_PATH, type TraeOfficialChannel, type TraeOfficialFilterResult, type TraeOfficialRoster, type TraeOfficialVerdict } from './official-roster.ts'
+export { filterTraeModels, groupTraeModels, orderTraeModels, traeModelMatchesQuery, TRAE_CHANNEL_PRIORITY, type TraeModelGroup, type TraeOrderableModel } from './model-order.ts'
 export { parseTraeRemoteModel, type TraeDiscoveredModel, type TraeDiscoveredReasoning } from './model-metadata.ts'
 export { traeStorageCandidates, traeWindowsAppNames, type TraeEdition, type TraeStorageCandidate } from './paths.ts'
 export { describeIdShape, describeNameShape, maskUserPath } from './redact.ts'
@@ -918,6 +922,24 @@ export function apply(ctx: Context, config: Config): void {
       // so "why am I on a different host" is diagnosable in the log.
       log: (message, detail) => ctx.logger.warn(message, detail),
     })
+    /**
+     * The IDE's own roster: which models the vendor's picker shows, per
+     * function (issue #52).
+     *
+     * It is a REFINEMENT of a successful discovery, never a dependency: every
+     * failure path in {@link TraeOfficialRosterClient.fetch} collapses to
+     * `undefined`, and `applyOfficialRoster` then keeps every row. That is why
+     * this can be wired in without a setting — it only acts where every chat
+     * function hides a config (retire it) or where the vendor shows it on a
+     * DIFFERENT chat function than the one we guessed (re-pin). Both are the
+     * upstream's own answers, and both leave anything ambiguous alone.
+     */
+    const officialRoster = new TraeOfficialRosterClient({
+      credential: () => store.resolve(),
+      identity,
+      ...panel === 'enterprise' ? { route: 'enterprise' as const } : {},
+      log: (message, detail) => ctx.logger.warn(message, detail),
+    })
     // Keep the native llm_utils_chat bridge as the only chat route: unlike the
     // polling Remote session API, it preserves Trae's structured tool_calls so
     // DSH can execute local read/write/bash tools and continue the agent loop.
@@ -1121,7 +1143,14 @@ export function apply(ctx: Context, config: Config): void {
         // transient rejection must not silently collapse the whole catalog to
         // the saved snapshot. Retry it once before giving up.
         const remote = await withDirectoryRetry(() => remoteCatalog.fetchModels(signal))
-        const wireModels = await solo.fetchModels(signal)
+        // The IDE roster is read IN PARALLEL with the wire roster and is
+        // optional: `fetch` resolves `undefined` instead of throwing, so a
+        // restricted network loses the refinement and keeps the catalog. It is
+        // never allowed to fail the refresh (see `applyOfficialRoster`).
+        const [wireModels, roster] = await Promise.all([
+          solo.fetchModels(signal),
+          officialRoster.fetch(signal),
+        ])
         const merged = mergeTraeModelSources(remote, wireModels)
         // A row whose function is a NON-chat roster (solo_agent, builder_v3) is
         // not callable through llm_utils_chat BY THAT FUNCTION — asking answers
@@ -1139,12 +1168,44 @@ export function apply(ctx: Context, config: Config): void {
           if (model.wireFunction === undefined || chatFunctions.includes(model.wireFunction)) continue
           ctx.logger.warn(`model directory row is pinned to a non-chat function and will be called through the default chat function instead: ${model.id} (pinned to function ${model.wireFunction})`)
         }
+        /**
+         * Retire what no chat function offers any more, and re-pin what the
+         * vendor offers under a DIFFERENT channel (issue #52).
+         *
+         * Runs AFTER `withChatCallableFunctions` on purpose: that step decides
+         * the `wireFunction` this filter judges the row on. Rows the IDE roster
+         * does not mention, and every row when the roster could not be read at
+         * all, survive untouched — see `applyOfficialRoster`.
+         */
+        const official = applyOfficialRoster(callable, roster, chatFunctions)
+        /**
+         * Fix the ORDER once, here, so it is a property of the catalog rather
+         * than of the screen that happens to draw it (issue #52, P0).
+         *
+         * The merge walks twelve directory groups and `solo-remote.ts` records
+         * that the group order varies between calls, so the same account could
+         * get two different lists from two refreshes. Sorting by (channel
+         * priority, name) makes the saved `lastCatalog` — and therefore the DSH
+         * model picker, which renders in catalog order — identical across
+         * refreshes. The card re-applies the same function for catalogs saved
+         * before this existed.
+         */
+        const visible = orderTraeModels(official.rows, region)
+        if (official.hidden.length > 0) {
+          ctx.logger.warn(`hiding ${official.hidden.length} model(s) no chat function offers any more (issue #52)`, official.hidden)
+        }
+        if (official.repinned.length > 0) {
+          ctx.logger.warn(`re-pinning ${official.repinned.length} model(s) to the function their vendor shows them on (issue #52)`, official.repinned)
+        }
         // Record every callable display key (id and name) so stale saved
         // catalogs are filtered against the live wire map and dead
         // config_names cannot be resurrected from an old `lastCatalog` /
-        // `models` / `enabledModelIds`.
+        // `models` / `enabledModelIds`. The HIDDEN rows are deliberately absent:
+        // they are not callable through the function we would send, and leaving
+        // their keys in place would resurrect them from a saved catalog on the
+        // very next settings write.
         wire.callableKeys.clear()
-        for (const model of callable) {
+        for (const model of visible) {
           wire.callableKeys.add(model.id.trim().toLowerCase())
           wire.callableKeys.add(model.name.trim().toLowerCase())
         }
@@ -1154,7 +1215,7 @@ export function apply(ctx: Context, config: Config): void {
         // filter delete every model it did not mention — including the
         // built-in fallback set, which Remote never advertised and so can
         // never appear in `callableKeys`.
-        wire.resolved = callable.length > 0
+        wire.resolved = visible.length > 0
         // Populate the startup wire resolver (display id and display name →
         // wire config_name + the directory function it was discovered under) so
         // the chat bridge resolves the real wire target even when the persisted
@@ -1168,7 +1229,11 @@ export function apply(ctx: Context, config: Config): void {
         // which answers `4001 config_name rejected` (Doubao-Seed-Code is
         // served only by `solo_agent_remote`; `solo_work_lite` rejects it).
         // The identity mapping is what keeps that function knowledge alive.
-        const wireTargets = wireTargetsOf(callable)
+        //
+        // Hidden rows are excluded for the same reason they are excluded from
+        // `callableKeys`: resolving one would let a saved catalog keep sending a
+        // config the vendor hides on that function.
+        const wireTargets = wireTargetsOf(visible)
         wire.byId = wireTargets.byId
         wire.byName = wireTargets.byName
         // Discovery is a pure data return (workbuddy semantics): the card's
@@ -1178,8 +1243,8 @@ export function apply(ctx: Context, config: Config): void {
         // but the merge is KEPT on the stack: applySelection re-merges the
         // wire fields into the saved rows on every settings write.
         latestDiscovery.length = 0
-        latestDiscovery.push(...callable)
-        return callable
+        latestDiscovery.push(...visible)
+        return visible
       },
       /**
      * One-click availability test. The ids come from the card, so each one is

@@ -274,6 +274,41 @@ export const TRAE_CARD_CSS = `
 .dsm-trae-models-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
 .dsm-trae-models-title{margin:0;color:var(--dsw-alias-label-primary,#e6e6e6);font-size:14px;font-weight:600;line-height:20px}
 .dsm-trae-models-summary{margin:2px 0 0;color:var(--dsw-alias-label-tertiary,#999);font-size:12px;line-height:18px}
+/* CATALOG SHAPE (issue #52): search + channel groups.
+ *
+ * The catalog is the union of every Trae mode, so a flat list reads as "a mess
+ * of models" no matter how many rows it holds. The search box answers 「where is
+ * X」 and the group headers answer 「why are there so many」 — the header names the
+ * mode each row is actually called through, so the union is legible instead of
+ * merely long. Both are presentation only: no rule here changes what is saved. */
+.dsm-trae-models-search{display:flex;align-items:center;gap:10px;min-width:0}
+.dsm-trae-models-search-input{flex:1 1 auto;min-width:0;padding:6px 10px;border-radius:8px;border:1px solid var(--dsw-alias-border-l2,#36373b);background:var(--dsw-alias-bg-layer-2,#232529);color:var(--dsw-alias-label-primary,#e6e6e6);font-size:13px;line-height:18px}
+.dsm-trae-models-search-input::placeholder{color:var(--dsw-alias-label-tertiary,#999)}
+.dsm-trae-models-search-input:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#5686fe);outline-offset:-1px}
+.dsm-trae-models-search-count{flex:none;color:var(--dsw-alias-label-tertiary,#999);font-size:12px;line-height:18px;font-variant-numeric:tabular-nums}
+.dsm-trae-models-empty{margin:0;padding:14px 12px;color:var(--dsw-alias-label-tertiary,#999);font-size:12px;line-height:18px}
+.dsm-trae-model-group{display:block}
+.dsm-trae-model-group+.dsm-trae-model-group{border-top:1px solid var(--dsw-alias-border-l2,#36373b)}
+/* list-style:none + a drawn marker: the native triangle cannot be styled to
+   sit on the header's baseline, and Safari needs the -webkit- pseudo removed
+   separately. The marker is TEXT on purpose — an icon import would tie the card
+   to a host package for one glyph. */
+/* The header tint is a NEUTRAL overlay, not a DSH token: it has to sit one step
+   away from the row background in BOTH themes, and the only token the card may
+   use there (bg-layer-2) is what the rows already paint. A 6% grey wash is the
+   same "slightly recessed" relationship for a light and a dark surface. */
+.dsm-trae-model-group-head{display:flex;align-items:center;gap:8px;padding:7px 12px;cursor:pointer;background:rgba(127,127,127,.12);color:var(--dsw-alias-label-secondary,#c6c9d0);font-size:12px;line-height:17px;font-weight:600;list-style:none}
+.dsm-trae-model-group-head::-webkit-details-marker{display:none}
+.dsm-trae-model-group-head::before{content:'▸';flex:none;width:9px;color:var(--dsw-alias-label-tertiary,#999);font-size:10px}
+.dsm-trae-model-group[open]>.dsm-trae-model-group-head::before{content:'▾'}
+.dsm-trae-model-group-head:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#5686fe);outline-offset:-2px}
+.dsm-trae-model-group-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dsm-trae-model-group-count{flex:none;color:var(--dsw-alias-label-tertiary,#999);font-weight:400;font-variant-numeric:tabular-nums}
+/* The header separates itself from its FIRST row; between rows the generic
+   .dsm-trae-model+.dsm-trae-model hairline still applies, and between groups
+   the rule above does. Without this the first row of every group looked pasted
+   onto its header. */
+.dsm-trae-model-group-head+.dsm-trae-model{border-top:1px solid var(--dsw-alias-border-l2,#36373b)}
 /* EVERY model is on the page — no inner scroller, no max-height.
  *
  * A capped list with its own scrollbar was tried and rejected by the user: it

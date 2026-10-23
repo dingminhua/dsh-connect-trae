@@ -675,6 +675,19 @@ export interface TraeWebModel {
   }
   maxContextWindow?: number
   /**
+   * The directory function this row is called through, and the `config_name`
+   * that function accepts (issue #52).
+   *
+   * Carried on the wire document because it is the ONLY thing that explains the
+   * catalog's shape to the person looking at it: the plugin serves the union of
+   * a dozen Trae channels, so 34 rows are 34 rows only until they are grouped by
+   * the channel each one will actually run on. Absent on rows the merge could
+   * not attribute (those fall back to the default chat function) and on catalogs
+   * saved before these fields existed.
+   */
+  wireFunction?: string
+  wireConfigName?: string
+  /**
    * Trae's own image-capability flag, as the runtime catalog carries it. The
    * card renders these rows with their image checkbox already ticked so the
    * control matches what DSH is actually told (issue #16); absent means the
