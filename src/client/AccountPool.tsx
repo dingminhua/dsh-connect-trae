@@ -13,7 +13,7 @@
  * regions-write helper.
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { ReactElement, ReactNode } from 'react'
+import type { ReactElement, ReactNode, SyntheticEvent } from 'react'
 import {
   regionPoolOf,
   nextRegionPool,
@@ -375,6 +375,9 @@ export function AccountPool({ panel, pool, models, t, settingsScope, onChanged, 
   const [selected, setSelected] = useState(() => new Set(saved.memberAccountIds ?? []))
   const [busy, setBusy] = useState<'test' | 'delete' | 'save' | undefined>(undefined)
   const [saveError, setSaveError] = useState<string | undefined>(undefined)
+  // The reference block is controlled so a background refresh — which re-renders
+  // this card on every poll — cannot collapse a section the user just opened.
+  const [moreRulesOpen, setMoreRulesOpen] = useState(false)
   const [testing, setTesting] = useState<{ done: number } | undefined>(undefined)
   const [rows, setRows] = useState<Readonly<Record<string, TraePoolTestRowView>>>({})
   // Per-row destructive delete IN FLIGHT (`delete` drops the plugin's credential
@@ -736,69 +739,98 @@ export function AccountPool({ panel, pool, models, t, settingsScope, onChanged, 
 
   return (
     <section className="dsm-trae-pool" aria-label={t('row.poolTitle')}>
-      {/* No section title: the action row says what the block is, and a heading
-          above it only pushed the table further down. Which account bills is
-          stated ONCE, on its row (the tinted row with the 「派单中」 pill). */}
-
-      {/* Manual mode: with the pool off the plugin does not choose, so the user
-          must be able to — and no other control is left to do it. */}
-      {pool.enabled !== true && onBind !== undefined
-        ? <div className="dsm-trae-pool-set dsm-trae-pool-bind">
-            <span className="dsm-trae-pool-set-copy">
-              <b>{t('row.poolManualAccountLabel')}</b>
-              <span>{t('row.poolManualAccountHint')}</span>
-            </span>
-            <span className="dsm-trae-pool-set-ctl">
-              <select
-                className="dsm-trae-select dsm-trae-pool-account-select"
-                value={serving?.accountId ?? ''}
-                disabled={bindingBusy === true || !writable}
-                onChange={(event) => {
-                  const next = event.target.value
-                  if (next !== '') onBind(next)
-                }}
-              >
-                {serving === undefined
-                  ? <option value="" disabled>{t('row.poolManualAccountNone')}</option>
-                  : null}
-                {/* Only accounts this machine can actually bill: a ghost row
-                    (saved, sign-in gone) has no credential, so binding it would
-                    look like a click that did nothing. */}
-                {pool.accounts
-                  .filter(account => account.reachable !== false)
-                  .map(account =>
-                    <option key={account.accountId} value={account.accountId}>{account.accountName}</option>)}
-              </select>
-            </span>
-          </div>
-        : null}
-
-      {/* Action row: test all + a busy line. The batch check-in button was
-          removed on request: Trae allows ONE check-in per DEVICE per day, so
-          after any account claimed from this machine the button could only be
-          disabled for the rest of the day — a permanent dead control. The
-          per-account claim in the roster table is the remaining path. */}
-      <div className="dsm-trae-pool-actions">
-        <button
-          type="button"
-          className="dsm-btn dsm-btn-outline dsm-trae-pool-action-test"
-          disabled={busy !== undefined || selected.size === 0 || pool.targetModelSource === 'none'}
-          title={pool.targetModelSource === 'none' ? t('row.poolTargetNoneHint') : undefined}
-          onClick={() => { void runTest() }}
-        >
-          {busy === 'test' ? t('row.poolTesting') : t('row.poolTestAll')}
-        </button>
-        {(busy === 'test' || testing !== undefined)
-          ? <span className="dsm-trae-pool-busy" role="status">{t('row.poolBusyHint')}</span>
-          : null}
-        {topActions === undefined ? null : <span className="dsm-trae-pool-actions-end">{topActions}</span>}
+      {/* The header is the title plus ONE answer to "who is billing?". With the
+          pool off that answer is the manual picker — the control already carries
+          the account name, so a badge repeating it would state the same fact
+          twice in one row of pixels. With the pool on there is nothing to pick,
+          so the slot falls back to the name. */}
+      <div className="dsm-trae-pool-head">
+        <h3 className="dsm-trae-pool-title">{t('row.poolTitle')}</h3>
+        {pool.enabled !== true && onBind !== undefined
+          ? <select
+              className="dsm-trae-select dsm-trae-pool-account-select"
+              aria-label={t('row.poolManualAccountLabel')}
+              value={serving?.accountId ?? ''}
+              disabled={bindingBusy === true || !writable}
+              onChange={(event) => {
+                const next = event.target.value
+                if (next !== '') onBind(next)
+              }}
+            >
+              {serving === undefined
+                ? <option value="" disabled>{t('row.poolManualAccountNone')}</option>
+                : null}
+              {/* Only accounts this machine can actually bill: a ghost row
+                  (saved, sign-in gone) has no credential, so binding it would
+                  look like a click that did nothing. */}
+              {pool.accounts
+                .filter(account => account.reachable !== false)
+                .map(account =>
+                  <option key={account.accountId} value={account.accountId}>{account.accountName}</option>)}
+            </select>
+          : serving === undefined
+            ? null
+            : <span className="dsm-trae-pool-current">{t('row.poolCurrentHeader', { account: serving.accountName })}</span>}
       </div>
 
-      {/* A disabled batch button with the reason only in a hover tooltip is a
-          dead end: the controls sit in a row, not under a cursor, so the row
-          itself has to say why it cannot be used. */}
-      {actionNotes.length === 0 ? null : <p className="dsm-trae-pool-action-note">{actionNotes.join(' · ')}</p>}
+      {/* The mode switch, FIRST. It used to be the last row of the settings box —
+          about a hundred lines below the member table whose every column changes
+          meaning with it (「未入池」 only matters while the pool is what picks).
+          This page has exactly two modes, "the pool picks" and "you pick"; the
+          control that selects between them has to come before the mode-specific
+          controls, not after all of them.
 
+          It keeps the `dsm-trae-pool-settings` class on purpose: that is the
+          settings-GROUP style (bordered, stacked rows). */}
+      <div className="dsm-trae-pool-settings dsm-trae-pool-modebar">
+        <div className="dsm-trae-pool-modebar-row">
+          <label className="dsm-trae-switch dsm-trae-switch-pill">
+            <input
+              type="checkbox"
+              checked={enabled}
+              disabled={busy !== undefined || !writable}
+              aria-label={t('row.poolEnabled')}
+              onChange={(e) => { setEnabled(e.target.checked) }}
+            />
+          </label>
+          <b className="dsm-trae-pool-modebar-label">{t('row.poolEnabled')}</b>
+          {/* The RUNNING mode, not the draft: the switch shows the pending edit
+              and the 「未保存」 chip beside it says that edit is pending, which
+              leaves this chip free to answer the different question — what is
+              the pool doing right now? Reading the draft here would label the
+              page 「自动挑号」 while the saved pool was still off and the manual
+              picker was still in charge. */}
+          <span className="dsm-trae-pool-modebar-state">
+            {pool.enabled === true ? t('row.poolModeAuto') : t('row.poolModeManual')}
+          </span>
+          {/* Unsaved state sits beside the switch because the switch is the first
+              thing a user can dirty. It used to hang on the settings heading,
+              i.e. below everything it warned about. */}
+          {dirty ? <span className="dsm-trae-pool-dirty" role="status">{t('row.poolDirty')}</span> : null}
+        </div>
+        {/* ONE line, and only one. The same paragraph used to stand under the
+            switch at the bottom of the page as well, which read as a developer
+            note that had leaked into the card. */}
+        <p className="dsm-trae-pool-note">{t('row.poolEnabledHint')}</p>
+      </div>
+
+      {/* "Billing now" and "in the pool" are orthogonal, and a row cannot say
+          both without looking self-contradictory. The explanation has to exist
+          SOMEWHERE, so it goes here — in one line, and only in the state that
+          needs it. */}
+      {pool.enabled === true && serving !== undefined && serving.member !== true
+        ? <p className="dsm-trae-pool-note dsm-trae-pool-serving-note" role="status">
+            {t('row.poolServingOutside', { account: serving.accountName })}
+          </p>
+        : null}
+
+      {saved.enabled === true && enabled === false
+        ? <p className="dsm-trae-pool-off-notice" role="status">{t('row.poolOffNotice')}</p>
+        : null}
+
+      {/* Failover needs somewhere to go. A pool whose members are all excluded
+          (or that has none) reports the failure instead of retrying, so say so
+          here — above the member list, before the user starts ticking boxes. */}
       {showNoCandidate ? <NoCandidateNotice noCandidate={noCandidate} t={t} /> : null}
 
       {/* Membership table. Ghost members keep rendering as checked rows. */}
@@ -811,6 +843,39 @@ export function AccountPool({ panel, pool, models, t, settingsScope, onChanged, 
             <button type="button" className="dsm-btn dsm-btn-outline" disabled={busy !== undefined} onClick={selectNone}>{t('row.poolSelectNone')}</button>
           </div>
         </div>
+        {/* The batch bar sits HERE — under the member heading, above the rows —
+            because every button on it acts on the set that heading describes:
+            「已选 N / M」 and 全部 / 清空 are one line above, the checkboxes they
+            count are one line below. It used to stand ABOVE the whole member
+            block, where it read as a page-level toolbar and had the buttons
+            asking "act on WHICH accounts?" a full block before the control that
+            answers it.
+
+            The batch check-in button is still absent on purpose: Trae allows ONE
+            check-in per DEVICE per day, so after this machine spent its claim
+            the button could only ever be disabled for the rest of the day — a
+            permanent dead control. The per-account claim in the table below is
+            the remaining path.
+
+            Why both buttons are dead is stated right under them: the reason was
+            once an amber banner above the member table, a whole screen away from
+            the buttons it explained. */}
+        <div className="dsm-trae-pool-actions">
+          <button
+            type="button"
+            className="dsm-btn dsm-btn-outline dsm-trae-pool-action-test"
+            disabled={busy !== undefined || selected.size === 0 || pool.targetModelSource === 'none'}
+            title={pool.targetModelSource === 'none' ? t('row.poolTargetNoneHint') : undefined}
+            onClick={() => { void runTest() }}
+          >
+            {busy === 'test' ? t('row.poolTesting') : t('row.poolTestAll')}
+          </button>
+          {(busy === 'test' || testing !== undefined)
+            ? <span className="dsm-trae-pool-busy" role="status">{t('row.poolBusyHint')}</span>
+            : null}
+          {topActions === undefined ? null : <span className="dsm-trae-pool-actions-end">{topActions}</span>}
+        </div>
+        {actionNotes.length === 0 ? null : <p className="dsm-trae-pool-action-note">{actionNotes.join(' · ')}</p>}
         <div className={pool.checkinSupported ? 'dsm-trae-pool-table' : 'dsm-trae-pool-table dsm-trae-pool-table-no-checkin'} role="table" aria-label={t('row.poolMembersTitle')}>
           <MemberRowHeader t={t} checkinSupported={pool.checkinSupported} />
           {pool.accounts.map(account => (
@@ -823,6 +888,7 @@ export function AccountPool({ panel, pool, models, t, settingsScope, onChanged, 
               rows={rows}
               checked={selected.has(account.accountId)}
               poolEnabled={pool.enabled === true}
+              poolModelId={pool.targetModelId ?? ''}
               detail={details?.[account.accountId]}
               claim={claims?.[account.accountId]}
               onClaim={onClaim}
@@ -873,49 +939,53 @@ export function AccountPool({ panel, pool, models, t, settingsScope, onChanged, 
         {dirty ? <p className="dsm-trae-pool-unsaved" role="status">{t('row.poolUnsavedMembers')}</p> : null}
       </div>
 
-      {/* Settings block: a heading, a real hint, account management, then one
-          bordered box of label+hint rows with the control on the right — the
-          same shape the WorkBuddy card uses, so a reader who knows one card can
-          read the other. */}
+      {/* Settings block: account management, then a subheading and one bordered
+          box of label+hint rows with the control on the right — the same shape
+          the WorkBuddy card uses, so a reader who knows one card can read the
+          other. */}
       <div className="dsm-trae-pool-settings-wrap">
+        {/* Account management FIRST — ABOVE the subheading, not under it.
+
+            Everything below that heading is a DRAFT that only takes effect when
+            「保存」 is pressed (the note under the heading says exactly that),
+            while the transfer buttons apply immediately. A control that acts at
+            once must not live inside a block that promises "点保存才生效": a user
+            who reads the note first waits for a button that was never needed,
+            and one who clicks first is surprised the table changed on its own. */}
+        {tools === undefined ? null : <div className="dsm-trae-pool-tools dsm-trae-pool-tools-dashed">{tools}</div>}
         <div className="dsm-trae-pool-head">
           <h3 className="dsm-trae-pool-title">{t('row.poolSettingsTitle')}</h3>
-          {dirty ? <span className="dsm-trae-pool-dirty" role="status">{t('row.poolDirty')}</span> : null}
         </div>
-        {tools === undefined ? null : <div className="dsm-trae-pool-tools dsm-trae-pool-tools-dashed">{tools}</div>}
-        {/* The copy file itself, named. "The plugin keeps a real copy" is a claim;
-            "these two ids live in this file right now" is something the user can
-            open with an editor. Rendered only when the Host reports it, so an
-            older Host simply says nothing instead of showing a stale path. */}
-        {pool.copies === undefined
-          ? null
-          : <p className="dsm-trae-pool-note dsm-trae-pool-copyfile" role="note">
-              {t('row.poolCopyFile', { path: pool.copies.path, count: pool.copies.count })}
-            </p>}
-        <p className="dsm-trae-pool-note">{t('row.poolSettingsNote')}</p>
-        <p className="dsm-trae-pool-note">{t('row.poolDeleteHint')}</p>
+        {/* Reference text, folded. Three paragraphs used to sit here as a wall of
+            grey — where the copies live, when settings take effect, what Delete
+            does — and they pushed the two real controls below them off the first
+            screen. A <details> keeps them one click away without dressing them up
+            as controls; nothing was cut, the copy path included ("the plugin keeps
+            a real copy" is a claim, "these two ids live in this file right now" is
+            something the user can open with an editor). The path renders only when
+            the Host reports it, so an older Host says nothing rather than showing
+            a stale one. */}
+        <details
+          className="dsm-trae-pool-more"
+          open={moreRulesOpen}
+          onToggle={(event: SyntheticEvent<HTMLDetailsElement>) => setMoreRulesOpen(event.currentTarget.open)}
+        >
+          <summary className="dsm-trae-pool-more-summary">{t('row.poolMoreRulesTitle')}</summary>
+          <div className="dsm-trae-pool-more-body">
+            {pool.copies === undefined
+              ? null
+              : <p className="dsm-trae-pool-note" role="note">
+                  {t('row.poolCopyFile', { path: pool.copies.path, count: pool.copies.count })}
+                </p>}
+            <p className="dsm-trae-pool-note">{t('row.poolSettingsNote')}</p>
+            <p className="dsm-trae-pool-note">{t('row.poolDeleteHint')}</p>
+          </div>
+        </details>
         <div className="dsm-trae-pool-settings">
-        <div className="dsm-trae-pool-set">
-          <span className="dsm-trae-pool-set-copy">
-            <b>{t('row.poolEnabled')}</b>
-            <span>{t('row.poolEnabledHint')}</span>
-          </span>
-          <span className="dsm-trae-pool-set-ctl">
-            <label className="dsm-trae-switch dsm-trae-switch-pill">
-              <input
-                type="checkbox"
-                checked={enabled}
-                disabled={busy !== undefined || !writable}
-                aria-label={t('row.poolEnabled')}
-                onChange={(e) => { setEnabled(e.target.checked) }}
-              />
-            </label>
-          </span>
-        </div>
-        {saved.enabled === true && enabled === false
-          ? <p className="dsm-trae-pool-off-notice" role="status">{t('row.poolOffNotice')}</p>
-          : null}
-
+        {/* The 「启用账号池」 switch is NOT here any more: it is the page's mode
+            selector and now stands directly under the title (see the mode bar).
+            What remains below are the two settings a manual TEST needs, which is
+            why they stay reachable with the pool off. */}
         <div className="dsm-trae-pool-set">
           <span className="dsm-trae-pool-set-copy">
             <b>{t('row.poolTargetLabel')}</b>
@@ -1071,17 +1141,22 @@ interface MemberRowProps {
   rows: Readonly<Record<string, TraePoolTestRowView>>
   checked: boolean
   /**
-   * Whether the pool is on, which decides what the 「派单中」 pill may claim.
+   * Whether the pool is on, which decides whether a `current` row may be tinted
+   * as the pool's own pick.
    *
    * With the pool ON the Host answers `current` with the account its ROTATION
    * picked, and falls back to the saved selection when the pool holds no member
-   * to pick. Rendering that fallback in pool colours put 「派单中」 on an account
-   * the user had just removed, while the notice above the table said "no pool
-   * members are selected yet" — two lines contradicting each other on one
-   * screen, and the row looked like a removal that did not take. The pill
-   * therefore only names a row that can actually be the rotation's answer.
+   * to pick. Presenting that fallback as the pool's answer claimed a removed
+   * account while the notice above the table said "no pool members are selected
+   * yet" — two lines contradicting each other on one screen. The tint therefore
+   * only names a row that can actually be the rotation's answer.
    */
   poolEnabled: boolean
+  /**
+   * The pool's saved target model (`''` when it resolves one itself), so the
+   * probe cell only reprints a model name when it differs from that choice.
+   */
+  poolModelId: string
   detail?: TraePoolRowDetail | undefined
   claim?: TraePoolRowClaim | undefined
   onClaim?: ((accountId: string) => void) | undefined
@@ -1096,7 +1171,7 @@ interface MemberRowProps {
   relativeAt: (at: number, now: number, t: T) => string
 }
 
-function MemberRow({ account, models, rows, checked, onToggle, onTest, t, disabled, deleting, onDelete, canDelete, formatNumber, relativeAt, detail, claim, onClaim, showCheckin, deviceClaimed, poolEnabled }: MemberRowProps): ReactElement {
+function MemberRow({ account, models, rows, checked, onToggle, onTest, t, disabled, deleting, onDelete, canDelete, formatNumber, relativeAt, detail, claim, onClaim, showCheckin, deviceClaimed, poolEnabled, poolModelId }: MemberRowProps): ReactElement {
   /**
    * Whether this row is the one billing the next request — and, with the pool on,
    * whether that claim is the pool's own.
@@ -1160,7 +1235,15 @@ function MemberRow({ account, models, rows, checked, onToggle, onTest, t, disabl
             : <span className={`dsm-trae-pool-warn-tag dsm-trae-pool-warn-tag-${detail.warnTone ?? 'soon'}`} role="status">{detail.warn}</span>}
         </span>
         <span className="dsm-trae-pool-account-tags">
-          {isCurrent ? <span className="dsm-trae-pool-tag dsm-trae-pool-tag-current">{t('row.poolCurrentBadge')}</span> : null}
+          {/* 「派单中」 is NOT here any more. It used to share this line with
+              「未入池」, and the pair is self-contradictory by construction: an
+              account can be billing right now (the Host fell back to the saved
+              selection) while not being a rotation member. The same line also
+              sits under a count of 「已选 0 / 1」, which made a correct state read
+              as a bug. Who bills is now answered ONCE, in the header, with a
+              one-line note under the mode bar for the case the two disagree; the
+              row keeps the membership in words, and `isCurrent` still tints it
+              so the billing row stays findable at a glance. */}
           {/* Membership is stated in WORDS on every row, and it follows the
               DRAFT (the checkbox), never the saved list: an unchecked row that
               still says 「已在池中」 is the one contradiction a user cannot
@@ -1203,9 +1286,9 @@ function MemberRow({ account, models, rows, checked, onToggle, onTest, t, disabl
       {/* Probe result. */}
       <div className="dsm-trae-pool-probe">
         {testRow !== undefined
-          ? <ProbeResult outcome={testRow.outcome} modelId={testRow.modelId} atMs={undefined} source={undefined} t={t} relativeAt={relativeAt} now={Date.now()} detail={testRow.detail} />
+          ? <ProbeResult outcome={testRow.outcome} modelId={testRow.modelId} atMs={undefined} source={undefined} t={t} relativeAt={relativeAt} now={Date.now()} detail={testRow.detail} poolModelId={poolModelId} />
           : account.probe !== undefined
-            ? <ProbeResult outcome={account.probe.outcome} modelId={account.probe.modelId} atMs={account.probe.atMs} source={account.probe.source} t={t} relativeAt={relativeAt} now={Date.now()} detail={account.probe.message} />
+            ? <ProbeResult outcome={account.probe.outcome} modelId={account.probe.modelId} atMs={account.probe.atMs} source={account.probe.source} t={t} relativeAt={relativeAt} now={Date.now()} detail={account.probe.message} poolModelId={poolModelId} />
             : <span className="dsm-trae-pool-probe-none">{t('row.poolNeverTested')}</span>}
       </div>
 
@@ -1336,13 +1419,29 @@ interface ProbeResultProps {
   atMs?: number | undefined
   source?: 'test-batch' | 'live-request' | undefined
   detail?: string | undefined
+  /**
+   * The pool's SAVED target model (`pool.targetModelId`), or `''` when the pool
+   * resolves one itself.
+   *
+   * The model used to be reprinted under every row unconditionally, which made
+   * the same name appear three times on one screen: on the 「目标测速模型」
+   * control, in the column header, and again here. The header no longer claims
+   * to name a model (it says 「状态」), and this line now speaks only when it has
+   * something the other two do not: the probe ran against a DIFFERENT model than
+   * the pool is set to — the case that looks like a bug and is not.
+   */
+  poolModelId: string
   t: T
   relativeAt: (at: number, now: number, t: T) => string
   now: number
 }
 
-function ProbeResult({ outcome, modelId, atMs, source, detail, t, relativeAt, now }: ProbeResultProps): ReactElement {
+function ProbeResult({ outcome, modelId, atMs, source, detail, poolModelId, t, relativeAt, now }: ProbeResultProps): ReactElement {
   const tone = outcome === 'ok' ? 'ok' : 'warn'
+  // Compared against the SAVED resolution, not the draft: a model the user is
+  // merely considering must not make every row suddenly reprint its id.
+  const modelDiffers = modelId !== undefined && modelId !== poolModelId
+  const sourceLabel = source === undefined ? '' : probeSourceLabel(source, t)
   return (
     <div className="dsm-trae-pool-probe-cell">
       <span className={`dsm-trae-pool-probe-outcome dsm-trae-pool-probe-${tone}`}>
@@ -1352,10 +1451,14 @@ function ProbeResult({ outcome, modelId, atMs, source, detail, t, relativeAt, no
       {atMs === undefined
         ? null
         : <span className="dsm-trae-pool-probe-meta">{t('row.poolProbeMeasured', { when: relativeAt(atMs, now, t) })}</span>}
-      <span className="dsm-trae-pool-probe-meta">
-        {modelId !== undefined ? t('row.poolProbeModel', { model: modelId }) : t('row.poolProbeModelUnknown')}
-        {source === undefined ? '' : ` · ${probeSourceLabel(source, t)}`}
-      </span>
+      {modelDiffers
+        ? <span className="dsm-trae-pool-probe-meta">
+            {t('row.poolProbeModel', { model: modelId })}
+            {sourceLabel === '' ? '' : ` · ${sourceLabel}`}
+          </span>
+        : sourceLabel === ''
+          ? null
+          : <span className="dsm-trae-pool-probe-meta">{sourceLabel}</span>}
       {detail !== undefined && detail !== '' ? <span className="dsm-trae-pool-probe-detail">{detail}</span> : null}
     </div>
   )

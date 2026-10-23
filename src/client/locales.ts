@@ -246,7 +246,12 @@ export const en = {
   'row.poolEnabled': 'Enable the account pool',
   'row.poolEnabledHint': 'The pool picks the account to bill for this panel\'s requests, ranking by credits and availability. Off means the manually bound account serves.',
   'row.poolCurrentHeader': 'Billing now: {account}',
-  'row.poolCurrentBadge': 'serving',
+  // The running mode, stated on the switch's own line. Read from the SAVED
+  // switch, never the draft: the switch already shows the pending edit and the
+  // 「unsaved」 chip beside it says so, which leaves this chip free to answer the
+  // different question — what is the pool doing RIGHT NOW.
+  'row.poolModeAuto': 'pool picks',
+  'row.poolModeManual': 'you pick',
   'row.poolMember': 'in pool',
   'row.poolNotMember': 'not in pool',
   'row.poolBusyHint': 'Working through accounts one at a time…',
@@ -258,6 +263,11 @@ export const en = {
   'row.poolNoCandidateEmptyHint': 'Tick accounts in the membership list to bring them into the pool.',
   'row.poolNoCandidateUnusable': 'Every selected member is unavailable right now.',
   'row.poolNoCandidateHint': 'Traffic keeps landing on the saved selection until one recovers.',
+  // "Billing now" and "in the pool" are orthogonal. Said on the same line they
+  // read as a contradiction (a billing account marked 「not in pool」), so the
+  // row keeps only the membership and this one line explains the overlap — and
+  // only in the state that has an overlap to explain.
+  'row.poolServingOutside': '{account} is billing right now but is not in the pool — until a member becomes available, requests fall back to the saved selection.',
   'row.poolMembersTitle': 'Accounts in this pool',
   'row.poolRescan': 'Re-detect accounts',
   'row.poolToolsLabel': 'Export / import accounts',
@@ -276,7 +286,7 @@ export const en = {
   'row.poolSelectNone': 'None',
   'row.poolColumnAccount': 'Account',
   'row.poolColumnCredits': 'Credits',
-  'row.poolColumnProbe': 'Target model',
+  'row.poolColumnProbe': 'Status',
   'row.poolColumnCheckin': 'Check-in',
   'row.poolGeneralLabel': 'General',
   'row.poolWorkHint': 'Work credits are not spendable by DSH — only General powers chat.',
@@ -301,9 +311,12 @@ export const en = {
   'row.poolProbeSizeHint': 'How much text a test sends. A one-word probe only proves the account can answer a one-word request — if the upstream refuses long turns, this is where you find out. Bigger is closer to a real conversation, and costs more credit on every account in the batch.',
   'row.poolProbeSizeDefault': 'Minimal (default)',
   'row.poolProbeSizeOption': '{wan}0k tokens',
-  'row.poolSettingsTitle': 'Pool settings',
+  // A SUBHEADING, not a second page title: what is left down here is a target
+  // model and a probe size, not the panel's main event, and it must not compete
+  // with 「Account pool」 at the top.
+  'row.poolSettingsTitle': 'More settings',
+  'row.poolMoreRulesTitle': 'Account copies & saving rules',
   'row.poolManualAccountLabel': 'Manually billed account',
-  'row.poolManualAccountHint': 'Used while the pool is off. With it on, the Host picks by credits.',
   'row.poolManualAccountNone': 'No account in effect',
   'row.poolDirty': 'unsaved',
   'row.poolSaved': 'Save',
@@ -621,7 +634,11 @@ export const zh: Record<TraeSettingsKey, string> = {
   'row.poolEnabled': '启用账号池',
   'row.poolEnabledHint': '账号池按积分与可用性挑选本面板请求的计费账号；关闭时由手动绑定的账号计费。',
   'row.poolCurrentHeader': '当前计费：{account}',
-  'row.poolCurrentBadge': '派单中',
+  // 运行中的模式，写在开关自己那一行。读的是**已保存**的开关，不是草稿：
+  // 开关本身显示待保存的编辑（旁边的「未保存」胶囊说明这件事），所以这枚
+  // 胶囊可以回答另一个问题——账号池此刻在做什么。
+  'row.poolModeAuto': '自动挑号',
+  'row.poolModeManual': '手动选号',
   'row.poolMember': '已在池中',
   'row.poolNotMember': '未入池',
   'row.poolBusyHint': '逐个处理账号中…',
@@ -633,6 +650,10 @@ export const zh: Record<TraeSettingsKey, string> = {
   'row.poolNoCandidateEmptyHint': '在成员列表中勾选账号即可加入账号池。',
   'row.poolNoCandidateUnusable': '所有已选成员当前均不可用。',
   'row.poolNoCandidateHint': '请求会继续落在已保存的账号上，直到有成员恢复可用。',
+  // 「当前计费」与「在池中」是两件正交的事，写在同一行会读成自相矛盾（一个
+  // 正在计费的账号被标成「未入池」）。所以行内只留成员关系，这个重叠由这一句
+  // 话解释——且只在真的有重叠时出现。
+  'row.poolServingOutside': '{account} 当前在计费，但它不在池中——在池里有可用成员之前，请求会落回你保存的选择。',
   'row.poolMembersTitle': '本池包含的账号',
   'row.poolRescan': '重新检测账号',
   'row.poolToolsLabel': '导出 / 导入账号',
@@ -648,7 +669,7 @@ export const zh: Record<TraeSettingsKey, string> = {
   'row.poolSelectNone': '清空',
   'row.poolColumnAccount': '账号',
   'row.poolColumnCredits': '积分',
-  'row.poolColumnProbe': '目标模型',
+  'row.poolColumnProbe': '状态',
   'row.poolColumnCheckin': '签到',
   'row.poolGeneralLabel': '通用',
   'row.poolWorkHint': '工作积分不能由 DSH 消费——只有通用积分用于对话。',
@@ -673,9 +694,11 @@ export const zh: Record<TraeSettingsKey, string> = {
   'row.poolProbeSizeHint': '测试时发送多少文本。只发一个词的探针，只能证明「这个账号能回答一个词」——如果上游拒绝长请求，问题只会在你真实对话时才出现。填得越多越接近真实对话，每个账号每次测试消耗的积分也越多。',
   'row.poolProbeSizeDefault': '最小请求（默认）',
   'row.poolProbeSizeOption': '{wan} 万 token',
-  'row.poolSettingsTitle': '账号池设置',
+  // 小标题，不是第二个页面标题：这里剩下的只是「目标模型 + 测试体积」，
+  // 不该和顶部的「账号池」争主次。
+  'row.poolSettingsTitle': '更多设置',
+  'row.poolMoreRulesTitle': '账号副本与保存规则',
   'row.poolManualAccountLabel': '手动计费账号',
-  'row.poolManualAccountHint': '账号池关闭时由它计费；开启后由 Host 按积分挑选。',
   'row.poolManualAccountNone': '当前无生效账号',
   'row.poolDirty': '未保存',
   'row.poolSaved': '保存',

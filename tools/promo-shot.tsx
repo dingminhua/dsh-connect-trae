@@ -130,10 +130,21 @@ describe('promo shot', () => {
       },
     }
 
-    const view = render(React.createElement(TraeUsageCard, { t, settingsScope: scope as never }))
-    // REAL strings here, so the matcher is the zh title rather than the key the
-    // card tests use.
-    fireEvent.click(view.getByRole('button', { name: /接入使用Trae积分与模型/ }))
+    // `view: 'page'` renders the full form directly. The old code clicked the
+    // card's title instead, which stopped being enough once the card was split
+    // into sections — and it never waited for the usage read to land, so the
+    // section strip (which only exists once a document has arrived) was not there
+    // to press. That is why this tool failed from 4.3.0 on.
+    const view = render(React.createElement(TraeUsageCard, { t, settingsScope: scope as never, view: 'page' }))
+    // The usage read is a promise chain: let it land before looking for tabs.
+    await new Promise(resolve => setTimeout(resolve, 60))
+    // A section tab is a `<button role="tab">`, so it is queried by DOM rather
+    // than by role — an explicit role overrides the element's implicit one, and
+    // the id is the one `panels-shot` uses.
+    const modelsTab = Array.from(view.container.querySelectorAll<HTMLButtonElement>('.dsm-trae-panels [role="tab"]'))
+      .find(tab => tab.id === 'dsm-trae-tab-models')
+    if (modelsTab === undefined) throw new Error('no models tab')
+    fireEvent.click(modelsTab)
     await waitFor(() => { if (view.queryByRole('region', { name: '模型' }) === null) throw new Error('no model list') })
 
     const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>promo preview</title>

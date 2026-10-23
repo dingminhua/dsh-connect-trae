@@ -239,6 +239,33 @@ describe('region enable switch', () => {
     expect(regionEnabledOf({ authFile: '/tmp/x.json' }, 'cn')).toBe(true)
   })
 
+  /**
+   * REGRESSION (ported from the sibling workbuddy plugin, its 5.5.x line): the
+   * old rule was "has a `regions` key ⇒ the caller passed the whole section".
+   * But the `regions` MAP can carry a `regions` key of its OWN — an earlier
+   * build wrote sibling field names into it (`accounts`, `regions` and
+   * `cliBridge` were all found sitting beside `cn` in a live profile). Hopping
+   * there reads a DIFFERENT, older copy of the same panel, so a saved flag (or
+   * a saved pool order) read back as absent and looked unsaved while the file
+   * still held it.
+   *
+   * The shallow copy is the truth here; the nested one is the stale duplicate.
+   * The shape decides: a map's keys ARE panel ids.
+   */
+  it('does NOT hop a layer when the regions MAP itself carries a stale `regions` key', () => {
+    const dirtyMap = {
+      regions: { cn: { enabled: true }, ai: { enabled: true } }, // stale duplicate
+      cliBridge: { enabled: false },
+      cn: { enabled: false }, // the real slot
+      ai: { enabled: true },
+    }
+    expect(regionEnabledOf(dirtyMap, 'cn'), 'must read the shallow slot').toBe(false)
+    expect(regionEnabledOf(dirtyMap, 'ai')).toBe(true)
+    // The whole section still hops, because none of ITS OWN keys is a panel id.
+    expect(regionEnabledOf({ regions: dirtyMap, authFile: '/tmp/x.json' }, 'cn')).toBe(false)
+    expect(regionEnabledOf({ regions: dirtyMap }, 'ai')).toBe(true)
+  })
+
   it('returns the regions map (not the whole section) from a toggle', () => {
     // `settingsScope.set('regions', ...)` writes the returned value verbatim, so
     // returning the whole section here would nest the document one level deep.

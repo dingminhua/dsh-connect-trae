@@ -123,15 +123,29 @@ describe('client entry activation on 0.1.7', () => {
     //
     // The gate renders nothing unless this plugin's own model is selected AND
     // the setting names this seat.
+    //
+    // `conversation.input.model.label` is the HOST's model-picker row (the
+    // upstream's activity badge, ported from the sibling workbuddy plugin): a
+    // different seam from the two credit seats below, and registered
+    // unconditionally too — the component renders the plain name for any
+    // provider that is not ours.
     expect(slots.registrations.map(entry => entry.name).sort())
-      .toEqual(['conversation.composer.dock', 'conversation.input.left', 'plugins.bundle.config', 'plugins.row.config'])
-    // The two seats must have DISTINCT slot ids: two registrations sharing one
+      .toEqual([
+        'conversation.composer.dock',
+        'conversation.input.left',
+        'conversation.input.model.label',
+        'plugins.bundle.config',
+        'plugins.row.config',
+      ])
+    // The two SEATS must have DISTINCT slot ids: two registrations sharing one
     // id would have the second silently replace the first, leaving the setting
     // able to select a seat that is no longer registered — the readout would
     // then vanish entirely, which is the defect this feature exists to fix.
     // The double records the id under `key`, the field name the real 0.1.7
-    // registry takes it as.
-    const pointSlots = slots.registrations.filter(entry => entry.name.startsWith('conversation.'))
+    // registry takes it as. Scoped to the two credit seats on purpose: the
+    // model-label slot is a third `conversation.*` registration with no id.
+    const pointSlots = slots.registrations.filter(entry =>
+      entry.name === 'conversation.input.left' || entry.name === 'conversation.composer.dock')
     expect(pointSlots.map(entry => entry.key)).toEqual(['dsh-connect-trae-composer-points', 'dsh-connect-trae-stats-points'])
     expect(forms.requested).toEqual(['dsh-connect-trae'])
     expect(errors).toHaveLength(0)
@@ -183,9 +197,10 @@ describe('client entry activation on 0.1.7', () => {
     // reads the switch as false and renders nothing, which is the correct
     // default for a host that cannot be asked. Losing the second seat here
     // would be invisible until a user picked it, so the count is asserted
-    // rather than left implied.
+    // rather than left implied. The fifth is the model-picker label, which
+    // needs no settings at all (it reads the usage route directly).
     const slots = ctx.get('slots') as unknown as Slots
-    expect(slots.registrations).toHaveLength(4)
+    expect(slots.registrations).toHaveLength(5)
     expect(errors).toHaveLength(0)
 
     spy.mockRestore()
