@@ -300,8 +300,9 @@ function PromoChip(props: { badge: TraePromoBadge, copy: Record<TraeSettingsKey,
   if (badge.fromClock !== undefined && badge.untilClock !== undefined && badge.timeZone !== undefined) {
     hints.push(fillPlaceholders(copy['row.promoHintWindow'], { from: badge.fromClock, until: badge.untilClock, zone: badge.timeZone }))
   }
-  if (badge.memberDiscountPercent !== undefined) {
+  if (badge.memberDiscountPercent !== undefined && badge.memberRate !== undefined) {
     hints.push(fillPlaceholders(copy['row.promoHintMember'], {
+      rate: String(badge.memberRate),
       zhe: promoZhe(badge.memberDiscountPercent),
       percent: String(100 - badge.memberDiscountPercent),
     }))

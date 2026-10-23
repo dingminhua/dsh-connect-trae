@@ -154,6 +154,33 @@ describe('TraeUsageCard promotion capsule', () => {
     expect(capsule?.getAttribute('title')).toContain('Asia/Shanghai')
   })
 
+  it('does not turn a same-priced member branch into a second discount', async () => {
+    // The live `deepseek-v4.1-flash` shape: member and off_peak both read
+    // 0.12 → 0.06. Quoting the member branch here would read as "another 5 折",
+    // i.e. 0.03 — a price upstream does not sell.
+    const equalMember = rule({
+      enable: true,
+      subKey: 'off_peak_member_discount_18_9',
+      data: {
+        current: { discount_type: 'none', before_consumption_rate: 0.12, consumption_rate: 0.12, discount: 100 },
+        member: { before_consumption_rate: 0.12, after_consumption_rate: 0.06, discount: 50 },
+        off_peak: {
+          before_consumption_rate: 0.12,
+          after_consumption_rate: 0.06,
+          discount: 50,
+          time_zone: 'Asia/Shanghai',
+          time_windows: [{ weekdays: [1, 2, 3, 4, 5, 6, 7], start_minute: 0, end_minute: 1440 }],
+        },
+      },
+    })
+    await renderOpen([model('deepseek-v4.1-flash', { activityDiscount: equalMember })])
+
+    const capsule = document.querySelector('.dsm-trae-model-promo')
+    const title = capsule?.getAttribute('title') ?? ''
+    expect(title).toContain('row.promoHintRate')
+    expect(title).not.toContain('row.promoHintMember')
+  })
+
   it('keeps the capsule outside the truncated name span', async () => {
     await renderOpen([model('a-very-long-model-name-that-would-be-clipped', { activityDiscount: OPEN_ALL_WEEK })])
 
