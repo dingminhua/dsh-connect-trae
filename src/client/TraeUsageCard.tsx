@@ -226,10 +226,13 @@ function promoBadge(
   if (badge.fromClock !== undefined && badge.untilClock !== undefined && badge.timeZone !== undefined) {
     hints.push(t('row.promoHintWindow', { from: badge.fromClock, until: badge.untilClock, zone: badge.timeZone }))
   }
-  if (badge.memberDiscountPercent !== undefined) {
-    // Both phrasings are passed: the zh locale says "另 {zhe} 折", en says
-    // "{percent}% off", and one of them will use the other placeholder.
+  if (badge.memberDiscountPercent !== undefined && badge.memberRate !== undefined) {
+    // Only reached when the member price is actually LOWER than the one above
+    // (`src/promo.ts` compares the two post-discount rates). Both phrasings are
+    // passed: zh spells "会员价 {rate} 积分/百万 token（{zhe} 折）", en says
+    // "({percent}% off)", and each uses the placeholders it names.
     hints.push(t('row.promoHintMember', {
+      rate: String(badge.memberRate),
       zhe: promoZhe(badge.memberDiscountPercent),
       percent: String(100 - badge.memberDiscountPercent),
     }))

@@ -58,6 +58,26 @@ const LIVE_SUBSIDY = rule({
   },
 })
 
+/**
+ * One campaign, two paths to the same price: member 0.12 → 0.06 and off-peak
+ * 0.12 → 0.06 (live capture of `deepseek-v4.1-flash`, 2026-10-23).
+ */
+const EQUAL_MEMBER = rule({
+  enable: true,
+  subKey: 'off_peak_member_discount_18_9',
+  data: {
+    current: { discount_type: 'none', before_consumption_rate: 0.12, consumption_rate: 0.12, discount: 100 },
+    member: { before_consumption_rate: 0.12, after_consumption_rate: 0.06, discount: 50 },
+    off_peak: {
+      before_consumption_rate: 0.12,
+      after_consumption_rate: 0.06,
+      discount: 50,
+      time_zone: 'Asia/Shanghai',
+      time_windows: [{ weekdays: [1, 2, 3, 4, 5, 6, 7], start_minute: 0, end_minute: 1440 }],
+    },
+  },
+})
+
 /** A namespace whose entry is enabled but publishes no price at all. */
 const NO_PRICE = rule({
   enable: true,
@@ -152,6 +172,20 @@ describe('the model label in the host picker', () => {
     // Upstream's own figures live in the hover.
     expect(chip?.getAttribute('title')).toContain('0.4')
     expect(chip?.getAttribute('title')).toContain('0.2')
+  })
+
+  it('does not quote a member price that equals the one already shown', async () => {
+    stubUsage([{ id: 'model-a', name: 'DeepSeek-V4.1-Flash · x0.06', activityDiscount: EQUAL_MEMBER }])
+
+    const { container } = render(<TraeModelLabel {...props('trae', 'DeepSeek-V4.1-Flash · x0.06')} />)
+
+    await waitFor(() => {
+      expect(container.querySelector('.dsm-trae-model-label-promo')).not.toBeNull()
+    })
+    // jsdom reports en-US, so the label draws the English table: this is the
+    // sentence that must stay away when the member price is the same 0.06.
+    expect(container.querySelector('.dsm-trae-model-label-promo')?.getAttribute('title'))
+      .not.toContain('subscription price')
   })
 
   it('reads the fast document, so opening the picker never triggers an upstream read', async () => {

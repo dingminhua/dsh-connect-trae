@@ -39,6 +39,18 @@
  * subscription-price comparison with no "running now" flag of its own, so it is
  * parsed (the hover line quotes it) but never decides that a badge exists.
  *
+ * ## The member branch is a SECOND PATH, not a second discount
+ *
+ * `off_peak_member_discount_18_9` is one campaign with two entitlement paths to
+ * the same price: members pay 0.06 all day, free users pay 0.06 only inside the
+ * off-peak windows (measured 2026-10-23 on a live CN account: `member` and
+ * `off_peak` both read `0.12 → 0.06, discount 50`). The branches are NOT
+ * cumulative, so quoting `member` beside a live 0.06 as "another 5 折" would
+ * claim a 0.03 that upstream never sells. The hover therefore carries the
+ * member price only when it is genuinely LOWER than the rate the badge already
+ * shows — {@link TraePromoBadge.memberRate} is that comparison, and it is absent
+ * whenever the two paths land on the same number.
+ *
  * ## What this module does NOT have
  *
  * Trae publishes no label, no colour and no hover sentence — unlike WorkBuddy's
@@ -101,8 +113,15 @@ export interface TraePromoBadge {
   percentOff: number
   beforeRate?: number
   rate?: number
-  /** `member.discount`, when upstream quotes a subscription price. */
+  /**
+   * The subscription price, ONLY when it is cheaper than {@link rate}.
+   *
+   * `undefined` also covers the very common case where both paths land on the
+   * same figure (see the module note): there is no second discount to quote.
+   */
   memberDiscountPercent?: number
+  /** The member price itself, `after_consumption_rate`, when it is cheaper. */
+  memberRate?: number
   /**
    * The cheap window that produced the badge — wall clocks in {@link timeZone},
    * "HH:MM" (an end of "24:00" is upstream's end-of-day).
@@ -305,6 +324,26 @@ function discountOf(price: TraePromoPrice): number | undefined {
   return Math.round((price.rate / price.beforeRate) * 100)
 }
 
+/**
+ * The member price, but only when it beats the rate the badge is already showing.
+ *
+ * Two rates on the same base are two ways to reach one price: `member` quoting
+ * 0.06 beside a live 0.06 is not "another 5 折". Comparing the post-discount
+ * numbers is the only honest test — a branch with no rate cannot be shown to be
+ * cheaper, so it is not quoted at all.
+ */
+function cheaperMemberOf(
+  price: TraePromoPrice,
+  discount: TraeActivityDiscount,
+): { rate: number, discountPercent: number } | undefined {
+  const member = discount.member
+  if (member === undefined || member.rate === undefined) return undefined
+  if (price.rate === undefined || member.rate >= price.rate) return undefined
+  const discountPercent = discountOf(member)
+  if (discountPercent === undefined) return undefined
+  return { rate: member.rate, discountPercent }
+}
+
 function badgeOf(
   kind: TraePromoKind,
   price: TraePromoPrice,
@@ -313,14 +352,14 @@ function badgeOf(
 ): TraePromoBadge | undefined {
   const discountPercent = discountOf(price)
   if (discountPercent === undefined) return undefined
-  const memberDiscountPercent = discount.member === undefined ? undefined : discountOf(discount.member)
+  const member = cheaperMemberOf(price, discount)
   return {
     kind,
     discountPercent,
     percentOff: 100 - discountPercent,
     ...price.beforeRate === undefined ? {} : { beforeRate: price.beforeRate },
     ...price.rate === undefined ? {} : { rate: price.rate },
-    ...memberDiscountPercent === undefined ? {} : { memberDiscountPercent },
+    ...member === undefined ? {} : { memberDiscountPercent: member.discountPercent, memberRate: member.rate },
     ...window === undefined ? {} : {
       fromClock: clockOf(window.startMinute),
       untilClock: clockOf(window.endMinute),
@@ -353,7 +392,15 @@ export function selectTraePromoBadge(
       // off-peak one whose window is open, and then both agree — while a
       // subsidy running outside its window must report the live price, not the
       // window's.
-      const badge = badgeOf(kindOf(discount), current, discount)
+      const kind = kindOf(discount)
+      // An "off-peak" capsule has to be able to say WHEN. Upstream's live
+      // verdict carries no window, so a badge sourced from it would otherwise
+      // read 闲时 5 折 with no hours behind it (the shape the picker showed on
+      // 2026-10-23). Attach the window only when the local clock agrees one is
+      // running: that is a statement we can defend, and it stays silent when a
+      // cached/lagging verdict and the clock disagree.
+      const window = kind === 'offPeak' ? runningWindow(discount, now, defaultTimeZone) : undefined
+      const badge = badgeOf(kind, current, discount, window)
       // A live verdict still needs a number to show; without one, fall through
       // rather than paint an empty capsule.
       if (badge !== undefined) return badge

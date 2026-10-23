@@ -56,6 +56,32 @@ function offPeakDocument(overrides: {
   }
 }
 
+/**
+ * The `deepseek-v4.1-flash` document while its window is OPEN (live capture,
+ * 2026-10-23 13:31): `current` carries the off-peak verdict, and the campaign
+ * also quotes a member price on the very same figure — the shape that made a
+ * naive hover read like two stacked 5 折.
+ */
+function liveOffPeakDocument(overrides: {
+  windows?: { weekdays: number[]; start_minute: number; end_minute: number }[]
+} = {}): unknown {
+  return {
+    enable: true,
+    subKey: 'off_peak_member_discount_18_9',
+    data: {
+      current: { discount_type: 'off_peak', before_consumption_rate: 0.12, consumption_rate: 0.06, discount: 50 },
+      member: { before_consumption_rate: 0.12, after_consumption_rate: 0.06, discount: 50 },
+      off_peak: {
+        before_consumption_rate: 0.12,
+        after_consumption_rate: 0.06,
+        discount: 50,
+        time_zone: 'Asia/Shanghai',
+        time_windows: overrides.windows ?? [{ weekdays: [1, 2, 3, 4, 5], start_minute: 0, end_minute: 540 }],
+      },
+    },
+  }
+}
+
 /** A live subsidy, copied from `Doubao-Seed-2.1-Turbo`'s wire row. */
 const SUBSIDY_DOCUMENT: unknown = {
   enable: true,
@@ -130,9 +156,49 @@ describe('selectTraePromoBadge', () => {
       percentOff: 50,
       beforeRate: 0.4,
       rate: 0.2,
+      // The member branch really is cheaper here (0.1 against the live 0.2), so
+      // it can be quoted as a price of its own.
       memberDiscountPercent: 25,
+      memberRate: 0.1,
     })
     // No window produced it, so no window is claimed.
+    expect(badge?.fromClock).toBeUndefined()
+  })
+
+  it('does not quote a member price that lands on the same figure', () => {
+    // Measured live 2026-10-23 on `deepseek-v4.1-flash`
+    // (`off_peak_member_discount_18_9`): member and off_peak both read
+    // 0.12 → 0.06. The two branches are alternative paths to one price, so
+    // "会员价另有 5 折" would claim a 0.03 that upstream never sells.
+    const badge = selectTraePromoBadge(parseTraeActivityDiscount(offPeakDocument()), WED_0820)
+    expect(badge?.kind).toBe('offPeak')
+    expect(badge?.rate).toBe(0.06)
+    expect(badge?.memberRate).toBeUndefined()
+    expect(badge?.memberDiscountPercent).toBeUndefined()
+  })
+
+  it('names the running window behind an upstream off-peak verdict', () => {
+    // Upstream's live verdict carries no window of its own: without this the
+    // capsule reads 闲时 5 折 and the hover never says when (the shape the
+    // picker showed on 2026-10-23).
+    const liveOffPeak = parseTraeActivityDiscount(liveOffPeakDocument())
+    expect(selectTraePromoBadge(liveOffPeak, WED_0820)).toMatchObject({
+      kind: 'offPeak',
+      discountPercent: 50,
+      fromClock: '00:00',
+      untilClock: '09:00',
+      timeZone: 'Asia/Shanghai',
+    })
+  })
+
+  it('claims no window when the clock disagrees with the verdict', () => {
+    // Same live verdict, but the rule's windows are weekend-only: a cached or
+    // lagging `current` must not make the hover name hours that are not open.
+    const weekendOnly = parseTraeActivityDiscount(liveOffPeakDocument({
+      windows: [{ weekdays: [6, 7], start_minute: 0, end_minute: 1440 }],
+    }))
+    const badge = selectTraePromoBadge(weekendOnly, WED_0820)
+    expect(badge?.kind).toBe('offPeak')
     expect(badge?.fromClock).toBeUndefined()
   })
 
