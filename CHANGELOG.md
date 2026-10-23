@@ -1,5 +1,55 @@
 # Changelog
 
+## 4.4.2 (2026-10-23)
+
+> **带工具的对话在 deepseek-v4.1-flash 上整轮 400/4027 拒绝。这个版本在两个工具出口
+> 把 draft-3 风格的 `required: true` 归一化为 draft-4。**
+>
+> 接 issue #48 的后续证据（issue #49）：上游校验**分后端**。同一凭证、同一 SOLO 出口、
+> 同一工具 schema，`glm-5.2`（智谱后端）放行属性内的 `required: true`，而
+> `deepseek-v4.1-flash` 按 JSON Schema draft-4+ 严校验，直接回
+> `4027 … tools.N.function.parameters/properties/X/required: invalid JSON Schema` ——
+> 且 `tools.N` 是**按批校验**，一个不合格即全挂，所以「带工具必 400」。
+> 之前 #48 判「上游已放行」是因为只在宽松的智谱后端上试过。
+
+### 修复
+
+- **工具 schema 出口统一归一化为 draft-4**（`fix(protocol)`，issue #49）。
+  DSH schemastery 生成的工具参数是 draft-3 风格 —— `required: true` 写在属性**内部**：
+
+  ```json
+  { "type": "object", "properties": { "tool": { "type": "string", "required": true } } }
+  ```
+
+  JSON Schema draft-4 起已把 per-property boolean `required` 移除，改为父级字符串数组
+  `{ "required": ["tool"] }`。deepseek-v4.1-flash 这类严校验后端对前者直接判
+  `invalid JSON Schema`，整请求被拒。由于模型路由到哪个后端由上游决定、随 config 变化，
+  凡带工具的请求都必须是 draft-4 干净的，与探针上次试过后端无关。
+  - 新增 `normalizeTraeToolSchema` / `normalizeTraeToolSchemas`（`src/raw-chat.ts`）：
+    递归把属性内 boolean `required` 提升到父级 `required` 数组（与既有数组去重合并）后
+    删除 boolean；覆盖 `items` / `anyOf` / `oneOf` / `allOf` 等任意嵌套。**幂等** ——
+    已是 draft-4 的 schema 原样返回（同一对象，零拷贝），不改变合法载荷。
+  - **两个工具出口都套上归一化**：`prepareSoloBody`（SOLO `llm_utils_chat` 主路径，
+    `parameters` 在 `JSON.stringify` 前归一化）与 `buildTraeRawChatDraft`（raw chat 路径，
+    `structuredClone` 后的 `tools` 归一化）。纯本地、不碰凭据、不改调用方入参。
+  - 归一化后的载荷形态与 issue #49 的 D3 对照实验（draft-4 提升后经
+    deepseek-v4.1-flash 后端 200 正常 SSE）一致。
+
+### 测试补强
+
+- **989 例测试全绿**（`pnpm run test`），新增 **7 例**：draft-3 提升、嵌套
+  `items`/`anyOf` 递归、与既有 `required` 数组合并、draft-4 幂等（字节不变）、
+  `properties` 之外的 boolean `required` 与 `required: false` 不误伤、调用方 `tools`
+  不被原地修改、SOLO 信封 wire 载荷为 draft-4。
+
+### 已知边界
+
+- 归一化只处理 draft-3 boolean `required` 这一种已实测命中的非法形态；上游若日后
+  收紧到拒绝更多 draft-3 残留（如属性内其他 boolean 关键字），需另行取证后处理。
+- 本次修复未经本机真实凭据实测（修复者无 Trae 凭据）；上游行为依据 issue #49 报告人
+  的三步对照实验（D1 无工具 200 / D2 draft-3 4027 / D3 draft-4 200）。本地验证为
+  单测 + 构造载荷核验。
+
 ## 4.4.1 (2026-10-22)
 
 > **4.4.0 的修复自己藏掉了 `kimi-k2-0905`。这个版本把它捞回来，并补上 4.4.0 缺的实测。**
