@@ -455,10 +455,19 @@ export const TRAE_CARD_CSS = `
  * leave a hole on the right.                                          *
  * ------------------------------------------------------------------ */
 .dsm-trae-pool{--dsm-trae-pool-pad-x:14px;--dsm-trae-pool-pad-y:10px;--dsm-trae-pool-radius:14px;display:flex;flex-direction:column;gap:12px;border-top:1px solid var(--dsw-alias-border-l2,#36373b);padding:14px 0 0}
-.dsm-trae-pool-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.dsm-trae-pool-head{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px}
 .dsm-trae-pool-title{margin:0;font-size:13px;font-weight:600;line-height:18px;color:var(--dsw-alias-label-primary,#e6e6e6)}
 .dsm-trae-pool-region-note{margin:3px 0 0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#9aa0a8)}
 .dsm-trae-pool-current{flex:none;padding:2px 8px;border-radius:999px;border:1px solid var(--dsw-alias-border-l2,#3a3d45);font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary,#c6c9d0);white-space:nowrap}
+.dsm-trae-pool-modebar{padding:12px 14px;gap:8px;border-color:rgba(86,134,254,.36);background:linear-gradient(180deg,rgba(86,134,254,.10),rgba(86,134,254,.02)),var(--dsw-alias-bg-layer-2,#24262c)}
+.dsm-trae-pool-modebar-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.dsm-trae-pool-modebar-label{font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary,#e6e6e6)}
+.dsm-trae-pool-modebar-state{flex:none;padding:1px 9px;border-radius:999px;font-size:12px;line-height:18px;font-weight:500;color:var(--dsw-alias-brand-primary,#5686fe);background:rgba(86,134,254,.14);border:1px solid rgba(86,134,254,.3)}
+.dsm-trae-pool-modebar .dsm-trae-pool-dirty{margin-left:auto}
+.dsm-trae-pool-modebar .dsm-trae-pool-note{line-height:18px}
+.dsm-trae-pool-serving-note{color:var(--dsw-alias-state-warn-primary,#b45309)}
+.dsm-trae-pool-card .dsm-trae-pool-actions{padding:0 var(--dsm-trae-pool-pad-x) 12px}
+.dsm-trae-pool-card .dsm-trae-pool-action-note{padding:0 var(--dsm-trae-pool-pad-x) 12px}
 .dsm-trae-pool-actions{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
 .dsm-trae-pool-action-checkin{flex:none;white-space:nowrap}
 .dsm-trae-pool-action-test{flex:none;white-space:nowrap}
@@ -496,8 +505,7 @@ export const TRAE_CARD_CSS = `
 .dsm-trae-pool-set-copy span{font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#9aa0a8)}
 .dsm-trae-pool-set-ctl{display:flex;align-items:center;gap:8px;flex:none}
 .dsm-trae-pool-set-ctl select{min-width:180px}
-.dsm-trae-pool-bind{border:1px solid var(--dsw-alias-border-l2,#3a3d45);border-radius:var(--dsm-trae-pool-radius);background:var(--dsw-alias-bg-layer-2,#24262c)}
-.dsm-trae-pool-account-select{min-width:180px}
+.dsm-trae-pool-account-select{min-width:180px;max-width:min(320px,50%)}
 .dsm-trae-pool-tools{display:flex;flex-direction:column;gap:8px}
 .dsm-trae-pool-tool-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .dsm-trae-pool-meta{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary,#9aa0a8);white-space:nowrap}
@@ -541,7 +549,6 @@ export const TRAE_CARD_CSS = `
 .dsm-trae-pool-tag{padding:0 6px;border-radius:999px;font-size:10px;line-height:16px;white-space:nowrap}
 .dsm-trae-pool-member{font-size:11px;line-height:16px;color:var(--dsw-alias-brand-primary,#5686fe)}
 .dsm-trae-pool-not-member{font-size:11px;line-height:16px;color:var(--dsw-alias-label-dimmed,#9aa0a6)}
-.dsm-trae-pool-tag-current{padding:1px 6px;border-radius:999px;background:rgba(86,134,254,.16);color:var(--dsw-alias-brand-primary,#5686fe);font-size:11px;font-weight:600;line-height:16px}
 .dsm-trae-pool-tag-member{border:1px solid var(--dsw-alias-border-l2,#3a3d45);color:var(--dsw-alias-label-tertiary,#9aa0a8)}
 .dsm-trae-pool-tag-excluded{background:var(--dsw-alias-state-warn-tertiary,#fef3c7);color:var(--dsw-alias-state-warn-primary,#b45309)}
 .dsm-trae-pool-tag-ghost{border:1px dashed var(--dsw-alias-border-l2,#3a3d45);color:var(--dsw-alias-label-tertiary,#9aa0a8)}
@@ -580,7 +587,7 @@ export const TRAE_CARD_CSS = `
 /* "Every member is unusable" is the one case that IS the pool's fault, so it
    keeps the warn tone the base class sets. */
 .dsm-trae-pool-warning-unusable{border-color:var(--dsw-alias-state-warn-secondary,#fbbf24);background:var(--dsw-alias-state-warn-tertiary,#fef3c7);color:var(--dsw-alias-state-warn-primary,#b45309)}
-.dsm-trae-pool-save-row{display:flex;align-items:center;justify-content:space-between;gap:12px;border-top:1px solid var(--dsw-alias-border-l2,#36373b);padding-top:12px}
+.dsm-trae-pool-save-row{display:flex;align-items:center;justify-content:space-between;gap:12px;border-top:1px solid var(--dsw-alias-border-l2,#36373b);padding-top:12px;position:sticky;bottom:0;z-index:2;padding-bottom:8px;background:var(--dsw-alias-bg-layer-3,#2a2c33)}
 .dsm-trae-pool-save-buttons{display:flex;align-items:center;justify-content:flex-end;gap:8px}
 .dsm-trae-pool-save-row .dsm-btn{padding:5px 14px;font-size:13px;line-height:1.5}
 .dsm-trae-pool-dirty{padding:0 6px;border-radius:999px;background:var(--dsw-alias-state-warn-tertiary,#fef3c7);color:var(--dsw-alias-state-warn-primary,#b45309);font-size:10px;line-height:16px}

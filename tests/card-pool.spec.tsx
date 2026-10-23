@@ -32,6 +32,7 @@ import { AccountPool } from '../src/client/AccountPool.tsx'
 import { TRAE_CARD_CSS } from '../src/client/styles.ts'
 import { withTraePoolAccount, withTraePoolAction } from '../src/status-paths.ts'
 import type { TraeSettingsKey } from '../src/client/locales.ts'
+import { zh } from '../src/client/locales.ts'
 import type { TraeWebPool, TraeWebPoolAccount, TraeWebModel, TraePoolTestRowView, TraePoolCheckinRowView } from '../src/status-paths.ts'
 
 afterEach(() => {
@@ -959,19 +960,22 @@ describe('the pool section is styled', () => {
 })
 
 /**
- * The 「派单中」 pill names the row the Host says is billing the next request.
+ * Who bills is answered ONCE — in the header — and the 「未入池」 tag stays on the
+ * row.
  *
- * That answer is only the POOL's while the pool has a member to pick: with the
- * pool on and nobody in it the Host deliberately falls back to the saved
- * selection, so a row the user just removed kept `current: true` and the pill
- * kept announcing it — next to a notice reading "no pool members are selected
- * yet". Users read the pill, not the settings file, so a successful removal
- * looked like a failed one.
+ * These two facts are orthogonal and used to share a line: a green 「派单中」
+ * badge next to a grey 「未入池」, under a count reading 「已选 0 / 1」, reads as a
+ * bug. It is not (the account serves right now, the Host fell back to the saved
+ * selection, and no member is in the pool) — but the explanation has to exist
+ * somewhere, so it moved into the header plus one conditional note.
+ *
+ * The pill that used to sit in the row is gone; what these tests pin is that the
+ * INFORMATION still exists, in the one place it cannot contradict the row.
  */
-describe('「派单中」 names only the pool\'s own answer', () => {
-  const currentBadge = (): string => 'row.poolCurrentBadge'
+describe('who is billing is stated in the header, not on the row', () => {
+  const headerLine = (account: string): string => `row.poolCurrentHeader:${JSON.stringify({ account })}`
 
-  it('hides the pill on a removed (non-member) row the Host still reports current', () => {
+  it('names the billing account in the header even when it is not a pool member, and explains the overlap', () => {
     const { scope } = makeScope()
     // Exactly the post-removal shape: the saved list is empty, the Host fell back
     // to the bound account, so that account is `current` but no longer a member.
@@ -983,18 +987,49 @@ describe('「派单中」 names only the pool\'s own answer', () => {
         { accountId: 'acc-b', accountName: 'AccB', current: false, member: false, reachable: true, generalAvailable: 8 },
       ],
     }), scope)}</>)
-    expect(within(poolSection()).queryByText(currentBadge())).toBeNull()
+    const section = poolSection()
+    expect(within(section).getByText(headerLine('AccA'))).toBeTruthy()
+    // The row keeps membership in words, and nothing on it claims to be serving.
+    expect(within(poolRow('AccA')).getByText('row.poolNotMember')).toBeTruthy()
+    expect(poolRow('AccA').querySelector('.dsm-trae-pool-tag-current')).toBeNull()
+    // …and the orthogonal pair is explained, once.
+    expect(within(section).getByText(`row.poolServingOutside:${JSON.stringify({ account: 'AccA' })}`)).toBeTruthy()
   })
 
-  it('keeps the pill when the pool does have a member to serve', () => {
+  it('drops the note when the billing account IS a pool member', () => {
     const { scope } = makeScope()
     render(<>{renderPoolAndReturn(basePool(), scope)}</>)
-    const rows = within(poolSection()).getAllByRole('row').filter(row => row.getAttribute('data-account-id') !== null)
-    const currentRow = rows.find(row => within(row).queryByText(currentBadge()) !== null)
-    expect(currentRow?.getAttribute('data-account-id')).toBe('acc-a')
+    const section = poolSection()
+    expect(within(section).getByText(headerLine('AccA'))).toBeTruthy()
+    expect(within(section).queryByText(/row\.poolServingOutside/)).toBeNull()
   })
 
-  it('still shows the pill in manual mode, where the saved selection IS the answer', () => {
+  it('puts the picker in the header slot while the pool is off', () => {
+    // With the pool off the plugin does not choose, so the user must be able to —
+    // and the picker carries the account name, which is why a badge beside it
+    // would be the same fact twice in one row of pixels.
+    const { scope } = makeScope()
+    const onBind = vi.fn()
+    render(<AccountPool
+      panel="cn"
+      pool={basePool({ enabled: false })}
+      models={MODELS}
+      t={t}
+      settingsScope={scope as never}
+      onBind={onBind}
+    />)
+    const picker = within(poolSection()).getByRole('combobox', { name: 'row.poolManualAccountLabel' })
+    expect(picker).toBeTruthy()
+    // The badge is gone: the control it would have duplicated is right there.
+    expect(screen.queryByText(headerLine('AccA'))).toBeNull()
+    // Binding still works through the control that moved.
+    fireEvent.change(picker, { target: { value: 'acc-b' } })
+    expect(onBind).toHaveBeenCalledWith('acc-b')
+  })
+
+  it('falls back to naming the account when no picker can be offered', () => {
+    // A Host with no binding route cannot offer a choice, so the slot does the
+    // next best thing rather than leaving the header silent about who bills.
     const { scope } = makeScope()
     render(<>{renderPoolAndReturn(basePool({
       enabled: false,
@@ -1002,6 +1037,160 @@ describe('「派单中」 names only the pool\'s own answer', () => {
         { accountId: 'acc-a', accountName: 'AccA', current: true, member: false, reachable: true, generalAvailable: 30 },
       ],
     }), scope)}</>)
-    expect(within(poolSection()).getByText(currentBadge())).toBeTruthy()
+    expect(within(poolSection()).getByText(headerLine('AccA'))).toBeTruthy()
+    expect(within(poolSection()).getByText('row.poolModeManual')).toBeTruthy()
+  })
+})
+
+/**
+ * The page's two modes are selected by a switch that has to come FIRST.
+ *
+ * It used to be the last row of the settings box, about a hundred lines below
+ * the member table whose every column changes meaning with it. These tests pin
+ * the ORDER, which is the whole point of the change — a re-render that moves the
+ * switch back down would otherwise pass every other assertion in this file.
+ */
+describe('the pool switch leads the section', () => {
+  it('renders the switch above the member table, with the running mode beside it', () => {
+    const { scope } = makeScope()
+    render(<>{renderPoolAndReturn(basePool(), scope)}</>)
+    const section = poolSection()
+    const switchInput = within(section).getByRole('checkbox', { name: 'row.poolEnabled' })
+    const table = within(section).getByRole('table', { name: 'row.poolMembersTitle' })
+    // DOCUMENT_POSITION_FOLLOWING: the table comes after the switch.
+    expect(switchInput.compareDocumentPosition(table) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(within(section).getByText('row.poolModeAuto')).toBeTruthy()
+  })
+
+  it('labels the RUNNING mode, not the draft, while an edit is pending', async () => {
+    // The switch already shows the pending edit and 「未保存」 says it is pending,
+    // which frees the mode chip to answer a different question: what is the pool
+    // doing right now? Read from the draft it would claim 「自动挑号」 while the
+    // saved pool was still off and the manual picker was still in charge.
+    const { scope } = makeScope(pooledInitial({ enabled: false, memberAccountIds: [] }))
+    render(<>{renderPoolAndReturn(basePool({ enabled: false, memberAccountIds: [] }), scope)}</>)
+    const section = poolSection()
+    // Switch the draft ON without saving.
+    await act(async () => { fireEvent.click(within(section).getByRole('checkbox', { name: 'row.poolEnabled' })) })
+    expect(within(section).getByText('row.poolDirty')).toBeTruthy()
+    // `pool.enabled` (the Host's running answer) is still false, so the chip
+    // keeps saying 「手动选号」.
+    expect(within(section).getByText('row.poolModeManual')).toBeTruthy()
+    expect(within(section).queryByText('row.poolModeAuto')).toBeNull()
+  })
+})
+
+/**
+ * The batch bar sits between the range it acts on and the rows it acts on.
+ *
+ * Order is the feature: 「已选 N / M」 and 全部/清空 declare the SET, the buttons
+ * act on it, and the checkboxes it counts are the table below. The bar used to
+ * stand above the whole member block, reading as a page-level toolbar whose
+ * buttons asked "act on WHICH accounts?" a full block before the control that
+ * answers it.
+ */
+describe('the batch bar sits inside the member block', () => {
+  it('renders the count, then the batch button, then the table', () => {
+    const { scope } = makeScope()
+    render(<>{renderPoolAndReturn(basePool(), scope)}</>)
+    const section = poolSection()
+    const card = section.querySelector('.dsm-trae-pool-card') as HTMLElement
+    const count = within(section).getByText(/row\.poolSelectedCount/)
+    const testAll = within(section).getByRole('button', { name: 'row.poolTestAll' })
+    const table = within(section).getByRole('table', { name: 'row.poolMembersTitle' })
+    expect(card.contains(count)).toBe(true)
+    expect(card.contains(testAll)).toBe(true)
+    expect(count.compareDocumentPosition(testAll) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(testAll.compareDocumentPosition(table) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('states why the batch button is dead right under it, not a screen away', () => {
+    const { scope } = makeScope()
+    render(<>{renderPoolAndReturn(basePool({ memberAccountIds: [] }), scope)}</>)
+    const section = poolSection()
+    const testAll = within(section).getByRole('button', { name: 'row.poolTestAll' })
+    expect((testAll as HTMLButtonElement).disabled).toBe(true)
+    const note = within(section).getByText('row.poolActionNoteNoMembers')
+    expect(testAll.compareDocumentPosition(note) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('keeps the save bar reachable while scrolling the page', () => {
+    // Both commit buttons used to sit at the very bottom of the section: with a
+    // long roster the user edited a row, scrolled nowhere, and could not see what
+    // applied the edit.
+    const bar = /\.dsm-trae-pool-save-row\{([^}]*)\}/.exec(TRAE_CARD_CSS)
+    expect(bar?.[1]).toContain('position:sticky')
+    expect(bar?.[1]).toContain('bottom:0')
+  })
+})
+
+/**
+ * The probe column no longer claims to name a model.
+ *
+ * The same model used to be printed three times on one screen: on the 「目标测速
+ * 模型」 control, in the column header, and again under every row. The header is
+ * now 「状态」 (it describes an outcome), and a row only names its model when it
+ * differs from the saved choice — the case that looks like a bug and is not.
+ */
+describe('the probe column says one thing', () => {
+  it('heads the column 「状态」, not a model name', () => {
+    // The header describes an OUTCOME. It used to say 「目标模型」, which named the
+    // very thing the 「目标测速模型」 control above already names — the first of
+    // three sightings of one model on a single screen.
+    expect(zh['row.poolColumnProbe']).toBe('状态')
+    const { scope } = makeScope()
+    render(<>{renderPoolAndReturn(basePool({ targetModelId: 'free-1', targetModelSource: 'preferred' }), scope)}</>)
+    expect(within(poolSection()).getByText('row.poolColumnProbe')).toBeTruthy()
+  })
+
+  it('does not reprint the saved target model under a row that used exactly it', () => {
+    const { scope } = makeScope()
+    render(<>{renderPoolAndReturn(basePool({
+      targetModelId: 'free-1',
+      targetModelSource: 'preferred',
+      accounts: [
+        {
+          accountId: 'acc-a', accountName: 'AccA', current: true, member: true, reachable: true,
+          generalAvailable: 30, workAvailable: 0,
+          probe: { outcome: 'ok', atMs: Date.now() - 60_000, source: 'test-batch', modelId: 'free-1' },
+        },
+      ],
+    }), scope)}</>)
+    expect(within(poolRow('AccA')).queryByText(/row\.poolProbeModel/)).toBeNull()
+  })
+
+  it('names the model when the probe ran against a different one', () => {
+    const { scope } = makeScope()
+    render(<>{renderPoolAndReturn(basePool({
+      targetModelId: 'free-1',
+      targetModelSource: 'preferred',
+      accounts: [
+        {
+          accountId: 'acc-a', accountName: 'AccA', current: true, member: true, reachable: true,
+          generalAvailable: 30, workAvailable: 0,
+          probe: { outcome: 'ok', atMs: Date.now() - 60_000, source: 'live-request', modelId: 'pro-1' },
+        },
+      ],
+    }), scope)}</>)
+    expect(within(poolRow('AccA')).getByText(/row\.poolProbeModel/)).toBeTruthy()
+  })
+
+  it('still shows where the reading came from when it hides the model', () => {
+    // Hiding the model must not hide the provenance with it: 「实时请求」 explains
+    // where the number came from, and that is not stated anywhere else.
+    const { scope } = makeScope()
+    render(<>{renderPoolAndReturn(basePool({
+      targetModelId: 'free-1',
+      targetModelSource: 'preferred',
+      accounts: [
+        {
+          accountId: 'acc-a', accountName: 'AccA', current: true, member: true, reachable: true,
+          generalAvailable: 30, workAvailable: 0,
+          probe: { outcome: 'ok', atMs: Date.now() - 60_000, source: 'live-request', modelId: 'free-1' },
+        },
+      ],
+    }), scope)}</>)
+    expect(within(poolRow('AccA')).queryByText(/row\.poolProbeModel/)).toBeNull()
+    expect(within(poolRow('AccA')).getByText('row.poolProbeSourceLive')).toBeTruthy()
   })
 })
