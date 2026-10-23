@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { TraeCredential } from './auth.ts'
 import type { TraeIdentity } from './identity.ts'
 import { buildTraeCnHeaders, traeEndpoint } from './protocol.ts'
+import { normalizeTraeToolSchema } from './raw-chat.ts'
 import { parseTraeActivityDiscount, type TraeActivityDiscount } from './promo.ts'
 import { REGION_GATEWAYS, TRAE_ENTERPRISE_HOST, regionOfCredential, type TraeRegion } from './region.ts'
 import { parseReasoningCapability, type TraeReasoningCapability } from './reasoning.ts'
@@ -147,7 +148,15 @@ export function prepareSoloBody(source: string, defaultModel = 'glm-5.2', functi
       const fn = (raw as Record<string, unknown>)['function']
       if (typeof fn !== 'object' || fn === null) continue
       const record = fn as Record<string, unknown>
-      if (typeof record['parameters'] === 'object' && record['parameters'] !== null) record['parameters'] = JSON.stringify(record['parameters'])
+      if (typeof record['parameters'] === 'object' && record['parameters'] !== null) {
+        // Issue #49: DSH schemastery emits draft-3 `required: true` inside a
+        // property schema. The DeepSeek-backed models (deepseek-v4.1-flash, …)
+        // validate tools batch-wide and answer `4027 invalid JSON Schema` for
+        // the whole request when any tool carries that boolean, while the
+        // Zhipu backend tolerates it — so normalise to draft-4 before
+        // stringify. Local, idempotent, and credential-free.
+        record['parameters'] = JSON.stringify(normalizeTraeToolSchema(record['parameters']))
+      }
     }
   }
   return JSON.stringify(body)

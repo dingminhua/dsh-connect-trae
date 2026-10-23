@@ -106,7 +106,7 @@ export { parseTraeRemoteModel, type TraeDiscoveredModel, type TraeDiscoveredReas
 export { traeStorageCandidates, traeWindowsAppNames, type TraeEdition, type TraeStorageCandidate } from './paths.ts'
 export { describeIdShape, describeNameShape, maskUserPath } from './redact.ts'
 export { buildTraeAgentTaskBody, buildTraeCnHeaders, normalizeTraeVersionCode, TRAE_CN_AGENT_TASK_PATH, TRAE_CN_TITLE_PATH, TRAE_VERSION_CODE_FALLBACK, traeEndpoint } from './protocol.ts'
-export { buildTraeRawChatDraft, decodeRawChatChunk, TRAE_RAW_CHAT_V1_PATH, TRAE_RAW_CHAT_V2_PATH, type RawChatDelta, type RawChatMessage, type RawChatTool } from './raw-chat.ts'
+export { buildTraeRawChatDraft, decodeRawChatChunk, normalizeTraeToolSchema, normalizeTraeToolSchemas, TRAE_RAW_CHAT_V1_PATH, TRAE_RAW_CHAT_V2_PATH, type RawChatDelta, type RawChatMessage, type RawChatTool } from './raw-chat.ts'
 export { buildTraeFusionRawChatEnvelope, hashTraeRawChatArg, type TraeFusionRawChatEnvelope } from './raw-envelope.ts'
 export { buildTraeRawChatRuntimeConfig, traeRawChatExtraInfo, type TraeRawChatRuntimeConfig } from './raw-runtime-config.ts'
 export { resolveTraeRawRuntime, type TraeRawResolverResult } from './raw-resolver.ts'

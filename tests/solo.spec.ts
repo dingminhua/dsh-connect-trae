@@ -89,6 +89,38 @@ describe('Trae SOLO protocol', () => {
       .toThrow('tool_call_id')
   })
 
+  it('normalises draft-3 per-property required in tool parameters before stringify (issue #49)', () => {
+    // DSH schemastery emits `required: true` inside the property. The
+    // deepseek-v4.1-flash backend rejects the whole batch with
+    // `4027 …/properties/tool/required: invalid JSON Schema`, so the SOLO
+    // envelope must carry draft-4 `required: ["tool"]` instead.
+    const prepared = JSON.parse(prepareSoloBody(JSON.stringify({
+      model: 'deepseek-v4.1-flash',
+      messages: [{ role: 'user', content: 'hi' }],
+      tools: [{
+        type: 'function',
+        function: {
+          name: 'read',
+          parameters: { type: 'object', properties: { tool: { type: 'string', required: true }, path: { type: 'string' } }, required: ['path'] },
+        },
+      }],
+    })))
+    expect(JSON.parse(prepared.tools[0].function.parameters)).toEqual({
+      type: 'object',
+      properties: { tool: { type: 'string' }, path: { type: 'string' } },
+      required: ['path', 'tool'],
+    })
+  })
+
+  it('leaves already draft-4 tool parameters byte-identical (idempotent)', () => {
+    const parameters = { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] }
+    const prepared = JSON.parse(prepareSoloBody(JSON.stringify({
+      model: 'deepseek-v4.1-flash', messages: [],
+      tools: [{ type: 'function', function: { name: 'read', parameters } }],
+    })))
+    expect(prepared.tools[0].function.parameters).toBe(JSON.stringify(parameters))
+  })
+
   it('parses model discovery from the real get_detail_param field names', async () => {
     // Verified 2026-08-30: get_detail_param uses `model_detail_list[].prompt_max_tokens`
     // (context) and `max_tokens` (max output). There are no `max_input_tokens` /

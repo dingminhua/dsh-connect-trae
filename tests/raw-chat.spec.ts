@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildTraeRawChatDraft, decodeRawChatChunk, TRAE_RAW_CHAT_V1_PATH, TRAE_RAW_CHAT_V2_PATH } from '../src/raw-chat.ts'
+import { buildTraeRawChatDraft, decodeRawChatChunk, normalizeTraeToolSchema, TRAE_RAW_CHAT_V1_PATH, TRAE_RAW_CHAT_V2_PATH } from '../src/raw-chat.ts'
 
 describe('Trae raw-chat evidence model', () => {
   it('keeps v1 and v2 explicit instead of blind fallback', () => {
@@ -59,5 +59,62 @@ describe('Trae raw-chat evidence model', () => {
     expect(decodeRawChatChunk({ usage: { prompt_tokens: 100, prompt_cache_hit_tokens: 64 } })).toEqual([
       { type: 'usage', inputTokens: 100, cacheReadTokens: 64 },
     ])
+  })
+})
+
+// Issue #49: the deepseek-v4.1-flash backend validates tools batch-wide and
+// rejects the whole request with `4027 … invalid JSON Schema` when any tool
+// carries draft-3 `required: true` inside a property schema, while the
+// glm-5.2 backend tolerates it. Every draft must therefore be draft-4 clean.
+describe('JSON Schema draft-3 required normalisation (issue #49)', () => {
+  it('promotes per-property boolean required to the parent required array', () => {
+    expect(normalizeTraeToolSchema({ type: 'object', properties: { tool: { type: 'string', required: true } } }))
+      .toEqual({ type: 'object', properties: { tool: { type: 'string' } }, required: ['tool'] })
+  })
+
+  it('recurses through items/anyOf/oneOf/allOf and merges with an existing parent array', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        a: { type: 'array', items: { type: 'object', properties: { b: { type: 'number', required: true } } } },
+        c: { anyOf: [{ type: 'object', properties: { d: { type: 'string', required: true } } }, { type: 'null' }] },
+      },
+      required: ['a'],
+    }
+    expect(normalizeTraeToolSchema(schema)).toEqual({
+      type: 'object',
+      properties: {
+        a: { type: 'array', items: { type: 'object', properties: { b: { type: 'number' } }, required: ['b'] } },
+        c: { anyOf: [{ type: 'object', properties: { d: { type: 'string' } }, required: ['d'] }, { type: 'null' }] },
+      },
+      required: ['a'],
+    })
+  })
+
+  it('is idempotent and leaves draft-4 schemas byte-identical (same object)', () => {
+    const draft4 = { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] }
+    const once = normalizeTraeToolSchema(draft4)
+    expect(once).toBe(draft4)
+    expect(normalizeTraeToolSchema(once)).toBe(draft4)
+    // Plain leaves and empty objects are returned as-is too.
+    expect(normalizeTraeToolSchema({ type: 'object' })).toEqual({ type: 'object' })
+    expect(normalizeTraeToolSchema({ type: 'object', properties: {} })).toEqual({ type: 'object', properties: {} })
+  })
+
+  it('ignores boolean required outside a properties map and false values inside it', () => {
+    expect(normalizeTraeToolSchema({ type: 'string', required: true })).toEqual({ type: 'string' })
+    expect(normalizeTraeToolSchema({ type: 'object', properties: { x: { type: 'string', required: false } } }))
+      .toEqual({ type: 'object', properties: { x: { type: 'string' } } })
+  })
+
+  it('normalises tools in a raw-chat draft without mutating the caller tools', () => {
+    const tools = [{
+      type: 'function' as const,
+      function: { name: 'read', parameters: { type: 'object', properties: { path: { type: 'string', required: true } } } },
+    }]
+    const body = buildTraeRawChatDraft({ model: 'deepseek-v4.1-flash', messages: [{ role: 'user', content: 'hi' }], tools })
+    expect(body.tools?.[0]?.function.parameters).toEqual({ type: 'object', properties: { path: { type: 'string' } }, required: ['path'] })
+    // The caller's array still carries the draft-3 form.
+    expect(tools[0]?.function.parameters).toEqual({ type: 'object', properties: { path: { type: 'string', required: true } } })
   })
 })
