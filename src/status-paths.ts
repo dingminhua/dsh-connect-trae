@@ -1010,10 +1010,24 @@ function regionsMapOf(value: unknown): Record<string, unknown> {
   if (typeof unwrapped !== 'object' || unwrapped === null || Array.isArray(unwrapped)) return {}
   const record = unwrapped as Record<string, unknown>
   const nested = record['regions']
-  if (typeof nested === 'object' && nested !== null && !Array.isArray(nested)) {
-    return nested as Record<string, unknown>
-  }
-  return record
+  if (typeof nested !== 'object' || nested === null || Array.isArray(nested)) return record
+  // THE HOP IS CONDITIONAL, and that is the whole point (a saved manual pool
+  // order "disappearing" — the same defect the sibling workbuddy plugin fixed
+  // in its 5.5.x line). "Has a `regions` key" is NOT sufficient evidence that
+  // the caller passed the whole section: the `regions` MAP can legitimately
+  // carry a `regions` key of its own, because an earlier build could write a
+  // sibling field name into it. Hopping there means reading a DIFFERENT, older
+  // copy of the same panel — the measured symptom in the sibling plugin was the
+  // same document returning `['c','a','b']` when read as a section and `[]` when
+  // read as a map, so a manual order read back as empty and looked unsaved.
+  //
+  // A value therefore counts as the whole section only when it shows no key that
+  // is a panel id: a map's keys ARE panel ids (possibly plus stray sibling names
+  // left by an old writer). A plain (or dirty) `cn` / `enterprise` / `ai` map is
+  // returned as-is.
+  const panelIds = TRAE_PANELS as readonly string[]
+  const outerIsMap = Object.keys(record).some(key => panelIds.includes(key))
+  return outerIsMap ? record : nested as Record<string, unknown>
 }
 
 /** One region's stored slot as a plain object; any other shape reads as empty. */
