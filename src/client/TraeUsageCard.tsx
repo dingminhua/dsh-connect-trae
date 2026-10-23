@@ -29,6 +29,7 @@ import {
 import type { TraeModelProbeVerdict, TraeModelsTestResponse, TraeWebAccount, TraeWebAccountState, TraeWebCheckinClaim, TraeWebModel, TraeWebUsage } from '../status-paths.ts'
 import type { TraeCreditPosition } from '../status-paths.ts'
 import { providerOfPanel, regionOfPanel, type TraePanel } from '../region.ts'
+import { filterTraeModels, groupTraeModels, orderTraeModels, scopeTraeModels, type TraeModelView } from '../model-order.ts'
 import { selectTraePromoBadge, type TraePromoKind } from '../promo.ts'
 import { TRAE_PLUGIN_ICON } from './icon.ts'
 import { TRAE_CARD_CSS } from './styles.ts'
@@ -141,6 +142,31 @@ function formatCapacity(value: number | undefined, unknown: string): string {
   if (value >= 1_000_000 && value % 1_000_000 === 0) return `${value / 1_000_000}M`
   if (value >= 1_000 && value % 1_000 === 0) return `${value / 1_000}K`
   return formatNumber(value)
+}
+
+/**
+ * Human name for one wire channel (issue #52, P0).
+ *
+ * The group header answers 「why is this list so long」 — because it is the union
+ * of several Trae modes — so it must name the mode, not print `solo_work_remote`.
+ * An unknown function falls through to its raw name on purpose: a channel this
+ * build does not know about is a fact worth showing rather than hiding behind
+ * 「其他」, and it is exactly what a bug report should quote.
+ */
+function modelChannelLabel(
+  channel: string | undefined,
+  t: (key: TraeSettingsKey, params?: Record<string, unknown>) => string,
+): string {
+  if (channel === undefined) return t('row.modelsChannelDefault')
+  const known: Record<string, TraeSettingsKey> = {
+    solo_work_remote: 'row.modelsChannelWorkRemote',
+    solo_work_lite: 'row.modelsChannelWorkLite',
+    solo_agent_remote: 'row.modelsChannelAgentRemote',
+    chat_v3: 'row.modelsChannelChatV3',
+    solo_coder: 'row.modelsChannelCoder',
+  }
+  const key = known[channel]
+  return key === undefined ? channel : t(key)
 }
 
 /**
@@ -305,6 +331,37 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
   /** Per-region unsaved model edits; a draft on one tab is never dropped by
    * switching to the other tab, only by that tab's discard/save. */
   const [drafts, setDrafts] = useState<Partial<Record<TraePanel, TraeDraft>>>({})
+  /**
+   * Search text over the model catalog (issue #52, P0).
+   *
+   * Kept in COMPONENT state, not in the draft: filtering what you look at is not
+   * an edit, so it must survive a save and must never make the card look dirty.
+   */
+  const [modelQuery, setModelQuery] = useState('')
+  /**
+   * How much of the catalog the list shows (issue #52, P2).
+   *
+   * `common` is the DEFAULT because it answers the question the issue was filed
+   * with: 24 of the 34 rows are reachable from a normal `solo_work_*` chat turn,
+   * and the other 10 exist only on a specialist channel (`solo_coder` 7,
+   * `chat_v3` 2, `solo_agent_remote` 1 — measured 2026-10-23). The vendor's own
+   * picker shows 14–24 per mode, so 24 is the first list since P0 that looks
+   * like the client the reporter compared against.
+   *
+   * Nothing is REMOVED by this: the view is presentation only. Every action
+   * (「test all」, bulk context, the save) still ranges over the full catalog, and
+   * an enabled model that the view hides is called out below the list rather
+   * than silently dropped from the screen.
+   */
+  const [modelView, setModelView] = useState<TraeModelView>('common')
+  /**
+   * Channel groups the user folded shut, keyed `panel|channel`.
+   *
+   * Stored as the EXCEPTION rather than the state of every group so the default
+   * stays 「open」: the catalog is short enough to read once grouped, and a
+   * default of "collapsed" would hide a model the user came to enable.
+   */
+  const [closedModelGroups, setClosedModelGroups] = useState<Set<string>>(new Set())
   const [saving, setSaving] = useState(false)
   const [switchingAccount, setSwitchingAccount] = useState(false)
   /** Region whose on/off checkbox write is in flight, so its box can't race. */
@@ -1080,6 +1137,49 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
   const draft = drafts[activeRegion]
   const visibleModels = draft?.models ?? (status.status === 'signed-in' ? status.models : [])
   /**
+   * The catalog as the card draws it: one fixed order, then the search filter,
+   * then split into the channels the rows will actually be called through
+   * (issue #52, P0).
+   *
+   * The ROLL is `orderTraeModels` and it is applied here as well as at
+   * discovery, because a catalog saved by an older build carries the arrival
+   * order — the very thing the reporter photographed. Re-sorting costs one
+   * comparison pass over ≤40 rows and makes the screen independent of which
+   * version wrote `lastCatalog`.
+   *
+   * Every action below still ranges over `visibleModels` (the whole catalog),
+   * never `shownModels`: 「test all」 and the bulk context buttons must act on all
+   * rows, not on whatever the search box happens to show.
+   */
+  const modelRegion = regionOfPanel(activeRegion)
+  const orderedModels = orderTraeModels(visibleModels, modelRegion)
+  /**
+   * Scope, then search, then group — in that order, and each step answers a
+   * different question (P2): the view is 「how much of the catalog」, the query is
+   * 「which row」, the groups are 「where will the turn go」.
+   *
+   * SEARCH IS SCOPED TO THE VIEW. A global search would contradict the group
+   * headers the user is looking at (results from a channel that is not on
+   * screen), and scoping it means the empty state has to be honest about what it
+   * did not look at — see `matchesOutsideView`.
+   */
+  const commonModels = scopeTraeModels(orderedModels, 'common', modelRegion)
+  const scopedModels = modelView === 'all' ? orderedModels : commonModels
+  const commonModelCount = commonModels.length
+  const shownModels = filterTraeModels(scopedModels, modelQuery)
+  const modelGroups = groupTraeModels(shownModels, modelRegion)
+  const modelQueryActive = modelQuery.trim() !== ''
+  /**
+   * Matches the query has in the FULL catalog while the view has none.
+   *
+   * Without this, searching `kimi` with the default view up would answer
+   * 「没有匹配」 for `kimi-k2.5`, which is on screen in 全部 — the one wrong
+   * answer a search box must not give. Zero means "genuinely absent".
+   */
+  const matchesOutsideView = modelQueryActive && shownModels.length === 0
+    ? filterTraeModels(orderedModels, modelQuery).length
+    : 0
+  /**
    * One clock reading for the whole model list.
    *
    * Promotion badges are judged against it (see `promoBadge`): reading the clock
@@ -1091,6 +1191,19 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
   const savedEnabledIds = status.status === 'signed-in' ? new Set(status.enabledModelIds) : new Set<string>()
   const activeEnabledIds = draft?.enabledIds ?? savedEnabledIds
   const activeImageIds = draft?.imageIds ?? savedImageIds
+  /**
+   * Enabled rows this view does not draw.
+   *
+   * The view hides 10 rows by default; if the user had enabled some of them
+   * before this existed, their checkbox is not on the screen, so the ONLY honest
+   * options are "say they exist" or "let the screen imply they are off". The save
+   * path is already safe (it writes `activeEnabledIds` from state, never from the
+   * rendered checkboxes), so this is about not lying to the reader.
+   */
+  const scopedIds = new Set(scopedModels.map(model => model.id))
+  const enabledOutsideView = modelView === 'all'
+    ? []
+    : orderedModels.filter(model => activeEnabledIds.has(model.id) && !scopedIds.has(model.id))
   /**
    * Effective image capability of one row, mirroring what the Host reports to
    * DSH: the user's opt-in unioned with Trae's own `multimodal` flag (issue
@@ -1240,7 +1353,11 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
       // UNWRAPPED slot, so no live reference can leak into the document.
       const nextSlot = {
         enabled: regionOn(activeRegion),
-        lastCatalog: visibleModels.map(model => ({
+        // `orderedModels` (not `visibleModels`): the persisted directory is what
+        // the DSH model picker renders, and it must carry the same fixed order
+        // the card shows (issue #52). Same SET of rows either way — a save must
+        // never look like a filter.
+        lastCatalog: orderedModels.map(model => ({
           ...model,
           input: ['text'],
           ...model.multimodal === undefined ? {} : { multimodal: model.multimodal },
@@ -1716,87 +1833,205 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
                       <p className="dsm-trae-models-hint">{t('row.modelsTestHint')}</p>
                       {testSummary === undefined ? null : <p className="dsm-trae-models-summary">{testSummary}</p>}
                       {testError === undefined ? null : <p className="dsm-trae-usage-error" role="alert">{testError}</p>}
-                      <div className="dsm-trae-model-list">
-                        {visibleModels.map(model => (
-                          <div className={`dsm-trae-model${activeEnabledIds.has(model.id) ? '' : ' dsm-trae-model-disabled'}`} key={model.id}>
-                            <div className="dsm-trae-model-head">
-                              <label className="dsm-trae-model-enabled">
-                                <input
-                                  type="checkbox"
-                                  checked={activeEnabledIds.has(model.id)}
-                                  disabled={settingsScope?.getSnapshot().writable !== true || saving}
-                                  onChange={() => { toggleModel(model.id) }}
-                                />
-                                <span className="dsm-trae-model-copy">
-                                  <span className="dsm-trae-model-name">
-                                    {model.name}
-                                    {/* No rate on the enterprise tab: the
-                                        multiplier is a CONSUMER-pool figure
-                                        (personal credits per token), which the
-                                        tenant pool does not bill against. A
-                                        number there would be read as a price. */}
-                                    {activeRegion === 'enterprise' || model.creditMultiplier === undefined ? null
-                                      : <span className="dsm-trae-model-name-rate">· x{model.creditMultiplier.toFixed(2)}</span>}
-                                    {probeBadge(probeByRegion[activeRegion][model.id], t)}
-                                  </span>
-                                  {/* Outside the name span on purpose: the
-                                      name is ellipsis-truncated, so a capsule
-                                      inside it would be clipped on exactly the
-                                      long model names. Judged at paint time
-                                      (see promoBadge). */}
-                                  {promoBadge(model, t, nowForPromo)}
-                                </span>
-                              </label>
-                              <div className="dsm-trae-model-options">
-                                <label className="dsm-trae-model-image">
-                                  <input
-                                    type="checkbox"
-                                    checked={rowAcceptsImage(model)}
-                                    disabled={rowImageIsAutomatic(model) || settingsScope?.getSnapshot().writable !== true || saving}
-                                    title={rowImageIsAutomatic(model) ? t('row.modelImageAuto') : undefined}
-                                    onChange={() => { toggleImage(model.id) }}
-                                  />
-                                  <span>{t('row.modelImage')}</span>
-                                </label>
-                              <fieldset className="dsm-trae-context-budget" aria-label={t('row.contextBudget')}>
-                                {model.maxContextWindow !== undefined
-                                  ? <label>
-                                      <input
-                                        type="radio"
-                                        name={`context-${model.id}`}
-                                        checked={activeContextBudgets[model.id] !== model.maxContextWindow}
-                                        disabled={settingsScope?.getSnapshot().writable !== true || saving}
-                                        onChange={() => { setContextBudget(model.id, model.contextWindow) }}
-                                      />
-                                      <span>{formatCapacity(model.contextWindow, t('row.modelUnknown'))}</span>
-                                    </label>
-                                  : null}
-                                <label>
-                                  <input
-                                    type="radio"
-                                    name={`context-${model.id}`}
-                                    checked={model.maxContextWindow === undefined || activeContextBudgets[model.id] === model.maxContextWindow}
-                                    disabled={model.maxContextWindow === undefined || settingsScope?.getSnapshot().writable !== true || saving}
-                                    onChange={() => { setContextBudget(model.id, model.maxContextWindow) }}
-                                  />
-                                  <span>{formatCapacity(model.maxContextWindow ?? model.contextWindow, t('row.modelUnknown'))}</span>
-                                </label>
-                              </fieldset>
-                              </div>
-                            </div>
-                            <div className="dsm-trae-model-meta">
-                              <span>{t('row.modelContext', { context: formatCapacity(model.maxContextWindow ?? model.contextWindow, t('row.modelUnknown')) })}</span>
-                              {model.maxTokens === undefined ? null
-                                : <span>{t('row.modelOutput', { output: formatCapacity(model.maxTokens, t('row.modelUnknown')) })}</span>}
-                              {model.reasoning === undefined ? null
-                                : <span>{t('row.modelReasoning', { efforts: model.reasoning.supported.join(' / ') })}</span>}
-                            </div>
-                          </div>
-                        ))}
+                      {/* Scope chips — rendered ONLY when the catalog actually
+                          has rows outside the common channels. On an account
+                          (or a region) where every row is a `solo_work_*` row
+                          the control would switch between two identical lists,
+                          and a toggle that does nothing is worse than none. */}
+                      {orderedModels.length > commonModelCount
+                        ? <div className="dsm-trae-models-view" role="group" aria-label={t('row.modelsViewLabel')}>
+                          <button
+                            type="button"
+                            className="dsm-trae-models-view-opt"
+                            aria-pressed={modelView === 'common'}
+                            title={t('row.modelsViewCommonHint')}
+                            onClick={() => { setModelView('common') }}
+                          >
+                            {t('row.modelsViewCommon', { count: commonModelCount })}
+                          </button>
+                          <button
+                            type="button"
+                            className="dsm-trae-models-view-opt"
+                            aria-pressed={modelView === 'all'}
+                            title={t('row.modelsViewAllHint')}
+                            onClick={() => { setModelView('all') }}
+                          >
+                            {t('row.modelsViewAll', { count: orderedModels.length })}
+                          </button>
+                        </div>
+                        : null}
+                      <div className="dsm-trae-models-search">
+                        <input
+                          type="search"
+                          className="dsm-trae-models-search-input"
+                          value={modelQuery}
+                          placeholder={t('row.modelsSearchPlaceholder')}
+                          aria-label={t('row.modelsSearch')}
+                          onChange={event => {
+                            setModelQuery(event.target.value)
+                            // A search answers 「where is it」, so it opens every
+                            // group it touches once; folding them back stays
+                            // available afterwards.
+                            setClosedModelGroups(new Set())
+                          }}
+                        />
+                        {modelQueryActive
+                          ? <span className="dsm-trae-models-search-count">{t('row.modelsSearchCount', { shown: shownModels.length, total: scopedModels.length })}</span>
+                          : null}
                       </div>
+                      <div className="dsm-trae-model-list">
+                        {modelGroups.length === 0
+                          ? matchesOutsideView > 0
+                            /* The query DOES exist, just not where this view is
+                               looking. Saying 「没有匹配」 here would be the one
+                               answer a search box must never give (see
+                               `matchesOutsideView`), so the message names the
+                               other scope and hands over the switch. */
+                            ? <p className="dsm-trae-models-empty">
+                              {t('row.modelsSearchOutsideView', { query: modelQuery.trim(), count: matchesOutsideView })}
+                              <button
+                                type="button"
+                                className="dsm-trae-models-widen"
+                                onClick={() => { setModelView('all') }}
+                              >
+                                {t('row.modelsViewShowAll')}
+                              </button>
+                            </p>
+                            : <p className="dsm-trae-models-empty">{t('row.modelsSearchEmpty', { query: modelQuery.trim() })}</p>
+                          : null}
+                        {modelGroups.map(group => {
+                          const groupKey = `${activeRegion}|${group.channel ?? ''}`
+                          const groupOpen = modelQueryActive || !closedModelGroups.has(groupKey)
+                          return (
+                            <details
+                              className="dsm-trae-model-group"
+                              key={groupKey}
+                              open={groupOpen}
+                              onToggle={event => {
+                                const open = event.currentTarget.open
+                                setClosedModelGroups(current => {
+                                  if (open === !current.has(groupKey)) return current
+                                  const next = new Set(current)
+                                  if (open) next.delete(groupKey)
+                                  else next.add(groupKey)
+                                  return next
+                                })
+                              }}
+                            >
+                              <summary className="dsm-trae-model-group-head">
+                                <span className="dsm-trae-model-group-name">
+                                  {modelChannelLabel(group.channel, t)}
+                                </span>
+                                <span className="dsm-trae-model-group-count">
+                                  {t('row.modelsGroupCount', { count: group.rows.length })}
+                                </span>
+                              </summary>
+                              {group.rows.map(model => (
+                                <div className={`dsm-trae-model${activeEnabledIds.has(model.id) ? '' : ' dsm-trae-model-disabled'}`} key={model.id}>
+                                  <div className="dsm-trae-model-head">
+                                    <label className="dsm-trae-model-enabled">
+                                      <input
+                                        type="checkbox"
+                                        checked={activeEnabledIds.has(model.id)}
+                                        disabled={settingsScope?.getSnapshot().writable !== true || saving}
+                                        onChange={() => { toggleModel(model.id) }}
+                                      />
+                                      <span className="dsm-trae-model-copy">
+                                        <span className="dsm-trae-model-name">
+                                          {model.name}
+                                          {/* No rate on the enterprise tab: the
+                                              multiplier is a CONSUMER-pool figure
+                                              (personal credits per token), which the
+                                              tenant pool does not bill against. A
+                                              number there would be read as a price. */}
+                                          {activeRegion === 'enterprise' || model.creditMultiplier === undefined ? null
+                                            : <span className="dsm-trae-model-name-rate">· x{model.creditMultiplier.toFixed(2)}</span>}
+                                          {probeBadge(probeByRegion[activeRegion][model.id], t)}
+                                        </span>
+                                        {/* Outside the name span on purpose: the
+                                            name is ellipsis-truncated, so a capsule
+                                            inside it would be clipped on exactly the
+                                            long model names. Judged at paint time
+                                            (see promoBadge). */}
+                                        {promoBadge(model, t, nowForPromo)}
+                                      </span>
+                                    </label>
+                                    <div className="dsm-trae-model-options">
+                                      <label className="dsm-trae-model-image">
+                                        <input
+                                          type="checkbox"
+                                          checked={rowAcceptsImage(model)}
+                                          disabled={rowImageIsAutomatic(model) || settingsScope?.getSnapshot().writable !== true || saving}
+                                          title={rowImageIsAutomatic(model) ? t('row.modelImageAuto') : undefined}
+                                          onChange={() => { toggleImage(model.id) }}
+                                        />
+                                        <span>{t('row.modelImage')}</span>
+                                      </label>
+                                    <fieldset className="dsm-trae-context-budget" aria-label={t('row.contextBudget')}>
+                                      {model.maxContextWindow !== undefined
+                                        ? <label>
+                                            <input
+                                              type="radio"
+                                              name={`context-${model.id}`}
+                                              checked={activeContextBudgets[model.id] !== model.maxContextWindow}
+                                              disabled={settingsScope?.getSnapshot().writable !== true || saving}
+                                              onChange={() => { setContextBudget(model.id, model.contextWindow) }}
+                                            />
+                                            <span>{formatCapacity(model.contextWindow, t('row.modelUnknown'))}</span>
+                                          </label>
+                                        : null}
+                                      <label>
+                                        <input
+                                          type="radio"
+                                          name={`context-${model.id}`}
+                                          checked={model.maxContextWindow === undefined || activeContextBudgets[model.id] === model.maxContextWindow}
+                                          disabled={model.maxContextWindow === undefined || settingsScope?.getSnapshot().writable !== true || saving}
+                                          onChange={() => { setContextBudget(model.id, model.maxContextWindow) }}
+                                        />
+                                        <span>{formatCapacity(model.maxContextWindow ?? model.contextWindow, t('row.modelUnknown'))}</span>
+                                      </label>
+                                    </fieldset>
+                                    </div>
+                                  </div>
+                                  <div className="dsm-trae-model-meta">
+                                    <span>{t('row.modelContext', { context: formatCapacity(model.maxContextWindow ?? model.contextWindow, t('row.modelUnknown')) })}</span>
+                                    {model.maxTokens === undefined ? null
+                                      : <span>{t('row.modelOutput', { output: formatCapacity(model.maxTokens, t('row.modelUnknown')) })}</span>}
+                                    {model.reasoning === undefined ? null
+                                      : <span>{t('row.modelReasoning', { efforts: model.reasoning.supported.join(' / ') })}</span>}
+                                  </div>
+                                </div>
+                              ))}
+                            </details>
+                          )
+                        })}
+                      </div>
+                      {/* The one thing a scoped list can get WRONG: hiding a row
+                          that is already switched on. The checkbox that would
+                          turn it off is not rendered here, so the list says how
+                          many there are and offers the widen. Nothing about the
+                          save is affected — `activeEnabledIds` comes from state,
+                          never from the rendered checkboxes — but a reader who
+                          counted the ticked boxes would otherwise conclude those
+                          models were disabled. */}
+                      {enabledOutsideView.length === 0
+                        ? null
+                        : <p className="dsm-trae-models-note">
+                          {t('row.modelsEnabledOutsideView', { count: enabledOutsideView.length })}
+                          <button
+                            type="button"
+                            className="dsm-trae-models-widen"
+                            onClick={() => { setModelView('all') }}
+                          >
+                            {t('row.modelsViewShowAll')}
+                          </button>
+                        </p>}
                       {/* Bulk context switch (issue #42): sits directly under the
                           per-row budget radios it replaces a click-walk through,
-                          so the affordance is next to what it acts on. */}
+                          so the affordance is next to what it acts on. It ranges
+                          over `visibleModels`, NOT the view: 「全部」 means the
+                          catalog, and a hidden row must not be skipped by a
+                          button whose label promises otherwise. */}
                       <div className="dsm-trae-context-bulk">
                         <button
                           type="button"

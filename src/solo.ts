@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { TraeCredential } from './auth.ts'
 import type { TraeIdentity } from './identity.ts'
+import { TRAE_CHANNEL_PRIORITY, TRAE_SOLO_FUNCTION } from './model-order.ts'
 import { buildTraeCnHeaders, traeEndpoint } from './protocol.ts'
 import { normalizeTraeToolSchema } from './raw-chat.ts'
 import { parseTraeActivityDiscount, type TraeActivityDiscount } from './promo.ts'
@@ -8,7 +9,15 @@ import { REGION_GATEWAYS, TRAE_ENTERPRISE_HOST, regionOfCredential, type TraeReg
 import { parseReasoningCapability, type TraeReasoningCapability } from './reasoning.ts'
 import type { TraeChatResult, TraeUpstreamErrorKind } from './upstream.ts'
 
-export const TRAE_SOLO_FUNCTION = 'solo_work_lite'
+/**
+ * Wire name of the default SOLO chat function.
+ *
+ * DEFINED in `model-order.ts` and re-exported here: that module is pure, so the
+ * plugin card can import it to draw channel groups in the same order the wire
+ * asks them. Keeping a second copy of these names in `solo.ts` would let the
+ * display and the wire drift apart silently.
+ */
+export { TRAE_SOLO_FUNCTION }
 
 /**
  * `llm_utils_chat` functions to union per region, in priority order.
@@ -73,11 +82,12 @@ export const TRAE_SOLO_FUNCTION = 'solo_work_lite'
  * A model in NO chat function's roster is still left to the merge: it ships
  * with no wire target and its call fails with a readable upstream message
  * rather than being hidden (see mergeTraeModelSources).
+ *
+ * The list itself lives in {@link TRAE_CHANNEL_PRIORITY} (`model-order.ts`) and
+ * is aliased here, not copied: the card groups its rows by these same names in
+ * this same order.
  */
-export const TRAE_DIRECTORY_FUNCTIONS: Readonly<Record<TraeRegion, readonly string[]>> = {
-  cn: ['solo_work_remote', TRAE_SOLO_FUNCTION, 'solo_agent_remote', 'chat_v3', 'solo_coder'],
-  ai: ['solo_work_remote', TRAE_SOLO_FUNCTION, 'solo_agent_remote', 'chat_v3'],
-}
+export const TRAE_DIRECTORY_FUNCTIONS: Readonly<Record<TraeRegion, readonly string[]>> = TRAE_CHANNEL_PRIORITY
 export const TRAE_SOLO_CHAT_PATH = '/api/agent/v3/llm_utils_chat'
 export const TRAE_SOLO_MODELS_PATH = '/api/ide/v1/get_detail_param'
 
