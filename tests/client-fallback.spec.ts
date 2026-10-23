@@ -92,6 +92,20 @@ function apply(ctx: any): void {
 
     registerCard('plugins.bundle.config', 'dsh-connect-trae')
     registerCard('plugins.row.config', 'dsh-connect-trae#dsh-connect-trae')
+
+    // Mirror of the model-picker label registration: own try/catch, so a host
+    // that does not serve the slot cannot take the card down with it.
+    const registerModelLabel = (): void => {
+      try {
+        ctx.slots.inject('conversation.input.model.label', () => ctx.slots.register(
+          { name: 'conversation.input.model.label' }, {},
+        ))
+      } catch (error: unknown) {
+        console.error('[dsh-connect-trae] model label slot failed to register (host provider unaffected):', error)
+      }
+    }
+
+    registerModelLabel()
     void t
   } catch (error: unknown) {
     console.error('[dsh-connect-trae] client card failed to load (host provider unaffected):', error)
@@ -120,8 +134,8 @@ describe('client card fallback', () => {
     }
 
     expect(() => apply(fakeCtx)).not.toThrow()
-    // The broken slot is logged per-slot, the other one still registered.
-    expect(registered).toEqual(['plugins.bundle.config'])
+    // The broken slot is logged per-slot; the others still registered.
+    expect(registered).toEqual(['plugins.bundle.config', 'conversation.input.model.label'])
     expect(errors).toHaveLength(1)
     expect(String(errors[0])).toContain('plugins.row.config')
     expect(String(errors[0])).toContain('already has an entry')
@@ -148,7 +162,7 @@ describe('client card fallback', () => {
     }
 
     expect(() => apply(fakeCtx)).not.toThrow()
-    expect(registered).toHaveLength(2)
+    expect(registered).toHaveLength(3)
     expect(errors).toHaveLength(0)
 
     spy.mockRestore()

@@ -26,6 +26,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import { TraeUsageCard } from './TraeUsageCard.tsx'
 import { ComposerPointsGate } from './ComposerPointsGate.tsx'
+import { TraeModelLabel } from './TraeModelLabel.tsx'
 import type { TraeUsageCardInjected } from './TraeUsageCard.tsx'
 import type { TraeCreditPosition } from '../status-paths.ts'
 import { en, zh } from './locales.ts'
@@ -239,6 +240,34 @@ export function apply(ctx: ClientContext): void {
     // (the shell's own statistics register at 0), so the shipped figures stay
     // leftmost and the readout reads as an addition rather than a replacement.
     registerPointsSlot('conversation.composer.dock', 'dsh-connect-trae-stats-points', 10, 'stats')
+
+    /**
+     * The upstream's activity badge in the HOST's model picker (ported from the
+     * sibling `dsh-connect-workbuddy` plugin, whose #120 shipped the same fix).
+     *
+     * The picker renders the model name as a plain string, so a provider can
+     * only put a CHARACTER there — and a character's colour is the emoji font's
+     * business, not ours. The host therefore offers exactly one seam for this:
+     * the `conversation.input.model.label` slot, whose contract is "render
+     * non-interactive inline content such as a coloured name or badge" while the
+     * picker keeps owning clicks, focus and check marks.
+     *
+     * Registered unconditionally: the component renders the plain name for a
+     * provider that is not ours, so there is nothing to gate on. Its own
+     * try/catch keeps a host that does not serve this slot from taking the card
+     * down with it.
+     */
+    const registerModelLabel = (): void => {
+      try {
+        return ctx.slots.inject('conversation.input.model.label' as never, () => (ctx.slots as unknown as {
+          register(options: { name: string }, component: unknown): () => void
+        }).register({ name: 'conversation.input.model.label' }, TraeModelLabel)) as unknown as void
+      } catch (error: unknown) {
+        console.error('[dsh-connect-trae] model label slot failed to register (host provider unaffected):', error)
+      }
+    }
+
+    registerModelLabel()
 
   } catch (error: unknown) {
     // Degrade silently on the page: the host provider still serves models.
