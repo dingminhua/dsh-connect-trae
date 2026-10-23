@@ -282,6 +282,29 @@ export const TRAE_CARD_CSS = `
  * mode each row is actually called through, so the union is legible instead of
  * merely long. Both are presentation only: no rule here changes what is saved. */
 .dsm-trae-models-search{display:flex;align-items:center;gap:10px;min-width:0}
+/* SCOPE CHIPS (issue #52, P2).
+ *
+ * A segmented pair, not two more dsm-btn-outline buttons: those are 30px tall
+ * and would compete with the section's own buttons, while this control is a
+ * filter on the list directly below it. aria-pressed carries the state, so the
+ * visual and the announced state cannot disagree. */
+.dsm-trae-models-view{display:flex;align-items:center;gap:2px;padding:2px;border-radius:8px;background:var(--dsw-alias-bg-layer-2,#232529);align-self:flex-start}
+.dsm-trae-models-view-opt{padding:4px 10px;border:0;border-radius:6px;background:transparent;color:var(--dsw-alias-label-tertiary,#9aa0a8);font-size:12px;line-height:17px;cursor:pointer;font-variant-numeric:tabular-nums;white-space:nowrap}
+.dsm-trae-models-view-opt:hover{color:var(--dsw-alias-label-secondary,#c6c9d0)}
+/* The pressed chip is bg-layer-3 on a bg-layer-2 track: the verified pair that
+ * reads as "this segment sits ON the control" in both themes. (bg-layer-1 was
+ * the first choice and is NOT a token DSH defines — the fallback would then win
+ * in both themes, the exact defect card-styles.spec.tsx exists to catch.) */
+.dsm-trae-models-view-opt[aria-pressed="true"]{background:var(--dsw-alias-bg-layer-3,#2e3136);color:var(--dsw-alias-label-primary,#e6e6e6);font-weight:600}
+.dsm-trae-models-view-opt:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#5686fe);outline-offset:-2px}
+/* The follow-up line under a scoped list ("N enabled are outside this view") and
+ * the "show all" affordance inside it. Same 12px tertiary treatment as the hint
+ * line above the list, because it is the same kind of statement: a note about
+ * the list, not part of it. */
+.dsm-trae-models-note{margin:0;display:flex;align-items:center;gap:8px;flex-wrap:wrap;color:var(--dsw-alias-label-tertiary,#999);font-size:12px;line-height:18px}
+.dsm-trae-models-widen{margin-left:2px;padding:0;border:0;background:transparent;color:var(--dsw-alias-brand-primary,#5686fe);font-size:12px;line-height:18px;cursor:pointer;text-decoration:underline;text-underline-offset:2px}
+.dsm-trae-models-widen:hover{color:var(--dsw-alias-brand-primary,#5686fe);opacity:.8}
+.dsm-trae-models-widen:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#5686fe);outline-offset:1px;border-radius:3px}
 .dsm-trae-models-search-input{flex:1 1 auto;min-width:0;padding:6px 10px;border-radius:8px;border:1px solid var(--dsw-alias-border-l2,#36373b);background:var(--dsw-alias-bg-layer-2,#232529);color:var(--dsw-alias-label-primary,#e6e6e6);font-size:13px;line-height:18px}
 .dsm-trae-models-search-input::placeholder{color:var(--dsw-alias-label-tertiary,#999)}
 .dsm-trae-models-search-input:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#5686fe);outline-offset:-1px}

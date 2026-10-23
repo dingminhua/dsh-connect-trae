@@ -124,10 +124,28 @@ function searchBox(): HTMLInputElement {
   return screen.getByRole('searchbox', { name: 'row.modelsSearch' }) as HTMLInputElement
 }
 
+/**
+ * Widen to every channel.
+ *
+ * The card DEFAULTS to the common scope (issue #52 P2), so any assertion about
+ * `solo_coder` / `chat_v3` rows has to ask for the full catalog first — which is
+ * the point of the scope: it is a real default, not a decoration.
+ */
+function showAll(): void {
+  fireEvent.click(screen.getByRole('button', { name: /row\.modelsViewAll/ }))
+}
+
+function scopeChips(): HTMLButtonElement[] {
+  const group = document.querySelector('.dsm-trae-models-view')
+  if (group === null) return []
+  return Array.from(group.querySelectorAll('button')) as HTMLButtonElement[]
+}
+
 describe('TraeUsageCard model catalog shape', () => {
   it('renders the catalog in channel-priority order, not in document order', async () => {
     stubFetch(usageDocument(catalog(), ['glm-5.2']))
     await renderModels(makeScope().scope)
+    showAll()
 
     // solo_work_remote → chat_v3 → solo_coder → (no mode). Within a channel the
     // rows are alphabetical, so glm-5.2 precedes kimi-k3.
@@ -143,6 +161,7 @@ describe('TraeUsageCard model catalog shape', () => {
   it('counts the rows in each group header', async () => {
     stubFetch(usageDocument(catalog(), ['glm-5.2']))
     await renderModels(makeScope().scope)
+    showAll()
 
     const counts = Array.from(document.querySelectorAll('.dsm-trae-model-group-count'))
       .map(node => node.textContent ?? '')
@@ -161,7 +180,9 @@ describe('TraeUsageCard model catalog shape', () => {
     fireEvent.change(searchBox(), { target: { value: 'kimi' } })
 
     expect(renderedNames()).toEqual(['kimi-k3'])
-    expect(screen.getByText('row.modelsSearchCount:{"shown":1,"total":5}')).toBeTruthy()
+    // The denominator is the SCOPE (3 common rows), because that is the list the
+    // user is standing in; the chip beside it carries the catalog total.
+    expect(screen.getByText('row.modelsSearchCount:{"shown":1,"total":3}')).toBeTruthy()
     // The group a match lives in survives; the others disappear entirely rather
     // than lingering as empty headers.
     expect(groupTitles()).toEqual(['row.modelsChannelWorkRemote'])
@@ -170,6 +191,7 @@ describe('TraeUsageCard model catalog shape', () => {
   it('finds a row by its WIRE config name, which is not the name on screen', async () => {
     stubFetch(usageDocument(catalog(), ['glm-5.2']))
     await renderModels(makeScope().scope)
+    showAll()
 
     fireEvent.change(searchBox(), { target: { value: 'gpt-5.4-official' } })
 
@@ -205,6 +227,7 @@ describe('TraeUsageCard model catalog shape', () => {
   it('folds a group shut and opens it again when a search starts', async () => {
     stubFetch(usageDocument(catalog(), ['glm-5.2']))
     await renderModels(makeScope().scope)
+    showAll()
 
     const groups = Array.from(document.querySelectorAll('details.dsm-trae-model-group')) as HTMLDetailsElement[]
     expect(groups).toHaveLength(4)
@@ -225,5 +248,95 @@ describe('TraeUsageCard model catalog shape', () => {
     // A search answers 「where is it」, so it re-opens the groups it touches.
     const reopened = Array.from(document.querySelectorAll('details.dsm-trae-model-group')) as HTMLDetailsElement[]
     expect(reopened.every(group => group.open)).toBe(true)
+  })
+})
+
+/**
+ * The scope control (issue #52, P2).
+ *
+ * The default is 24 of 34 rows on a live account, i.e. the specialist-channel
+ * rows (`solo_coder`, `chat_v3`, `solo_agent_remote`) are NOT drawn until asked
+ * for. That is a real default that can hide a row a user enabled long ago, so
+ * this block pins the two promises that make it safe: the count is always on
+ * screen, and a hidden-but-enabled row is announced rather than silently
+ * vanishing.
+ */
+describe('TraeUsageCard model scope', () => {
+  it('defaults to the common channels and shows how many it is leaving out', async () => {
+    stubFetch(usageDocument(catalog(), ['glm-5.2']))
+    await renderModels(makeScope().scope)
+
+    // Three common rows: two on solo_work_remote, one unattributed (called
+    // through solo_work_lite, so it IS in scope — see `traeModelCallChannel`).
+    expect(renderedNames()).toEqual(['glm-5.2', 'kimi-k3', 'doubao-seed'])
+    expect(groupTitles()).toEqual(['row.modelsChannelWorkRemote', 'row.modelsChannelDefault'])
+
+    const chips = scopeChips()
+    expect(chips).toHaveLength(2)
+    expect(chips[0]?.textContent).toBe('row.modelsViewCommon:{"count":3}')
+    expect(chips[1]?.textContent).toBe('row.modelsViewAll:{"count":5}')
+    // aria-pressed, not only a class: the announced state must match the paint.
+    expect(chips[0]?.getAttribute('aria-pressed')).toBe('true')
+    expect(chips[1]?.getAttribute('aria-pressed')).toBe('false')
+  })
+
+  it('widens to every channel and switches the pressed state with it', async () => {
+    stubFetch(usageDocument(catalog(), ['glm-5.2']))
+    await renderModels(makeScope().scope)
+
+    showAll()
+
+    expect(renderedNames()).toEqual(['glm-5.2', 'kimi-k3', 'qwen3-max', 'gpt-5.4', 'doubao-seed'])
+    expect(groupTitles()).toHaveLength(4)
+    const chips = scopeChips()
+    expect(chips[0]?.getAttribute('aria-pressed')).toBe('false')
+    expect(chips[1]?.getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('says where a match lives when the view hid it', async () => {
+    // The one answer a search box must never give is 「nothing matches」 for a
+    // model that exists. `gpt` matches only the solo_coder row, which the
+    // default scope does not draw.
+    stubFetch(usageDocument(catalog(), ['glm-5.2']))
+    await renderModels(makeScope().scope)
+
+    fireEvent.change(searchBox(), { target: { value: 'gpt' } })
+
+    expect(renderedNames()).toEqual([])
+    expect(screen.getByText(/row\.modelsSearchOutsideView/)).toBeTruthy()
+    expect(screen.queryByText(/row\.modelsSearchEmpty/)).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'row.modelsViewShowAll' }))
+
+    expect(renderedNames()).toEqual(['gpt-5.4'])
+  })
+
+  it('announces an ENABLED row the view is hiding, and keeps it enabled', async () => {
+    // Enabled outside the default scope: the checkbox that would turn it off is
+    // not rendered, so the list has to say the row exists.
+    stubFetch(usageDocument(catalog(), ['glm-5.2', 'gpt-5.4']))
+    await renderModels(makeScope().scope)
+
+    expect(screen.getByText('row.modelsEnabledOutsideView:{"count":1}')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'row.modelsViewShowAll' }))
+
+    // Widened: the row is on screen, still ticked, and the note is gone.
+    expect(renderedNames()).toContain('gpt-5.4')
+    const boxes = Array.from(document.querySelectorAll<HTMLInputElement>('.dsm-trae-model-enabled input'))
+    expect(boxes).toHaveLength(5)
+    expect(boxes.filter(box => box.checked).length).toBe(2)
+    expect(screen.queryByText(/row\.modelsEnabledOutsideView/)).toBeNull()
+  })
+
+  it('renders no scope control when the catalog has nothing outside the scope', async () => {
+    // A region or account whose rows are all common: a two-way switch between
+    // identical lists would be noise, so the control is absent rather than dead.
+    const commonOnly = catalog().filter(row => row.wireFunction === undefined || row.wireFunction === 'solo_work_remote')
+    stubFetch(usageDocument(commonOnly, ['glm-5.2']))
+    await renderModels(makeScope().scope)
+
+    expect(scopeChips()).toEqual([])
+    expect(document.querySelector('.dsm-trae-models-view')).toBeNull()
   })
 })

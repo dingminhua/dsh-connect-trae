@@ -26,6 +26,13 @@
  * and `solo.ts` re-exports it. Two copies of that list would eventually
  * disagree, and the disagreement would be invisible: the wire would ask channels
  * in one order while the card drew them in another.
+ *
+ * IT ALSO OWNS THE VIEW SCOPE (`scopeTraeModels`), the last piece of issue #52:
+ * which rows a "normal chat" view shows and which are specialist-channel rows a
+ * user has to widen to. Scoping lives here, next to the grouping, because both
+ * answer the same question — "where will this turn actually go" — and a view
+ * that disagreed with the group headers would be lying in the one place a user
+ * goes to debug a `4001`.
  */
 import type { TraeRegion } from './region.ts'
 
@@ -170,4 +177,73 @@ export function traeModelMatchesQuery(model: TraeOrderableModel, query: string):
 export function filterTraeModels<T extends TraeOrderableModel>(rows: readonly T[], query: string): T[] {
   if (query.trim() === '') return [...rows]
   return rows.filter(row => traeModelMatchesQuery(row, query))
+}
+
+/**
+ * The channels a NORMAL Trae chat session actually runs on: the `solo_work_*`
+ * family, i.e. the panel's own chat modes.
+ *
+ * Deliberately not "every channel we can call". After issue #52 P1 the catalog
+ * is 34 rows and 10 of them are reachable only through a SPECIALIST channel:
+ * `solo_coder` (7: `Doubao-Seed-2.0-Code`, `glm-5.1`, `glm-5v-turbo`,
+ * `kimi-k2.5`, `minimax-m2.7`, `qwen-3.5`, `qwen-3.6-plus`), `chat_v3` (2:
+ * `kimi-k2.8-preview`, `qwen3.8-flash`) and `solo_agent_remote` (1:
+ * `Doubao-Seed-Code`). Measured 2026-10-23 on a live CN account. Those rows work
+ * — that is why P1 kept them — but they are not what Trae's main chat offers,
+ * and mixing them into the default view is exactly the "a code model answering a
+ * solo request" shape issue #52 asked about.
+ */
+export const TRAE_COMMON_FUNCTIONS: Readonly<Record<TraeRegion, readonly string[]>> = {
+  cn: ['solo_work_remote', TRAE_SOLO_FUNCTION],
+  ai: ['solo_work_remote', TRAE_SOLO_FUNCTION],
+}
+
+/**
+ * The function a request for this row will NAME.
+ *
+ * A row with no `wireFunction` is not "unknown to the wire": the bridge sends
+ * the region default (`TRAE_SOLO_FUNCTION`), so for every question about where
+ * the turn goes, the default is the answer. The distinction still matters for
+ * DISPLAY (`groupTraeModels` keeps these in their own group, because their
+ * provenance — which directory group advertised them — really is unknown), but
+ * not for scope: a `solo_work_lite` turn is a normal chat turn either way.
+ */
+export function traeModelCallChannel(model: TraeOrderableModel): string {
+  const channel = model.wireFunction
+  return channel === undefined || channel === '' ? TRAE_SOLO_FUNCTION : channel
+}
+
+/** Which slice of the catalog a view asks for. */
+export type TraeModelView =
+  /** Rows a normal chat turn can reach: {@link TRAE_COMMON_FUNCTIONS}. */
+  | 'common'
+  /** Every callable row, specialist channels included. */
+  | 'all'
+
+/**
+ * Does this row belong to the view?
+ *
+ * Judged on {@link traeModelCallChannel}, never on `wireFunction` directly:
+ * otherwise the one row without a function (`doubao_1_8`, measured 2026-10-23)
+ * would fall OUT of the common view while being called through exactly the
+ * common channel it belongs to.
+ */
+export function traeModelInView(
+  model: TraeOrderableModel,
+  view: TraeModelView,
+  region: TraeRegion = 'cn',
+): boolean {
+  if (view === 'all') return true
+  const common = TRAE_COMMON_FUNCTIONS[region] ?? TRAE_COMMON_FUNCTIONS.cn
+  return common.includes(traeModelCallChannel(model))
+}
+
+/** Keep the rows a view asks for, preserving order. */
+export function scopeTraeModels<T extends TraeOrderableModel>(
+  rows: readonly T[],
+  view: TraeModelView,
+  region: TraeRegion = 'cn',
+): T[] {
+  if (view === 'all') return [...rows]
+  return rows.filter(row => traeModelInView(row, view, region))
 }

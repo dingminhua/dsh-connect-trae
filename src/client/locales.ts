@@ -156,12 +156,24 @@ export const en = {
   'row.modelsSearchCount': '{shown} of {total}',
   'row.modelsSearchEmpty': 'No model matches 「{query}」.',
   'row.modelsGroupCount': '{count}',
+  // SCOPE (issue #52, P2): 24 of the 34 rows answer through `solo_work_*`; the
+  // rest exist only on a specialist mode (`solo_coder`, `chat_v3`,
+  // `solo_agent_remote`). The chips say how many, so the trade is visible
+  // before it is taken.
+  'row.modelsViewLabel': 'Model scope',
+  'row.modelsViewCommon': 'Common channels · {count}',
+  'row.modelsViewAll': 'All · {count}',
+  'row.modelsViewCommonHint': 'Models a normal SOLO workspace chat can call (solo_work_remote / solo_work_lite).',
+  'row.modelsViewAllHint': 'Also includes models only offered by a specialist channel: solo_coder, chat_v3, solo_agent_remote.',
+  'row.modelsViewShowAll': 'Show all',
+  'row.modelsSearchOutsideView': 'No match for 「{query}」 on the common channels; the full catalog has {count}.',
+  'row.modelsEnabledOutsideView': '{count} enabled model(s) are not in this view.',
   'row.modelsChannelWorkRemote': 'SOLO workspace · remote',
   'row.modelsChannelWorkLite': 'SOLO workspace · default',
   'row.modelsChannelAgentRemote': 'SOLO agent · remote',
   'row.modelsChannelChatV3': 'Chat · v3',
   'row.modelsChannelCoder': 'Code · solo_coder',
-  'row.modelsChannelDefault': 'No mode announced (uses the default channel)',
+  'row.modelsChannelDefault': 'No mode announced (calls solo_work_lite)',
   // The only card action that SPENDS quota: one minimal chat call per enabled
   // model. The label says what it tests and the hint says what it costs, so the
   // button is never a surprise charge.
@@ -565,12 +577,22 @@ export const zh: Record<TraeSettingsKey, string> = {
   'row.modelsSearchCount': '{shown} / {total}',
   'row.modelsSearchEmpty': '没有匹配「{query}」的模型。',
   'row.modelsGroupCount': '{count} 个',
+  // 视图档位（issue #52 P2）：34 行里 24 行走 `solo_work_*`，其余只存在于专用模式
+  // （solo_coder / chat_v3 / solo_agent_remote）。徽标把数字写出来，取舍先看见再选。
+  'row.modelsViewLabel': '模型范围',
+  'row.modelsViewCommon': '常用通道 · {count}',
+  'row.modelsViewAll': '全部 · {count}',
+  'row.modelsViewCommonHint': '普通 SOLO 工作区对话能调到的模型（solo_work_remote / solo_work_lite）。',
+  'row.modelsViewAllHint': '还包含只在专用通道提供的模型：solo_coder、chat_v3、solo_agent_remote。',
+  'row.modelsViewShowAll': '查看全部',
+  'row.modelsSearchOutsideView': '常用通道内没有匹配「{query}」的模型，全部目录里有 {count} 个。',
+  'row.modelsEnabledOutsideView': '另有 {count} 个已启用的模型不在此视图内。',
   'row.modelsChannelWorkRemote': 'SOLO 工作区 · 远程',
   'row.modelsChannelWorkLite': 'SOLO 工作区 · 默认',
   'row.modelsChannelAgentRemote': 'SOLO 智能体 · 远程',
   'row.modelsChannelChatV3': '对话 · v3',
   'row.modelsChannelCoder': '代码 · solo_coder',
-  'row.modelsChannelDefault': '未标注模式（走默认通道）',
+  'row.modelsChannelDefault': '未标注模式（走 solo_work_lite）',
   'row.modelsTestEnabled': '一键测试启用模型',
   'row.modelsTestAll': '一键测试所有模型',
   'row.modelsTesting': '正在测试 {done}/{total}…',

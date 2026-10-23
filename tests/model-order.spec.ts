@@ -19,8 +19,12 @@ import {
   filterTraeModels,
   groupTraeModels,
   orderTraeModels,
+  scopeTraeModels,
+  traeModelCallChannel,
+  traeModelInView,
   traeModelMatchesQuery,
   TRAE_CHANNEL_PRIORITY,
+  TRAE_COMMON_FUNCTIONS,
 } from '../src/model-order.ts'
 
 interface Row {
@@ -194,5 +198,64 @@ describe('4. search', () => {
 
   it('returns nothing when nothing matches', () => {
     expect(filterTraeModels([deepSeek], 'gpt-6')).toEqual([])
+  })
+})
+
+/**
+ * The scope (issue #52, P2).
+ *
+ * WHY THIS IS A PURE FUNCTION AND NOT A `filter` IN THE CARD. The scope decides
+ * which rows exist on screen, and both the card AND the empty-search message
+ * need the same answer. Putting it here also keeps the one subtle rule — a row
+ * with no `wireFunction` is still called through `solo_work_lite`, so it belongs
+ * to the common scope — testable without a DOM.
+ */
+describe('6. the view scope separates normal chat channels from specialist ones', () => {
+  const rows = [
+    row('remote-model', 'solo_work_remote'),
+    row('lite-model', 'solo_work_lite'),
+    row('unattributed'),
+    row('coder-model', 'solo_coder'),
+    row('chat-model', 'chat_v3'),
+    row('agent-model', 'solo_agent_remote'),
+  ]
+
+  it('keeps the solo_work_* family and drops the specialist channels', () => {
+    expect(scopeTraeModels(rows, 'common').map(model => model.name))
+      .toEqual(['remote-model', 'lite-model', 'unattributed'])
+  })
+
+  it('counts an unattributed row as common, because that is where its turn goes', () => {
+    // The row is advertised by no chat directory, so the bridge sends the region
+    // default. Judging on `wireFunction` alone would hide the one row whose call
+    // path is the most predictable of all.
+    expect(traeModelCallChannel({ id: 'x', name: 'x' })).toBe('solo_work_lite')
+    expect(traeModelCallChannel({ id: 'x', name: 'x', wireFunction: '' })).toBe('solo_work_lite')
+    expect(traeModelInView({ id: 'x', name: 'x' }, 'common')).toBe(true)
+  })
+
+  it('returns every row for `all`, in the caller’s order and as a copy', () => {
+    const scoped = scopeTraeModels(rows, 'all')
+    expect(scoped.map(model => model.name)).toEqual(rows.map(model => model.name))
+    expect(scoped).not.toBe(rows)
+  })
+
+  it('judges the same rows differently per region', () => {
+    // `ai` has no `solo_coder` in its priority list at all, so a coder row is not
+    // a normal chat row there either — but the rule is still "is it a common
+    // channel", not "is it known".
+    expect(TRAE_COMMON_FUNCTIONS.ai).not.toContain('solo_coder')
+    expect(traeModelInView({ id: 'x', name: 'x', wireFunction: 'solo_coder' }, 'common', 'ai')).toBe(false)
+    expect(traeModelInView({ id: 'x', name: 'x', wireFunction: 'solo_work_remote' }, 'common', 'ai')).toBe(true)
+  })
+
+  it('keeps every common function inside the region’s own priority list', () => {
+    // An invariant, not a tautology: "common" means "the region calls this
+    // channel", so a typo here would silently empty the default view.
+    for (const region of ['cn', 'ai'] as const) {
+      for (const fn of TRAE_COMMON_FUNCTIONS[region]) {
+        expect(TRAE_CHANNEL_PRIORITY[region]).toContain(fn)
+      }
+    }
   })
 })

@@ -105,7 +105,7 @@ export { parseTraeCachedModel, readTraeCachedModel, traeStateDatabaseCandidates,
 export { parseTraeModelExtraConfigLogLine, parseTraeRawChatBehaviorConfig, type TraeRawChatBehaviorConfig } from './model-extra-config.ts'
 export { buildTraeModelDetailRequest, TRAE_MODEL_DETAIL_FUNCTIONS, TRAE_MODEL_DETAIL_PATH, type TraeModelDetailRequest } from './model-detail.ts'
 export { applyOfficialRoster, officialVerdictOf, parseTraeOfficialRoster, TraeOfficialRosterClient, TRAE_OFFICIAL_ROSTER_PATH, type TraeOfficialChannel, type TraeOfficialFilterResult, type TraeOfficialRoster, type TraeOfficialVerdict } from './official-roster.ts'
-export { filterTraeModels, groupTraeModels, orderTraeModels, traeModelMatchesQuery, TRAE_CHANNEL_PRIORITY, type TraeModelGroup, type TraeOrderableModel } from './model-order.ts'
+export { filterTraeModels, groupTraeModels, orderTraeModels, scopeTraeModels, traeModelCallChannel, traeModelInView, traeModelMatchesQuery, TRAE_CHANNEL_PRIORITY, TRAE_COMMON_FUNCTIONS, type TraeModelGroup, type TraeModelView, type TraeOrderableModel } from './model-order.ts'
 export { parseTraeRemoteModel, type TraeDiscoveredModel, type TraeDiscoveredReasoning } from './model-metadata.ts'
 export { traeStorageCandidates, traeWindowsAppNames, type TraeEdition, type TraeStorageCandidate } from './paths.ts'
 export { describeIdShape, describeNameShape, maskUserPath } from './redact.ts'

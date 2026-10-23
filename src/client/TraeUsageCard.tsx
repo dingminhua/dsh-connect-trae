@@ -29,7 +29,7 @@ import {
 import type { TraeModelProbeVerdict, TraeModelsTestResponse, TraeWebAccount, TraeWebAccountState, TraeWebCheckinClaim, TraeWebModel, TraeWebUsage } from '../status-paths.ts'
 import type { TraeCreditPosition } from '../status-paths.ts'
 import { providerOfPanel, regionOfPanel, type TraePanel } from '../region.ts'
-import { filterTraeModels, groupTraeModels, orderTraeModels } from '../model-order.ts'
+import { filterTraeModels, groupTraeModels, orderTraeModels, scopeTraeModels, type TraeModelView } from '../model-order.ts'
 import { selectTraePromoBadge, type TraePromoKind } from '../promo.ts'
 import { TRAE_PLUGIN_ICON } from './icon.ts'
 import { TRAE_CARD_CSS } from './styles.ts'
@@ -338,6 +338,22 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
    * an edit, so it must survive a save and must never make the card look dirty.
    */
   const [modelQuery, setModelQuery] = useState('')
+  /**
+   * How much of the catalog the list shows (issue #52, P2).
+   *
+   * `common` is the DEFAULT because it answers the question the issue was filed
+   * with: 24 of the 34 rows are reachable from a normal `solo_work_*` chat turn,
+   * and the other 10 exist only on a specialist channel (`solo_coder` 7,
+   * `chat_v3` 2, `solo_agent_remote` 1 — measured 2026-10-23). The vendor's own
+   * picker shows 14–24 per mode, so 24 is the first list since P0 that looks
+   * like the client the reporter compared against.
+   *
+   * Nothing is REMOVED by this: the view is presentation only. Every action
+   * (「test all」, bulk context, the save) still ranges over the full catalog, and
+   * an enabled model that the view hides is called out below the list rather
+   * than silently dropped from the screen.
+   */
+  const [modelView, setModelView] = useState<TraeModelView>('common')
   /**
    * Channel groups the user folded shut, keyed `panel|channel`.
    *
@@ -1137,9 +1153,32 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
    */
   const modelRegion = regionOfPanel(activeRegion)
   const orderedModels = orderTraeModels(visibleModels, modelRegion)
-  const shownModels = filterTraeModels(orderedModels, modelQuery)
+  /**
+   * Scope, then search, then group — in that order, and each step answers a
+   * different question (P2): the view is 「how much of the catalog」, the query is
+   * 「which row」, the groups are 「where will the turn go」.
+   *
+   * SEARCH IS SCOPED TO THE VIEW. A global search would contradict the group
+   * headers the user is looking at (results from a channel that is not on
+   * screen), and scoping it means the empty state has to be honest about what it
+   * did not look at — see `matchesOutsideView`.
+   */
+  const commonModels = scopeTraeModels(orderedModels, 'common', modelRegion)
+  const scopedModels = modelView === 'all' ? orderedModels : commonModels
+  const commonModelCount = commonModels.length
+  const shownModels = filterTraeModels(scopedModels, modelQuery)
   const modelGroups = groupTraeModels(shownModels, modelRegion)
   const modelQueryActive = modelQuery.trim() !== ''
+  /**
+   * Matches the query has in the FULL catalog while the view has none.
+   *
+   * Without this, searching `kimi` with the default view up would answer
+   * 「没有匹配」 for `kimi-k2.5`, which is on screen in 全部 — the one wrong
+   * answer a search box must not give. Zero means "genuinely absent".
+   */
+  const matchesOutsideView = modelQueryActive && shownModels.length === 0
+    ? filterTraeModels(orderedModels, modelQuery).length
+    : 0
   /**
    * One clock reading for the whole model list.
    *
@@ -1152,6 +1191,19 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
   const savedEnabledIds = status.status === 'signed-in' ? new Set(status.enabledModelIds) : new Set<string>()
   const activeEnabledIds = draft?.enabledIds ?? savedEnabledIds
   const activeImageIds = draft?.imageIds ?? savedImageIds
+  /**
+   * Enabled rows this view does not draw.
+   *
+   * The view hides 10 rows by default; if the user had enabled some of them
+   * before this existed, their checkbox is not on the screen, so the ONLY honest
+   * options are "say they exist" or "let the screen imply they are off". The save
+   * path is already safe (it writes `activeEnabledIds` from state, never from the
+   * rendered checkboxes), so this is about not lying to the reader.
+   */
+  const scopedIds = new Set(scopedModels.map(model => model.id))
+  const enabledOutsideView = modelView === 'all'
+    ? []
+    : orderedModels.filter(model => activeEnabledIds.has(model.id) && !scopedIds.has(model.id))
   /**
    * Effective image capability of one row, mirroring what the Host reports to
    * DSH: the user's opt-in unioned with Trae's own `multimodal` flag (issue
@@ -1781,6 +1833,33 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
                       <p className="dsm-trae-models-hint">{t('row.modelsTestHint')}</p>
                       {testSummary === undefined ? null : <p className="dsm-trae-models-summary">{testSummary}</p>}
                       {testError === undefined ? null : <p className="dsm-trae-usage-error" role="alert">{testError}</p>}
+                      {/* Scope chips — rendered ONLY when the catalog actually
+                          has rows outside the common channels. On an account
+                          (or a region) where every row is a `solo_work_*` row
+                          the control would switch between two identical lists,
+                          and a toggle that does nothing is worse than none. */}
+                      {orderedModels.length > commonModelCount
+                        ? <div className="dsm-trae-models-view" role="group" aria-label={t('row.modelsViewLabel')}>
+                          <button
+                            type="button"
+                            className="dsm-trae-models-view-opt"
+                            aria-pressed={modelView === 'common'}
+                            title={t('row.modelsViewCommonHint')}
+                            onClick={() => { setModelView('common') }}
+                          >
+                            {t('row.modelsViewCommon', { count: commonModelCount })}
+                          </button>
+                          <button
+                            type="button"
+                            className="dsm-trae-models-view-opt"
+                            aria-pressed={modelView === 'all'}
+                            title={t('row.modelsViewAllHint')}
+                            onClick={() => { setModelView('all') }}
+                          >
+                            {t('row.modelsViewAll', { count: orderedModels.length })}
+                          </button>
+                        </div>
+                        : null}
                       <div className="dsm-trae-models-search">
                         <input
                           type="search"
@@ -1797,12 +1876,28 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
                           }}
                         />
                         {modelQueryActive
-                          ? <span className="dsm-trae-models-search-count">{t('row.modelsSearchCount', { shown: shownModels.length, total: visibleModels.length })}</span>
+                          ? <span className="dsm-trae-models-search-count">{t('row.modelsSearchCount', { shown: shownModels.length, total: scopedModels.length })}</span>
                           : null}
                       </div>
                       <div className="dsm-trae-model-list">
                         {modelGroups.length === 0
-                          ? <p className="dsm-trae-models-empty">{t('row.modelsSearchEmpty', { query: modelQuery.trim() })}</p>
+                          ? matchesOutsideView > 0
+                            /* The query DOES exist, just not where this view is
+                               looking. Saying 「没有匹配」 here would be the one
+                               answer a search box must never give (see
+                               `matchesOutsideView`), so the message names the
+                               other scope and hands over the switch. */
+                            ? <p className="dsm-trae-models-empty">
+                              {t('row.modelsSearchOutsideView', { query: modelQuery.trim(), count: matchesOutsideView })}
+                              <button
+                                type="button"
+                                className="dsm-trae-models-widen"
+                                onClick={() => { setModelView('all') }}
+                              >
+                                {t('row.modelsViewShowAll')}
+                              </button>
+                            </p>
+                            : <p className="dsm-trae-models-empty">{t('row.modelsSearchEmpty', { query: modelQuery.trim() })}</p>
                           : null}
                         {modelGroups.map(group => {
                           const groupKey = `${activeRegion}|${group.channel ?? ''}`
@@ -1911,9 +2006,32 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
                           )
                         })}
                       </div>
+                      {/* The one thing a scoped list can get WRONG: hiding a row
+                          that is already switched on. The checkbox that would
+                          turn it off is not rendered here, so the list says how
+                          many there are and offers the widen. Nothing about the
+                          save is affected — `activeEnabledIds` comes from state,
+                          never from the rendered checkboxes — but a reader who
+                          counted the ticked boxes would otherwise conclude those
+                          models were disabled. */}
+                      {enabledOutsideView.length === 0
+                        ? null
+                        : <p className="dsm-trae-models-note">
+                          {t('row.modelsEnabledOutsideView', { count: enabledOutsideView.length })}
+                          <button
+                            type="button"
+                            className="dsm-trae-models-widen"
+                            onClick={() => { setModelView('all') }}
+                          >
+                            {t('row.modelsViewShowAll')}
+                          </button>
+                        </p>}
                       {/* Bulk context switch (issue #42): sits directly under the
                           per-row budget radios it replaces a click-walk through,
-                          so the affordance is next to what it acts on. */}
+                          so the affordance is next to what it acts on. It ranges
+                          over `visibleModels`, NOT the view: 「全部」 means the
+                          catalog, and a hidden row must not be skipped by a
+                          button whose label promises otherwise. */}
                       <div className="dsm-trae-context-bulk">
                         <button
                           type="button"
