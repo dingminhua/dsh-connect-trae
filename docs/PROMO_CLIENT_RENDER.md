@@ -147,7 +147,7 @@ IDE 名册那一行（同一时刻）：
 | 会员维度 | 活动类型自带（member / off_peak_member / subsidy_member），可给不同话术 | 只进悬停，不参与判定 |
 | 活动特例 | 可按 subKey 定制（`…_18_9`） | 只按 subKey 前缀分三类 |
 
-## 6. 由此改了什么（4.4.3）
+## 6. 由此改了什么（4.4.4）
 
 - **会员价只在更便宜时才说**。`badgeOf()` 现在比较两条分支的**折后价**：
   `member.rate < 现价` 才带 `memberRate`/`memberDiscountPercent`，文案从「会员价另有 X 折」
