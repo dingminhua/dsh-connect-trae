@@ -315,6 +315,7 @@ export const en = {
   // model and a probe size, not the panel's main event, and it must not compete
   // with 「Account pool」 at the top.
   'row.poolSettingsTitle': 'More settings',
+  'row.poolMoreRulesTitle': 'Account copies & saving rules',
   'row.poolManualAccountLabel': 'Manually billed account',
   'row.poolManualAccountNone': 'No account in effect',
   'row.poolDirty': 'unsaved',
@@ -696,6 +697,7 @@ export const zh: Record<TraeSettingsKey, string> = {
   // 小标题，不是第二个页面标题：这里剩下的只是「目标模型 + 测试体积」，
   // 不该和顶部的「账号池」争主次。
   'row.poolSettingsTitle': '更多设置',
+  'row.poolMoreRulesTitle': '账号副本与保存规则',
   'row.poolManualAccountLabel': '手动计费账号',
   'row.poolManualAccountNone': '当前无生效账号',
   'row.poolDirty': '未保存',

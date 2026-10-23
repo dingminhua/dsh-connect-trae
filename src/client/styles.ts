@@ -459,18 +459,34 @@ export const TRAE_CARD_CSS = `
 .dsm-trae-pool-title{margin:0;font-size:13px;font-weight:600;line-height:18px;color:var(--dsw-alias-label-primary,#e6e6e6)}
 .dsm-trae-pool-region-note{margin:3px 0 0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#9aa0a8)}
 .dsm-trae-pool-current{flex:none;padding:2px 8px;border-radius:999px;border:1px solid var(--dsw-alias-border-l2,#3a3d45);font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary,#c6c9d0);white-space:nowrap}
-.dsm-trae-pool-modebar{padding:12px 14px;gap:8px;border-color:rgba(86,134,254,.36);background:linear-gradient(180deg,rgba(86,134,254,.10),rgba(86,134,254,.02)),var(--dsw-alias-bg-layer-2,#24262c)}
+/* Two classes on the element (settings + modebar): a single-class rule here loses
+   to .dsm-trae-pool-settings further down, which resets padding to 0 and repaints
+   the background. Match both classes so the strip keeps its own frame. */
+.dsm-trae-pool-settings.dsm-trae-pool-modebar{padding:12px 14px;gap:8px;border-color:rgba(86,134,254,.36);background:linear-gradient(180deg,rgba(86,134,254,.10),rgba(86,134,254,.02)),var(--dsw-alias-bg-layer-2,#24262c)}
 .dsm-trae-pool-modebar-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .dsm-trae-pool-modebar-label{font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary,#e6e6e6)}
 .dsm-trae-pool-modebar-state{flex:none;padding:1px 9px;border-radius:999px;font-size:12px;line-height:18px;font-weight:500;color:var(--dsw-alias-brand-primary,#5686fe);background:rgba(86,134,254,.14);border:1px solid rgba(86,134,254,.3)}
 .dsm-trae-pool-modebar .dsm-trae-pool-dirty{margin-left:auto}
 .dsm-trae-pool-modebar .dsm-trae-pool-note{line-height:18px}
-.dsm-trae-pool-serving-note{color:var(--dsw-alias-state-warn-primary,#b45309)}
+/* Modifier rules must out-specify their base class wherever the base is defined
+   further down (.dsm-trae-pool-note, .dsm-trae-select): matching both classes keeps
+   the warn tone and the wider select from being reset by the later base rule. */
+.dsm-trae-pool-note.dsm-trae-pool-serving-note{color:var(--dsw-alias-state-warn-primary,#b45309)}
 .dsm-trae-pool-card .dsm-trae-pool-actions{padding:0 var(--dsm-trae-pool-pad-x) 12px}
 .dsm-trae-pool-card .dsm-trae-pool-action-note{padding:0 var(--dsm-trae-pool-pad-x) 12px}
 .dsm-trae-pool-actions{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
 .dsm-trae-pool-action-checkin{flex:none;white-space:nowrap}
 .dsm-trae-pool-action-test{flex:none;white-space:nowrap}
+/* Reference text, folded away. Same <details>/<summary> shape as the WorkBuddy
+   sibling's "how the pool picks an account": keyboard-operable and
+   screen-reader-expanded natively, and nothing to keep in sync in state. The
+   paragraphs inside are plain .dsm-trae-pool-note - the container only supplies
+   the frame, so their own type scale stays authoritative. */
+.dsm-trae-pool-more{border:1px solid var(--dsw-alias-border-l1,rgba(127,127,127,.18));border-radius:10px;background:var(--dsw-alias-bg-layer-2,#24262c);overflow:hidden}
+.dsm-trae-pool-more-summary{padding:8px 12px;cursor:pointer;user-select:none;color:var(--dsw-alias-label-secondary,#c6c9d0);font-size:12px;font-weight:600;line-height:18px}
+.dsm-trae-pool-more-summary:hover{color:var(--dsw-alias-label-primary,#e6e6e6)}
+.dsm-trae-pool-more-summary:focus-visible{outline:2px solid rgba(86,134,254,.55);outline-offset:-2px}
+.dsm-trae-pool-more-body{display:flex;flex-direction:column;gap:8px;padding:10px 12px 12px;border-top:1px solid var(--dsw-alias-border-l1,rgba(127,127,127,.18))}
 /* Removing an account from the pool is destructive (it drops THIS panel's saved
    membership), so the hover state takes the error tone rather than the neutral
    one every other outline button gets. */
@@ -505,7 +521,7 @@ export const TRAE_CARD_CSS = `
 .dsm-trae-pool-set-copy span{font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#9aa0a8)}
 .dsm-trae-pool-set-ctl{display:flex;align-items:center;gap:8px;flex:none}
 .dsm-trae-pool-set-ctl select{min-width:180px}
-.dsm-trae-pool-account-select{min-width:180px;max-width:min(320px,50%)}
+.dsm-trae-select.dsm-trae-pool-account-select{min-width:180px;max-width:min(320px,50%)}
 .dsm-trae-pool-tools{display:flex;flex-direction:column;gap:8px}
 .dsm-trae-pool-tool-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .dsm-trae-pool-meta{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary,#9aa0a8);white-space:nowrap}

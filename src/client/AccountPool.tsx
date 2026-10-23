@@ -13,7 +13,7 @@
  * regions-write helper.
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { ReactElement, ReactNode } from 'react'
+import type { ReactElement, ReactNode, SyntheticEvent } from 'react'
 import {
   regionPoolOf,
   nextRegionPool,
@@ -375,6 +375,9 @@ export function AccountPool({ panel, pool, models, t, settingsScope, onChanged, 
   const [selected, setSelected] = useState(() => new Set(saved.memberAccountIds ?? []))
   const [busy, setBusy] = useState<'test' | 'delete' | 'save' | undefined>(undefined)
   const [saveError, setSaveError] = useState<string | undefined>(undefined)
+  // The reference block is controlled so a background refresh — which re-renders
+  // this card on every poll — cannot collapse a section the user just opened.
+  const [moreRulesOpen, setMoreRulesOpen] = useState(false)
   const [testing, setTesting] = useState<{ done: number } | undefined>(undefined)
   const [rows, setRows] = useState<Readonly<Record<string, TraePoolTestRowView>>>({})
   // Per-row destructive delete IN FLIGHT (`delete` drops the plugin's credential
@@ -953,17 +956,31 @@ export function AccountPool({ panel, pool, models, t, settingsScope, onChanged, 
         <div className="dsm-trae-pool-head">
           <h3 className="dsm-trae-pool-title">{t('row.poolSettingsTitle')}</h3>
         </div>
-        {/* The copy file itself, named. "The plugin keeps a real copy" is a claim;
-            "these two ids live in this file right now" is something the user can
-            open with an editor. Rendered only when the Host reports it, so an
-            older Host simply says nothing instead of showing a stale path. */}
-        {pool.copies === undefined
-          ? null
-          : <p className="dsm-trae-pool-note dsm-trae-pool-copyfile" role="note">
-              {t('row.poolCopyFile', { path: pool.copies.path, count: pool.copies.count })}
-            </p>}
-        <p className="dsm-trae-pool-note">{t('row.poolSettingsNote')}</p>
-        <p className="dsm-trae-pool-note">{t('row.poolDeleteHint')}</p>
+        {/* Reference text, folded. Three paragraphs used to sit here as a wall of
+            grey — where the copies live, when settings take effect, what Delete
+            does — and they pushed the two real controls below them off the first
+            screen. A <details> keeps them one click away without dressing them up
+            as controls; nothing was cut, the copy path included ("the plugin keeps
+            a real copy" is a claim, "these two ids live in this file right now" is
+            something the user can open with an editor). The path renders only when
+            the Host reports it, so an older Host says nothing rather than showing
+            a stale one. */}
+        <details
+          className="dsm-trae-pool-more"
+          open={moreRulesOpen}
+          onToggle={(event: SyntheticEvent<HTMLDetailsElement>) => setMoreRulesOpen(event.currentTarget.open)}
+        >
+          <summary className="dsm-trae-pool-more-summary">{t('row.poolMoreRulesTitle')}</summary>
+          <div className="dsm-trae-pool-more-body">
+            {pool.copies === undefined
+              ? null
+              : <p className="dsm-trae-pool-note" role="note">
+                  {t('row.poolCopyFile', { path: pool.copies.path, count: pool.copies.count })}
+                </p>}
+            <p className="dsm-trae-pool-note">{t('row.poolSettingsNote')}</p>
+            <p className="dsm-trae-pool-note">{t('row.poolDeleteHint')}</p>
+          </div>
+        </details>
         <div className="dsm-trae-pool-settings">
         {/* The 「启用账号池」 switch is NOT here any more: it is the page's mode
             selector and now stands directly under the title (see the mode bar).
