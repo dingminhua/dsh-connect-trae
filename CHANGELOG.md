@@ -1,5 +1,48 @@
 # Changelog
 
+## 4.5.1 (2026-10-25)
+
+> **只在租户池上架的模型不再隐形。** 插件的模型目录只问了 `solo.trae.cn` 一处，
+> 而它并不发布租户池的完整名单——`DeepSeek-V4.1-Flash-1017` 就在其中。这一版把
+> `console.enterprise.trae.cn` 的目录**并入**主目录，两个池的模型都保留。
+>
+> 成因不是合并层丢行，而是**读错了 host**：目录基址循环在第一个答非空的 host 就
+> `return`，而主目录总会答——所以只在租户池上架的模型，即便拿着租户凭据也永远看不到
+> （#46）。
+
+### 修复
+
+- **模型目录并入租户池，只在租户侧上架的模型不再隐形**（#46）。
+  - **实测**（2026-10-24，真实 CN 租户凭据）：`solo.trae.cn` 答 36 个 id、**没有**
+    `DeepSeek-V4.1-Flash-1017`；`console.enterprise.trae.cn` 答 24 个、**有**。
+    4.4.7 与 4.5.0 表现一致，所以升级修不了。
+  - **并集而非替换**：两侧没有一方包含另一方——主目录的 36 个里有 **19** 个不在租户
+    应答中，其中就包括 `deepseek-v4.1-flash`。换 host 等于用 1 个模型换掉 19 个。
+  - **也不能做成兜底候选**：基址循环在第一个答非空的 host 就返回，而主目录总会答，
+    候选恰好在唯一会出错的情形下被跳过。因此额外 host 单独读取后再并入
+    （`TraeSoloRemoteCatalogOptions.unionBaseUrls`）。
+  - **冲突保留主目录的拼写**，按不区分大小写比较。这里不能用 `preferStrongerRow`
+    打擂台：`deriveCatalog` 用 `enabled.has(model.id)` **精确匹配**，改名会让用户
+    已存进 `enabledModelIds` 的那一项静默失配、模型从选择里消失。
+  - **逐 host 尽力而为**：传输失败、非 2xx、响应体读不出、应答为空，都记日志后跳过，
+    只有调用方 abort 才向上抛。某个额外 host 坏掉，损失的是它的模型，而不是整份目录。
+  - **门控按凭据、不按面板**：只登录租户账号的机器，在 Trae（消费端）面板下
+    `store.resolve()` 依然会返回租户凭据（`offered()` 是「藏光了就回退」），所以按
+    面板判会漏掉这类用户。现在判「解析出的凭据 `tenantId` 非空」，个人凭据在发出请求
+    前就跳过。
+  - **`unionRegion` 挡住跨区域请求**：`DSH_TRAE_TENANT_IN_CONSUMER` 是环境变量、不分
+    区域，原先国际版面板也会挂上 CN 租户 host（用 SG 凭据实测确实发出、拿 401 后被
+    跳过）。现在区域不符即跳过。
+  - **额外 host 有负缓存**：`discoverModels()` 不传 signal、超时回落到 30 秒，原先企业
+    host 不可达时每次刷新都要多等。失败后与主 host 同款冷却 5 分钟。
+  - **它不是别名**：用插件自己的 bridge 驱动真实网关，两个 id 派往不同后端
+    （`DeepSeek-V4.1-Flash-1017` → `deepseek-v4.1-flash-economic-ark`，
+    `DeepSeek-V4.1-Flash` → `deepseek-v4.1-flash-ark`）。
+  - 测试：`tests/solo-remote.spec.ts` 新增 8 例，覆盖并集、仅大小写不同的冲突、
+    额外 host 不可达/被拒/应答为空、个人凭据跳过、跨区域跳过、冷却、已经是主 host 时
+    不重复请求，以及未配置 `unionBaseUrls` 时行为与改动前完全一致。
+  - 贡献者：[@yuantao313](https://github.com/yuantao313)（PR #59）。
+
 ## 4.5.0 (2026-10-24)
 
 > **宽窗模型多一个 500K 上下文中间档。** Trae 每个模型公布两个窗口——默认（dev）档和
