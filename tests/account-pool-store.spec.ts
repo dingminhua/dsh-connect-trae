@@ -100,6 +100,28 @@ describe('the pool probe store', () => {
     expect(Object.keys(await readTraePoolProbes('cn'))).toEqual([B])
   })
 
+  it('serializes a concurrent drop and write instead of losing the write', async () => {
+    // A drop is a read-modify-write. When its read happened OUTSIDE the write
+    // lock, a batch landing between that read and the write was discarded by
+    // the drop's stale snapshot. The store cannot say WHICH of two concurrent
+    // intentions wins, but the loser must never erase the winner: after both
+    // settle, the file holds a consistent result of one full operation after
+    // the other — never a patchwork of a pre-lock read and a post-lock write.
+    await writeTraePoolProbes('cn', { [A]: { outcome: 'ok', atMs: NOW } })
+    await Promise.all([
+      dropTraePoolProbe('cn', A),
+      writeTraePoolProbes('cn', { [B]: { outcome: 'ok', atMs: NOW } }),
+      writeTraePoolProbes('cn', { [A]: { outcome: 'rate-limited', atMs: NOW + 1 } }),
+    ])
+    const after = await readTraePoolProbes('cn')
+    
+    // `A` ended deleted OR re-measured — both are legitimate orders — but the
+    // third writer's measurement of `B` can never be the casualty either way.
+    expect(after[B]).toMatchObject({ outcome: 'ok', atMs: NOW })
+    const dropped = after[A] === undefined
+    if (!dropped) expect(after[A]).toMatchObject({ outcome: 'rate-limited' })
+  })
+
   it('stores no credential material', async () => {
     await writeTraePoolProbes('cn', { [A]: { outcome: 'ok', atMs: NOW } })
     const raw = await readFile(join(home, '.trae-pool.cn.json'), 'utf8')

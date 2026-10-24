@@ -1,4 +1,4 @@
-import { copyFile, readFile, rm, stat } from 'node:fs/promises'
+import { copyFile, readFile, rename, rm, stat } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { withFileLock, writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
@@ -317,20 +317,56 @@ function credentialOfStored(stored: unknown): TraeCredential | undefined {
  * needed and an older install's file is never rejected. A malformed row is
  * dropped rather than failing the whole file — one bad imported account must
  * not hide the rest.
+ *
+ * Returns `undefined` — NOT an empty array — for a file this build cannot parse
+ * at all: a torn JSON write, a hand-edited document, or a version nothing here
+ * knows. The distinction is load-bearing (see {@link readOwnForMerge}): every
+ * merge writer treats `[]` as the merge base but `undefined` as "do not build
+ * on this", because an unparseable file may still HOLD every account, and
+ * merging onto "empty" would erase them on the very next refresh.
  */
-function parseOwn(text: string): TraeCredential[] {
+function parseOwn(text: string): TraeCredential[] | undefined {
+  let document: { version?: unknown; credential?: unknown, credentials?: unknown }
   try {
-    const document = JSON.parse(text) as { version?: unknown; credential?: unknown, credentials?: unknown }
-    if (document.version === OWN_VERSION) {
-      if (!Array.isArray(document.credentials)) return []
-      return document.credentials.map(credentialOfStored).filter((value): value is TraeCredential => value !== undefined)
-    }
-    if (document.version === OWN_VERSION_SINGLE) {
-      const single = credentialOfStored(document.credential)
-      return single === undefined ? [] : [single]
-    }
-    return []
-  } catch { return [] }
+    const parsed: unknown = JSON.parse(text)
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return undefined
+    document = parsed as { version?: unknown; credential?: unknown, credentials?: unknown }
+  } catch { return undefined }
+  if (document.version === OWN_VERSION) {
+    if (!Array.isArray(document.credentials)) return undefined
+    return document.credentials.map(credentialOfStored).filter((value): value is TraeCredential => value !== undefined)
+  }
+  if (document.version === OWN_VERSION_SINGLE) {
+    const single = credentialOfStored(document.credential)
+    return single === undefined ? undefined : [single]
+  }
+  return undefined
+}
+
+/**
+ * Move a plugin-owned file this build can no longer parse out of the way, so
+ * the next write starts from a clean file instead of building on — or being
+ * refused by — the unreadable one.
+ *
+ * The rename is the data preservation: the bytes stay on disk beside the live
+ * path (`.corrupt-<stamp>`), so a future build that understands the format (or
+ * a user with a text editor) can still recover the accounts it carried. It is
+ * best-effort on purpose: a quarantine that cannot happen must not fail the
+ * user action that triggered it, and the merge writers refuse to overwrite a
+ * file they could not quarantine (see {@link readOwnForMerge}).
+ *
+ * Must be called under the same lock the caller writes under: without the lock
+ * the rename could interleave with a concurrent writer holding the pre-rename
+ * content and write it right back.
+ */
+async function quarantineCorruptOwn(path: string): Promise<boolean> {
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+  try {
+    await rename(path, `${path}.corrupt-${stamp}`)
+    return true
+  } catch {
+    return false
+  }
 }
 
 /**
@@ -527,11 +563,53 @@ export class TraeCredentialStore {
     } catch { return new Set() }
   }
 
-  private async writeTombstones(ids: ReadonlySet<string>): Promise<void> {
+  /**
+   * Read, mutate, and write the tombstone list under ONE lock.
+   *
+   * The tombstone file is read-modify-write state shared by two flows that run
+   * concurrently: `mirrorLocalLogins` (drops tombstones whose logins are gone)
+   * and `deleteAccount` (adds the id just deleted). A read OUTSIDE the write's
+   * lock loses updates in both directions — a dropped-add resurrects a deleted
+   * account on the next mirror, a dropped-drop keeps a tombstone forever and
+   * hides every future sign-in of that account. The mutator therefore runs on
+   * the freshly-read set INSIDE the lock, and what it returns is what gets
+   * written, with no window in between.
+   *
+   * Fire-and-forget safe: a failed update only delays a tombstone change until
+   * the next mirror or delete, so errors are swallowed like the readers'.
+   */
+  private async updateTombstones(mutator: (ids: Set<string>) => void): Promise<void> {
     const path = this.deletedPath()
     await withFileLock(path, async () => {
+      const ids = await this.readTombstones()
+      mutator(ids)
       await writeFileAtomic(path, `${JSON.stringify({ version: 1, ids: [...ids] }, null, 2)}\n`, { mode: 0o600, dirMode: 0o700 })
-    })
+    }).catch(() => undefined)
+  }
+
+  /**
+   * Read the plugin-owned file as the merge base for a read-modify-write.
+   *
+   * This is the fail-safe that keeps one unreadable file from erasing every
+   * account: `parseOwn` now distinguishes a VALID empty file (`[]`) from one
+   * this build cannot parse (`undefined`), and only the former may serve as a
+   * merge base. For the latter the file is quarantined — renamed aside with
+   * its bytes intact — and the merge then starts from nothing, so the action
+   * the user pressed still succeeds and the lost entries are recoverable from
+   * the quarantine copy instead of being overwritten silently. A quarantine
+   * that fails (an exotic filesystem, a name collision) aborts the write
+   * instead: losing one refresh is recoverable by pressing it again, losing
+   * every account is not.
+   *
+   * Every caller must hold the {@link withFileLock} of `path` across BOTH the
+   * read and the subsequent write — this does not lock by itself.
+   */
+  private async readOwnForMerge(path: string): Promise<TraeCredential[] | undefined> {
+    const text = await readFile(path, 'utf8').catch(() => undefined)
+    if (text === undefined) return []
+    const parsed = parseOwn(text)
+    if (parsed !== undefined) return parsed
+    return (await quarantineCorruptOwn(path)) ? [] : undefined
   }
 
   /**
@@ -554,23 +632,23 @@ export class TraeCredentialStore {
     const { credentials: discovered } = await this.readDesktopAll()
     const own = await this.readOwns()
     const ownIds = new Set(own.map(credential => traeAccountId(credential)))
-    const tombstones = await this.readTombstones()
     const liveIds = new Set(discovered.map(credential => traeAccountId(credential)))
-    let tombstonesChanged = false
-    for (const id of [...tombstones]) {
-      if (liveIds.has(id)) continue
-      tombstones.delete(id)
-      tombstonesChanged = true
-    }
+    // The tombstone drop and the mirror write below run in that order but are
+    // independent files; the drop is atomic here, under the tombstone lock.
+    const tombstones = await this.readTombstones()
+    const stale = [...tombstones].some(id => !liveIds.has(id))
+    if (stale) await this.updateTombstones(ids => { for (const id of [...ids]) { if (!liveIds.has(id)) ids.delete(id) } })
     const missing = discovered.filter(credential =>
       this.matchesRegion(credential)
       && !ownIds.has(traeAccountId(credential))
       && !tombstones.has(traeAccountId(credential)))
-    if (tombstonesChanged) await this.writeTombstones(tombstones)
     if (missing.length === 0) return
     const ownPath = this.ownAuthPath()
     await withFileLock(ownPath, async () => {
-      const existing = await readFile(ownPath, 'utf8').then(parseOwn, () => [] as TraeCredential[])
+      const existing = await this.readOwnForMerge(ownPath)
+      // A file we could not parse AND could not quarantine is not a base to
+      // write over: skipping the mirror keeps the bytes on disk untouched.
+      if (existing === undefined) return
       const byId = new Map(existing.map(credential => [traeAccountId(credential), credential]))
       for (const credential of missing) {
         const id = traeAccountId(credential)
@@ -912,7 +990,8 @@ export class TraeCredentialStore {
     await withFileLock(ownPath, async () => {
       // Merge onto what is already stored, so this never drops an account the
       // user did not touch — including a refreshed copy this store wrote.
-      const existing = await readFile(ownPath, 'utf8').then(parseOwn, () => [])
+      const existing = await this.readOwnForMerge(ownPath)
+      if (existing === undefined) return
       const byId = new Map<string, TraeCredential>()
       for (const item of existing) byId.set(traeAccountId(item), item)
       for (const credential of credentials) {
@@ -1080,8 +1159,14 @@ export class TraeCredentialStore {
     let mutated = false
     for (const path of this.ownCandidates()) {
       const dropped = await withFileLock(path, async () => {
-        const existing = await readFile(path, 'utf8').then(parseOwn, () => null)
+        // `parseOwn`'s `undefined` (an unreadable file) is normalized to `null`
+        // here: `null` is this call's "nothing to act on", and the comment below
+        // applies to it unchanged.
+        const existing = await readFile(path, 'utf8').then(text => parseOwn(text) ?? null, () => null)
         // A file we never wrote (or one with nothing to drop) is left alone.
+        // `undefined` is the third case parseOwn now reports — an UNREADABLE
+        // file — and it is left alone too: a delete must not quarantine (or
+        // otherwise replace) bytes it could not read, it just declines.
         if (existing === null || !existing.some(credential => traeAccountId(credential) === accountId)) return false
         const next = existing.filter(credential => traeAccountId(credential) !== accountId)
         await writeOwn(path, next)
@@ -1090,12 +1175,9 @@ export class TraeCredentialStore {
       mutated = mutated || dropped
     }
     // Tombstone BEFORE the next mirror can run: a delete that is not remembered
-    // is a delete the next refresh undoes.
-    const tombstones = await this.readTombstones()
-    if (!tombstones.has(accountId)) {
-      tombstones.add(accountId)
-      await this.writeTombstones(tombstones).catch(() => undefined)
-    }
+    // is a delete the next refresh undoes. The add happens under the tombstone
+    // lock so it cannot be lost to a concurrent mirror's drop.
+    await this.updateTombstones(ids => { ids.add(accountId) })
     // If the id was this account's binding, forget it so `current()` falls back
     // to a real selection instead of pointing at a credential that is gone.
     if (this.accountId === accountId) {
@@ -1271,8 +1353,12 @@ export class TraeCredentialStore {
     for (const path of this.ownCandidates()) {
       try {
         // A v2 file can hold several accounts, so this spreads rather than
-        // pushing the single credential a v1 file carried.
-        copies.push(...parseOwn(await readFile(path, 'utf8')))
+        // pushing the single credential a v1 file carried. `undefined` — a
+        // file this build cannot parse — is skipped like the absent and the
+        // unreadable: the accounts it may still carry must not read as "no
+        // accounts", which would re-mirror them and re-aggregate their rows.
+        const parsed = parseOwn(await readFile(path, 'utf8'))
+        if (parsed !== undefined) copies.push(...parsed)
       } catch {
         // absent or unreadable — the next candidate is tried
       }
@@ -1304,7 +1390,11 @@ export class TraeCredentialStore {
         // a single refreshed credential as the whole document would silently
         // delete the others. The account whose token was just refreshed
         // replaces its own entry; every other entry is carried over verbatim.
-        const existing = await readFile(ownPath, 'utf8').then(parseOwn, () => [])
+        const existing = await this.readOwnForMerge(ownPath)
+        // A corrupt file we could not quarantine is not a base to write over:
+        // the refreshed token is returned to this request but not persisted,
+        // and the next refresh retries the merge against the intact bytes.
+        if (existing === undefined) return
         const refreshedId = traeAccountId(refreshed)
         const entries = existing.filter(item => traeAccountId(item) !== refreshedId)
         entries.push(refreshed)
