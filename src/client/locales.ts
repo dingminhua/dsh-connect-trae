@@ -242,6 +242,8 @@ export const en = {
   // Bulk context-budget switch (issue #42 side request): the per-model radios stay;
   // these two act on the whole region draft at once, replacing the reporter's
   // 18-clicks-to-Max workflow with one button.
+  'row.contextAllMid': 'Switch all to 500K',
+  'row.contextAllMidHint': 'Sets the DSH context budget of every model in this region whose Max window is at least 500K to the 500K middle step, leaving the rest alone. Half-way between the default window and Max — for when 1M is more than you need. Still a draft — press Save to apply.',
   'row.contextAllMax': 'Switch all to Max',
   'row.contextAllMaxHint': 'Sets the DSH context budget of every model in this region that has a Max window to its Max window at once. Still a draft — press Save to apply. Models without a Max window are left alone.',
   'row.contextAllDefault': 'Restore default context',
@@ -664,6 +666,8 @@ export const zh: Record<TraeSettingsKey, string> = {
   'row.modelsTestEmpty': '请先启用至少一个模型。',
   // 整区上下文批量切换（issue #42 附带需求）：每行的单选照旧，这两个按钮一次作用于
   // 整个面板的草稿——报告者数了 18 个 Max 模型要点 18 次，现在一次搞定。
+  'row.contextAllMid': '整区切到 500K',
+  'row.contextAllMidHint': '把本区所有 Max 档不小于 500K 的模型的 DSH 上下文预算一次性设为 500K 中间档，其余模型不动。这是默认窗口与 Max 之间的半步——觉得 1M 用不上、又嫌默认太小时用。这只是草稿——要按「保存」才生效。',
   'row.contextAllMax': '整区切到 Max',
   'row.contextAllMaxHint': '把本区所有带 Max 档的模型的 DSH 上下文预算一次性设为各自的 Max 档。这只是草稿——要按「保存」才生效。没有 Max 档的模型不会被改动。',
   'row.contextAllDefault': '全部恢复默认上下文',

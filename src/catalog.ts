@@ -1,3 +1,4 @@
+import { contextBudgetOptions } from './context-budget.ts'
 import type { TraeDiscoveredModel, TraeDiscoveredReasoning } from './model-metadata.ts'
 import type { TraeActivityDiscount } from './promo.ts'
 import type { TraeReasoningEffort } from './reasoning.ts'
@@ -630,20 +631,25 @@ export function withChatCallableFunctions(rows: readonly TraeModelInfo[], chatFu
 export type TraeContextBudget = number
 
 /**
- * Apply the saved local budget. Trae advertises two windows per model (dev and
- * Max), so the budget may only switch a model to its own advertised Max value —
- * never to a fabricated number. Everything else keeps the dev window.
+ * Apply the saved local budget. Trae advertises a dev window and a Max window
+ * per model, and the card may also offer the 500K middle step (see
+ * {@link contextBudgetOptions}), so a budget may only switch a model to a
+ * window that model actually offers — never to a fabricated number, and never
+ * to something wider than its Max (a saved 500K for a model later refreshed
+ * down to a 256K Max must fall back, not overflow). Everything else keeps the
+ * dev window.
  */
 export function applyContextBudgets(
   catalog: readonly TraeModelInfo[],
   budgets: Readonly<Record<string, TraeContextBudget | undefined>> = {},
 ): TraeModelInfo[] {
-  return catalog.map(model => ({
-    ...model,
-    ...(model.maxContextWindow !== undefined && budgets[model.id] === model.maxContextWindow
-      ? { contextWindow: model.maxContextWindow }
-      : {}),
-  }))
+  return catalog.map(model => {
+    const budget = budgets[model.id]
+    return {
+      ...model,
+      ...(budget !== undefined && contextBudgetOptions(model).includes(budget) ? { contextWindow: budget } : {}),
+    }
+  })
 }
 
 /** Convert Trae metadata into catalog rows; image input is decided by {@link applyImageSelection}. */

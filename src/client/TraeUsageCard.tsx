@@ -29,6 +29,7 @@ import {
 import type { TraeModelProbeVerdict, TraeModelsTestResponse, TraeWebAccount, TraeWebAccountState, TraeWebCheckinClaim, TraeWebModel, TraeWebUsage } from '../status-paths.ts'
 import type { TraeCreditPosition } from '../status-paths.ts'
 import { providerOfPanel, regionOfPanel, type TraePanel } from '../region.ts'
+import { contextBudgetOptions, TRAE_CONTEXT_BUDGET_MID } from '../context-budget.ts'
 import { filterTraeModels, groupTraeModels, orderTraeModels, scopeTraeModels, type TraeModelView } from '../model-order.ts'
 import { selectTraePromoBadge, type TraePromoKind } from '../promo.ts'
 import { TRAE_PLUGIN_ICON } from './icon.ts'
@@ -1299,6 +1300,27 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
   }
 
   /**
+   * Bulk 500K switch: every model that offers the middle step goes to it, and
+   * every other model is left exactly as configured.
+   *
+   * The reporter-shaped case this serves: a region can hold 19 models with a
+   * 1M Max, and picking the half-way window one radio at a time is 19 clicks.
+   * It writes the literal {@link TRAE_CONTEXT_BUDGET_MID} — the same value the
+   * per-row radio writes — so bulk and per-row land on identical saved state,
+   * and `applyContextBudgets` re-validates it against each model's windows on
+   * every read.
+   */
+  const setAllContextMid = (): void => {
+    editDraft(current => {
+      const next = { ...current.contextBudgets }
+      for (const model of current.models) {
+        if (contextBudgetOptions(model).includes(TRAE_CONTEXT_BUDGET_MID)) next[model.id] = TRAE_CONTEXT_BUDGET_MID
+      }
+      return { ...current, contextBudgets: next }
+    })
+  }
+
+  /**
    * 「恢复默认上下文」 clears every override in this region's draft. Empty
    * dict = every row falls back to its default window (the same state as a
    * region that was never configured), and clearing is what makes the bulk
@@ -1968,28 +1990,26 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
                                         <span>{t('row.modelImage')}</span>
                                       </label>
                                     <fieldset className="dsm-trae-context-budget" aria-label={t('row.contextBudget')}>
-                                      {model.maxContextWindow !== undefined
-                                        ? <label>
+                                      {contextBudgetOptions(model).map(option => {
+                                        // Each radio is one selectable window. A model with no
+                                        // Max window has a single option (its dev window), which
+                                        // stays checked and disabled — the same read-only shape
+                                        // the old two-radio markup produced.
+                                        const selectable = model.maxContextWindow !== undefined
+                                        const checked = (activeContextBudgets[model.id] ?? model.contextWindow) === option
+                                        return (
+                                          <label key={option}>
                                             <input
                                               type="radio"
                                               name={`context-${model.id}`}
-                                              checked={activeContextBudgets[model.id] !== model.maxContextWindow}
-                                              disabled={settingsScope?.getSnapshot().writable !== true || saving}
-                                              onChange={() => { setContextBudget(model.id, model.contextWindow) }}
+                                              checked={checked}
+                                              disabled={!selectable || settingsScope?.getSnapshot().writable !== true || saving}
+                                              onChange={() => { setContextBudget(model.id, option) }}
                                             />
-                                            <span>{formatCapacity(model.contextWindow, t('row.modelUnknown'))}</span>
+                                            <span>{formatCapacity(option, t('row.modelUnknown'))}</span>
                                           </label>
-                                        : null}
-                                      <label>
-                                        <input
-                                          type="radio"
-                                          name={`context-${model.id}`}
-                                          checked={model.maxContextWindow === undefined || activeContextBudgets[model.id] === model.maxContextWindow}
-                                          disabled={model.maxContextWindow === undefined || settingsScope?.getSnapshot().writable !== true || saving}
-                                          onChange={() => { setContextBudget(model.id, model.maxContextWindow) }}
-                                        />
-                                        <span>{formatCapacity(model.maxContextWindow ?? model.contextWindow, t('row.modelUnknown'))}</span>
-                                      </label>
+                                        )
+                                      })}
                                     </fieldset>
                                     </div>
                                   </div>
@@ -2033,6 +2053,15 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
                           catalog, and a hidden row must not be skipped by a
                           button whose label promises otherwise. */}
                       <div className="dsm-trae-context-bulk">
+                        <button
+                          type="button"
+                          className="dsm-btn dsm-btn-outline"
+                          disabled={busy || saving || settingsScope?.getSnapshot().writable !== true || !visibleModels.some(model => contextBudgetOptions(model).includes(TRAE_CONTEXT_BUDGET_MID))}
+                          title={t('row.contextAllMidHint')}
+                          onClick={setAllContextMid}
+                        >
+                          {t('row.contextAllMid')}
+                        </button>
                         <button
                           type="button"
                           className="dsm-btn dsm-btn-outline"

@@ -166,7 +166,9 @@ Trae does not serve this model under the SOLO function the request used
 
 模型卡上的「最大输出」来自 Trae `get_detail_param` 的 `model_detail_list[].max_tokens` —— 上游**是**发布这个值的（CN 实测 80/80 config 都带）。4.0.1 起它随目录合并一路带到卡片、`/models/refresh` 与 DSH 模型注册；此前合并层漏传了这个字段，整区模型全部显示空白（issue #42，诊断见 `docs/ISSUE42_DIAGNOSIS.md`）。**仍然空白的行是诚实的**：目录里有、但 SOLO 名单里没有对应 config 的模型（上面那 3 个 TraeCode 通道行）拿不到任何候选值，宁可空白也不编一个上限。这个值是元数据，插件不把它写进请求体（输出上限由 Trae 服务端决定）。
 
-上下文窗口在 Trae 公布的默认（dev）档与 Max 档之间二选一，按面板逐模型存成 `contextBudgets`。想整区一次切换：模型管理区有「**整区切到 Max**」（给每个带 Max 档的行写入其 `maxContextWindow`，没有 Max 档的行不动）和「**全部恢复默认上下文**」（清空本区预算）两个按钮，作用在草稿上、按「保存」生效，与逐行单选落盘的结果完全一致（issue #42 附带需求——CN 有 18 个 Max 模型，以前要点 18 次）。
+上下文窗口在 Trae 公布的默认（dev）档与 Max 档之间选，**4.4.8 起对宽窗模型多一个 500K 中间档**，按面板逐模型存成 `contextBudgets`。500K **不是**上游公布的窗口，是本地的半步：dev 常见 200K/256K/272K，Max 常见 1M，从默认直接跳到 Max 是 5 倍，而 1M 的计费并不是每个会话都用得上。所以它是**有门槛的**：只有当该模型的 Max ≥ 500K、且 500K 确实比 dev 宽、又确实比 Max 窄时才出现——`applyContextBudgets` 用**同一条规则**（`contextBudgetOptions`）校验，落盘值不是该模型可选窗口就一律退回 dev 档，绝不会把模型撑到它没有的窗口（比如某模型后来被上游把 Max 调到 256K，旧的 500K 会安静地失效而不是溢出）。
+
+想整区一次切换：模型管理区有「**整区切到 500K**」（给本区所有 Max ≥ 500K 的行写入 500K，其余不动）、「**整区切到 Max**」（给每个带 Max 档的行写入其 `maxContextWindow`，没有 Max 档的行不动）和「**全部恢复默认上下文**」（清空本区预算）三个按钮，作用在草稿上、按「保存」生效，与逐行单选落盘的结果完全一致（issue #42 附带需求——CN 有 18 个 Max 模型，以前要点 18 次）。
 
 ## 安装
 
