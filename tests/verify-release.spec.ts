@@ -269,4 +269,63 @@ describe('verify-release: preconditions are distinguished from verdicts', () => 
     expect(result.stdout).toContain('registry 上没有 9.9.9')
     expect(result.code).toBe(2)
   })
+
+  it('never rebuilds inside the working tree', async () => {
+    // 2026-10-24：这条守卫是那次真实事故留下的。
+    //
+    // 开发者常态是把 bundle 以**软链**装进 profile（`node_modules/dsh-connect-trae
+    // -> <本仓库>`），于是运行中的 DSH 宿主服务的正是本仓库的 `lib/` 字节。而这个
+    // 脚本原本在**工作树里**重建 `lib/`（`npm run build`，`cwd: repo`）来比对
+    // 确定性——那等于当着一个活着的宿主的面改写它正在服务的字节：宿主重新 import
+    // 客户端 bundle，渲染进程在 14:40:08 / 14:41:01 / 14:42:16 连崩三次
+    // （EXC_BREAKPOINT/SIGTRAP），最后要人工重启应用。
+    //
+    // 所以重建必须在**临时副本**里做：脚本从 tag 拉一个 worktree，在那里重建，
+    // 工作树的 `lib/` 一个字节都不动。
+    //
+    // 变异验证（写在这里，免得以后有人改回去）：把重建改回 `cwd: repo`（工作树），
+    // 本例立刻变红——因为 fixture 的 build 会真的写 `lib/`。
+    const { root, env } = await fixtureRepo(
+      { 'README.md': '# ok\n' },
+      // The published package carries a `lib/` product, so the rebuild has
+      // something to compare against.
+      { 'README.md': '# ok\n', 'lib/index.js': 'BUILT BY THE BUILD\n' },
+    )
+    // A build that actually WRITES `lib/`, like the real one does. The shared
+    // shim treats `run build` as a no-op, so without this the mutation below
+    // (building in the working tree instead of a copy) would change nothing
+    // and the guard would pass for the wrong reason.
+    const shimDir = join(root, '.shim')
+    await writeFile(join(shimDir, 'npm-shim.mjs'), [
+      `import { cp, writeFile } from 'node:fs/promises'`,
+      "const [hook, ...rest] = process.argv.slice(2)",
+      "if (hook === 'view') {",
+      "  if (rest[1] === 'versions') { console.log(JSON.stringify(['9.9.9'])); process.exit(0) }",
+      "  if (rest[1] === 'dist-tags.latest') { console.log('9.9.9'); process.exit(0) }",
+      '}',
+      "if (hook === 'pack') {",
+      "  const version = rest[0].split('@')[1]",
+      "  await cp(process.env.SERVED, 'package', { recursive: true })",
+      "  await writeFile(`dsh-connect-trae-${version}.tgz`, '')",
+      '  process.exit(0)',
+      '}',
+      "if (hook === 'run' && rest[0] === 'build') {",
+      '  try { await cp(`${process.env.SERVED}/lib`, `lib`, { recursive: true }) } catch {}',
+      '  process.exit(0)',
+      '}',
+      'process.exit(0)',
+      '',
+    ].join('\n'))
+    // A `lib/` only a local build could have produced: not in git (`lib/` is
+    // gitignored), and the bytes are a sentinel.
+    await mkdir(join(root, 'lib'), { recursive: true })
+    const sentinel = Buffer.from('LOCAL BUILD — MUST NOT BE TOUCHED\n')
+    await writeFile(join(root, 'lib', 'index.js'), sentinel)
+    const before = await readFile(join(root, 'lib', 'index.js'))
+
+    await runScript(root, [], env)
+
+    const after = await readFile(join(root, 'lib', 'index.js'))
+    expect(after.equals(before)).toBe(true)
+  })
 })

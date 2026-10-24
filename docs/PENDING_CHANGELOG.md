@@ -18,12 +18,38 @@
 
 ## 未发布
 
+### 修复
+
+- **发布核验不再重建工作树，宿主不再被核验动作掀翻**（`fix(scripts)`）。
+  - **事故**（2026-10-24 14:40:08 / 14:41:01 / 14:42:16）：桌面版渲染进程连崩三次
+    （`EXC_BREAKPOINT`/`SIGTRAP`），应用白屏，最后要人工重启。取证在
+    `~/Library/Logs/DiagnosticReports/DeepSeek Harness Helper (Renderer)-*.ips`。
+  - **成因**：开发者常态是把 bundle 以**软链**装进 profile
+    （`node_modules/dsh-connect-trae -> <本仓库>`），于是运行中的 DSH 宿主服务的正是本仓库
+    `lib/` 的字节；而 `scripts/verify-release.mjs` 的第 4 步（确定性重建比对）原本
+    **在工作树里**跑 `npm run build`——等于当着活着的宿主改写它正在服务的客户端 bundle，
+    宿主重新 import，渲染进程崩。
+  - **修法**：重建改到**临时 worktree**（`git worktree add --detach <tag>` + 软链
+    `node_modules`）里做，工作树的 `lib/` 一个字节都不动；`git worktree remove` 在收尾时
+    清理。用 worktree 而不是 `git archive | tar -x`，是因为测试机上的 PATH 上有**假的
+    `tar`**（发布测试用它冒充 registry），走 tar 会解出错的树。
+  - **守卫**：`tests/verify-release.spec.ts` 新增一例「工作树不被重建」。变异验证：把重建
+    改回 `cwd: repo` → 该例立刻变红（fixture 的 build 会真的写 `lib/`）。
+- **构建前会提醒「这次会改写正在被宿主服务的字节」**（`chore(scripts)`）。
+  新增 `scripts/warn-live-host.mjs`，接到 `prebuild` 钩子：检查「有没有 profile 软链到本仓库」
+  且「有没有活着的宿主进程」，两者同时成立就打印警告。**它从不失败构建**——热更新的正当
+  流程必须还能走；崩了重启应用即可。
+
 ### 文档
 
+- `DEVELOPMENT.md` 新增首节「危险动作：不要在宿主运行时重建 `lib/`」：讲清软链装法、
+  事故时间线与三种场景下该怎么做（不开了随便构建 / 只验证发布用 `verify:release` /
+  要热更新就接受代价 / 发版前先关宿主）。
+- `RELEASING.md` 第 8 步补一句：第 4 步的重建在临时 worktree 里做，理由与对策指向上面那节。
 - **在核心位置写明「不做插件之间的联动」这条边界**。
   - `README.md` 开头加一条醒目的边界声明，并新增 `## 与其它插件的关系` 一节（英文版同步）：
     不共享状态、不做跨插件的账号/额度调度、不协商槽位、不共享开关，以及立这条边的理由。
   - `src/index.ts` 的**模块头**加 SCOPE BOUNDARY 注释：本模块只与 DSH Host 和 Trae 上游
     两方对话，不读写任何其它插件的文件或状态。
-  - 补一条区分：同一族插件之间**互相学习**（workbuddy 的教训写进本仓库的注释与测试），
+  - 补一条区分：同一族插件之间**互相学习**（workbuddy 的教训被写进本仓库的注释与测试），
     但**不互相调用**——学习是编译期的事，联动是运行时的事。

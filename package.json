@@ -52,7 +52,8 @@
     "verify:release": "node scripts/verify-release.mjs",
     "card:shot": "vitest run --config vitest.card.config.ts",
     "promo:shot": "vitest run --config vitest.card.config.ts -t \"promo shot\"",
-    "panels:shot": "vitest run --config vitest.card.config.ts -t \"panels shot\""
+    "panels:shot": "vitest run --config vitest.card.config.ts -t \"panels shot\"",
+    "prebuild": "node scripts/warn-live-host.mjs"
   },
   "dsh": {
     "bundle": {

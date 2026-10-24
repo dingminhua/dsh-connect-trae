@@ -1,5 +1,28 @@
 # dsh-connect-trae 开发说明
 
+## 危险动作：不要在宿主运行时重建 `lib/`
+
+**先读这一节，再跑 `pnpm run build`。**
+
+开发常态是把本插件以**软链**装进 profile（`~/.dsh/profiles/<profile>/node_modules/dsh-connect-trae -> <本仓库>`），
+于是**运行中的 DSH 宿主服务的正是本仓库 `lib/` 的字节**。在这里重建 `lib/`，等于当着一个活着的
+宿主的面改写它正在服务的客户端 bundle：宿主会重新 import，**渲染进程可能直接崩**。
+
+真实事故（2026-10-24 14:40:08 / 14:41:01 / 14:42:16）：桌面版渲染进程连崩三次
+（`EXC_BREAKPOINT` / `SIGTRAP`），应用白屏，最后要人工重启。取证在
+`~/Library/Logs/DiagnosticReports/DeepSeek Harness Helper (Renderer)-*.ips`。
+
+| 场景 | 行为 |
+| --- | --- |
+| 宿主**没开** | 随便构建 |
+| 宿主**开着**，你只是要验证发布内容 | 用 `pnpm run verify:release` —— 它在**临时 worktree** 里重建，不碰工作树 |
+| 宿主**开着**，你要热更新自己的改动 | 接受崩溃风险；崩了重启应用即可。`prebuild` 钩子会先提醒你 |
+| 宿主**开着**，你要发版 | 先关掉宿主（或用实体副本安装），再 `npm publish` —— `prepack` 也会重建 |
+
+`scripts/warn-live-host.mjs` 是这条风险的**告示牌**：`pnpm run build` 前会检查「有没有 profile
+软链到本仓库」且「有没有活着的宿主进程」，两者同时成立就打印警告。它**从不失败构建**——
+热更新的正当流程必须还能走。
+
 ## 项目目标
 
 本项目旨在实现一个可正常工作的 DSH Trae 接入版本。

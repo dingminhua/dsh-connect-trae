@@ -32,7 +32,7 @@
 
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { readFile, rm, mkdtemp } from 'node:fs/promises'
+import { readFile, rm, mkdtemp, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, relative, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -360,15 +360,46 @@ if (!skipNpm) {
 // script rebuilds ONCE and compares — and says plainly that this is a rebuild
 // comparison, not a source comparison, so nobody reads more into a pass than it
 // proves.
+//
+// THE REBUILD HAPPENS IN A THROWAWAY COPY, NEVER IN THE WORKING TREE.
+//
+// A profile that installs this bundle by SYMLINK (the normal developer setup:
+// `node_modules/dsh-connect-trae -> <this repo>`) makes the running DSH host
+// serve THIS repository's `lib/` bytes. Rebuilding in place therefore rewrites
+// the client bundle under a live host, and the host re-imports it. On
+// 2026-10-24 that is not theoretical: `verify:release` rebuilt `lib/` while the
+// desktop app was open, and the app's renderer process died three times in two
+// minutes (EXC_BREAKPOINT/SIGTRAP, 14:40:08 / 14:41:01 / 14:42:16) before the
+// app had to be restarted by hand. A verification run must never be able to do
+// that, so the rebuild is done from the TAG's source in a temporary directory,
+// with `node_modules` symlinked back to this repo's (pnpm's store already holds
+// every dependency; re-installing would be slow and would touch the network).
+// The bytes the live host is serving are then never written at all.
 // ---------------------------------------------------------------------------
 
 if (!skipNpm) {
   const buildOutputs = entries.filter(entry => entry.startsWith('lib/'))
+  let buildDir
   try {
-    await run('npm', ['run', 'build'], { cwd: repo, maxBuffer: 64 * 1024 * 1024 })
+    buildDir = await mkdtemp(join(tmpdir(), 'trae-verify-build-'))
+    // The tag's source, exactly as it was published — not the working tree,
+    // which may already carry commits made after the tag.
+    //
+    // `git worktree` rather than `git archive | tar -x`: the archive route
+    // needs a `tar` on PATH, and on a test machine PATH is a SHIM (the
+    // release tests fake `tar` to serve a published package), so the
+    // extraction would silently extract the wrong tree. A worktree is one git
+    // command, needs no external tool, and cannot be intercepted.
+    await run('git', ['worktree', 'add', '--detach', '--force', buildDir, tag], { cwd: repo, maxBuffer: 64 * 1024 * 1024 })
+    // The dependencies are shared, not copied: pnpm's store already has them,
+    // and a symlink keeps the rebuild fast and offline. Node resolves through
+    // the symlink to the real packages, so the build sees the same tree a
+    // developer sees.
+    await symlink(join(repo, 'node_modules'), join(buildDir, 'node_modules'), 'dir').catch(() => undefined)
+    await run('npm', ['run', 'build'], { cwd: buildDir, maxBuffer: 64 * 1024 * 1024 })
     for (const path of buildOutputs.sort()) {
       const published = publishedBytes.get(path)
-      const rebuilt = await readFile(join(repo, path)).catch(() => undefined)
+      const rebuilt = await readFile(join(buildDir, path)).catch(() => undefined)
       if (published === undefined) {
         record(`构建产物 ${path}`, false, '未从发布包中读到该文件')
         continue
@@ -380,11 +411,18 @@ if (!skipNpm) {
       record(
         `构建产物 ${path}`,
         sha256(published) === sha256(rebuilt),
-        '由 tag 源码重建后一致（重建比对，非源码比对）',
+        '由 tag 源码重建后一致（重建比对，非源码比对；在临时副本中重建，不触碰工作树）',
       )
     }
   } catch (error) {
     record('由 tag 源码重建成败', false, error instanceof Error ? error.message : String(error))
+  } finally {
+    if (buildDir !== undefined) {
+      // Remove the worktree through git first (it leaves metadata in
+      // .git/worktrees), then make sure the directory is gone either way.
+      await run('git', ['worktree', 'remove', '--force', buildDir], { cwd: repo }).catch(() => undefined)
+      await rm(buildDir, { recursive: true, force: true }).catch(() => undefined)
+    }
   }
 }
 
