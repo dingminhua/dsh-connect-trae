@@ -88,6 +88,31 @@ export interface TraeSoloRemoteCatalogOptions {
    * of official-host-first.
    */
   log?: (message: string, detail?: unknown) => void
+  /**
+   * Extra directory hosts whose rows are UNIONED into the primary answer.
+   *
+   * The base loop below stops at the FIRST host that answers non-empty. That is
+   * the right rule for a FALLBACK chain (one host, mirrored), but it cannot
+   * express "these hosts serve DIFFERENT pools" — and the primary host
+   * answering successfully is exactly the case where another host's models
+   * stay invisible. So these hosts are read SEPARATELY and merged, never added
+   * as another candidate base: a candidate is skipped precisely when the
+   * primary succeeds, which is always in the scenario that fails today.
+   *
+   * Measured 2026-10-24 on a live CN tenant credential:
+   * `solo.trae.cn` (the primary) answered 36 ids and does NOT list
+   * `DeepSeek-V4.1-Flash-1017`, while `console.enterprise.trae.cn` answered 24
+   * and DOES list it (issue #46). Neither host is a superset of the other: 19
+   * of the primary's ids are absent from the tenant answer, so REPLACING the
+   * primary would trade one missing model for nineteen — a union is the only
+   * shape that loses nothing.
+   *
+   * The primary answer wins every id collision, compared case-insensitively, and
+   * a colliding extra row is dropped rather than capacity-competed: a
+   * `preferStrongerRow` contest could rename a model the user has already saved
+   * in `enabledModelIds`, silently breaking the saved selection.
+   */
+  unionBaseUrls?: readonly string[]
 }
 
 /**
@@ -106,6 +131,18 @@ export interface TraeSoloRemoteCatalogOptions {
 export function traeSoloRemoteFallbackBases(region: TraeRegion, officialBase: string): string[] {
   const backupBase = `${REGION_GATEWAYS[region].chat}/api/remote/v1`
   return backupBase === officialBase ? [] : [backupBase]
+}
+
+/**
+ * Case-folded identity for a directory id.
+ *
+ * A local copy of `catalog.ts`'s private `displayKey`: the two hosts of the
+ * union spell the same model differently (they disagree on at least 3 ids), and
+ * ids that differ only by case MUST be treated as the same model — otherwise a
+ * union would list one model twice under two spellings.
+ */
+function directoryKey(id: string): string {
+  return id.trim().toLowerCase()
 }
 
 /**
@@ -268,9 +305,12 @@ export class TraeSoloRemoteCatalogClient {
    */
   private static readonly OFFICIAL_RETRY_MS = 5 * 60_000
 
+  private readonly unionBaseUrls: readonly string[]
+
   constructor(private readonly options: TraeSoloRemoteCatalogOptions) {
     this.fetchImpl = options.fetchImpl ?? fetch
     this.baseUrl = options.baseUrl
+    this.unionBaseUrls = options.unionBaseUrls ?? []
   }
 
   private async headers(region: TraeRegion): Promise<Record<string, string>> {
@@ -354,12 +394,81 @@ export class TraeSoloRemoteCatalogClient {
         this.officialRetryAtMs = 0
       }
       this.lastSuccessfulBase = base
-      return models
+      return await this.unionWithExtraHosts(region, headers, models, signal)
     }
     // An empty answer is the more informative reason when every base that
     // answered said "nothing here"; otherwise report the transport/HTTP error.
     if (emptyError !== undefined) throw emptyError
     throw lastError instanceof Error ? lastError : new Error(String(lastError))
+  }
+
+  /**
+   * Union the extra directory hosts' rows into the primary answer (issue #46).
+   *
+   * The base loop above returns on the FIRST host that answers non-empty, which
+   * is correct for a FALLBACK chain but cannot express "these hosts serve
+   * different pools" — the primary host answering is exactly the case where the
+   * extra host's models would stay invisible forever. Hence a separate read and
+   * a merge, not another candidate base (see `unionBaseUrls`).
+   *
+   * Every extra host is BEST-EFFORT: transport failure, non-2xx, an unreadable
+   * body and an empty answer are each logged and skipped. Only an aborted
+   * `signal` propagates — that is the caller cancelling, not a host being
+   * unhelpful. Failing here must never fail a refresh the primary host already
+   * satisfied, which is why a broken extra host costs models, not the catalog.
+   */
+  private async unionWithExtraHosts(
+    region: TraeRegion,
+    headers: Record<string, string>,
+    primary: TraeDiscoveredModel[],
+    signal?: AbortSignal,
+  ): Promise<TraeDiscoveredModel[]> {
+    if (this.unionBaseUrls.length === 0) return primary
+    const functions = TRAE_REMOTE_DIRECTORY_FUNCTIONS[region].join(',')
+    // The PRIMARY spelling is kept on every collision, so a saved
+    // `enabledModelIds` entry whose case matches this host keeps matching.
+    const byKey = new Map<string, TraeDiscoveredModel>()
+    for (const model of primary) byKey.set(directoryKey(model.id), model)
+    for (const base of this.unionBaseUrls) {
+      // Already read this refresh (or a previous one) — do not ask twice.
+      if (base === this.lastSuccessfulBase) continue
+      let response: Response
+      try {
+        response = await this.fetchImpl(`${base}/models?functions=${functions}`, {
+          headers,
+          signal: signal ?? AbortSignal.timeout(30_000),
+        })
+      } catch (error) {
+        if (signal?.aborted) throw error
+        this.options.log?.(`model directory union host ${base} was unreachable; its models are missing from this refresh`, { base, error: String(error) })
+        continue
+      }
+      if (!response.ok) {
+        this.options.log?.(`model directory union host ${base} answered HTTP ${response.status}; its models are missing from this refresh`, { base })
+        continue
+      }
+      let extra: TraeDiscoveredModel[]
+      try {
+        const json = await response.json() as { data?: { list?: { function?: string; models?: unknown[] }[] } }
+        extra = this.collectModels(region, json.data?.list ?? [])
+      } catch (error) {
+        this.options.log?.(`model directory union host ${base} answered a body that could not be read; its models are missing from this refresh`, { base, error: String(error) })
+        continue
+      }
+      let added = 0
+      for (const model of extra) {
+        const key = directoryKey(model.id)
+        if (byKey.has(key)) continue
+        byKey.set(key, model)
+        added += 1
+      }
+      const collided = extra.length - added
+      this.options.log?.(
+        `model directory union host ${base} contributed ${added} model(s) the primary directory did not list${collided > 0 ? ` (${collided} collided and kept the primary spelling)` : ''}`,
+        { base, served: extra.length, added },
+      )
+    }
+    return [...byKey.values()]
   }
 
   /**
