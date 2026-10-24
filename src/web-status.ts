@@ -16,6 +16,7 @@ import { isTraeAccountId, type TraeCredentialStore } from './auth.ts'
 import type { TraeModelInfo } from './catalog.ts'
 import type { TraeUsageClient } from './usage.ts'
 import type { TraeRawDiagnostic } from './raw-diagnostic.ts'
+import type { TraeWebQuarantine } from './status-paths.ts'
 import { regionOfPanel, type TraePanel, type TraeRegion } from './region.ts'
 import { effectiveMembersOf, outcomeOfVerdict, resolveTargetModel, rankPool, type TraePoolAccount, type TraePoolMember } from './account-pool.ts'
 import type { TraePoolCheckinRow, TraePoolTestRow } from './account-pool-run.ts'
@@ -552,6 +553,21 @@ export async function traeWebUsage(
    */
   const accounts = (await store.accounts())
     .filter(account => panel !== 'enterprise' || account.enterprise)
+  /**
+   * Copies that were found unreadable and moved aside (4.4.6+).
+   *
+   * Read ONCE per document and never allowed to fail it: a notice is a fact
+   * about the user's disk, and a card that failed to load would teach the user
+   * nothing about it. It is also the one piece of the document that explains a
+   * MISSING ACCOUNT, so it belongs on both shapes — the signed-out one
+   * especially, because that is where a lost copy leaves the user (issue #56).
+   *
+   * The scan is a directory listing beside the plugin's OWN files: cheap, and
+   * it reads nothing but file names and sizes.
+   */
+  const quarantined = await Promise.resolve()
+    .then(() => store.quarantinedCopies())
+    .catch(() => [] as readonly TraeWebQuarantine[])
   const authStatus = await store.status()
   if (authStatus.state !== 'signed-in') {
     // A bare "signed out" is undiagnosable on a machine whose layout differs
@@ -563,6 +579,7 @@ export async function traeWebUsage(
       status: 'signed-out',
       accounts,
       enabled,
+      quarantined,
       searched: failures.map(failure => ({
         path: failure.path,
         edition: failure.edition,
@@ -589,7 +606,7 @@ export async function traeWebUsage(
     // Account selection must remain available even when the selected token is
     // expired or its refresh request fails. Report that as account-level status
     // instead of converting the entire route into HTTP 500.
-    return { status: 'signed-out', accounts, enabled, message: safeMessage(error) }
+    return { status: 'signed-out', accounts, enabled, quarantined, message: safeMessage(error) }
   }
   // Only user-facing identity and expiry cross to the browser. Token material
   // and stable user IDs stay on the Host. The requested panel drives which
@@ -609,6 +626,9 @@ export async function traeWebUsage(
     accounts,
     models: deps.displayModels(panel).map(model => ({ ...model, ...model.input === undefined ? {} : { input: [...model.input] } })),
     enabledModelIds: [...deps.enabledModelIds(panel)],
+    // The quarantine notice rides along with every signed-in document: it is
+    // the one line that explains why an account the user remembers is gone.
+    quarantined,
     ...deps.rawDiagnostic === undefined ? {} : { rawChat: deps.rawDiagnostic(panel) },
   }
   // The pool is assembled LAST and never allowed to fail this document: it is

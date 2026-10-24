@@ -921,6 +921,30 @@ export interface TraeWebSearchPath {
 }
 
 /**
+ * A plugin-owned credential copy that was found unreadable and moved aside.
+ *
+ * Since 4.4.6 such a copy is quarantined (renamed aside, bytes intact)
+ * instead of being merged over, because merging over it would erase every
+ * account it carried. The copy then exists ONLY in that quarantine file — so
+ * the card says so, instead of the user discovering it by noticing accounts
+ * missing (issue #56).
+ *
+ * Only facts about the plugin's own file cross to the browser: its path, the
+ * size of the quarantine copy, and how many accounts it still shows. No token
+ * material, and no path outside DSH's own home.
+ */
+export interface TraeWebQuarantine {
+  /** The live path the copy had before it was moved aside. */
+  file: string
+  /** The quarantine copy's path; its name carries the moment it was taken. */
+  quarantinedAs: string
+  /** Size of the quarantined copy in bytes (`0` when it could not be read). */
+  bytes: number
+  /** Accounts the copy still shows, when it could be read as JSON. */
+  accounts?: number
+}
+
+/**
  * Peel ONE `{get(): T}` live reference, the shape DSH 0.1.7 delivers a
  * volatile-marked settings field as (see {@link unwrapVolatileDeep}).
  */
@@ -1274,6 +1298,12 @@ export type TraeWebUsage =
     accounts: readonly TraeWebAccount[]
     message?: string
     searched?: readonly TraeWebSearchPath[]
+    /**
+     * Copies that were found unreadable and moved aside. Present on BOTH
+     * shapes on purpose: the signed-out screen is exactly where a user lands
+     * after a lost copy, so that is where the notice has to be.
+     */
+    quarantined?: readonly TraeWebQuarantine[]
     enabled?: boolean
   }
   | {
@@ -1295,6 +1325,12 @@ export type TraeWebUsage =
     accounts: readonly TraeWebAccount[]
     models: readonly TraeWebModel[]
     enabledModelIds: readonly string[]
+    /**
+     * Copies that were found unreadable and moved aside. Present on BOTH
+     * shapes on purpose: the signed-out screen is exactly where a user lands
+     * after a lost copy, so that is where the notice has to be.
+     */
+    quarantined?: readonly TraeWebQuarantine[]
     rawChat?: {
       state: 'disabled' | 'unchecked' | 'available' | 'protocol-gated' | 'authentication' | 'credit' | 'rate' | 'transport' | 'server'
       checkedAtMs?: number

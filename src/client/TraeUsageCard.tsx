@@ -2191,6 +2191,19 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
                                 </span>
                           })()}
                         </div>
+                        <div className="dsm-trae-diag-row">
+                          <span className="dsm-trae-diag-label">{t('row.diagQuarantine')}</span>
+                          {/* A copy that was found unreadable is KEPT, renamed
+                              aside — so the account it held is still on disk,
+                              just not where the plugin looks any more. That is
+                              the answer to "where did my account go", and it
+                              belongs in the panel meant to be quoted. */}
+                          {status.quarantined === undefined || status.quarantined.length === 0
+                            ? <span className="dsm-trae-diag-value">{t('row.diagQuarantineNone')}</span>
+                            : <span className="dsm-trae-diag-value dsm-trae-diag-bad dsm-trae-diag-mono">
+                                {status.quarantined.map(item => item.quarantinedAs).join(' · ')}
+                              </span>}
+                        </div>
                       </div>
                       <p className="dsm-trae-diag-hint">{t('row.diagHint')}</p>
                     </>}
@@ -2206,6 +2219,31 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
               {status.status === 'signed-out' && !loading
                 ? <>
                   <p className="dsm-trae-usage-text">{status.message ?? t('row.signedOutHint')}</p>
+                  {/* A quarantined copy is the ONE explanation that fits the
+                      state a user lands in after an account went missing: the
+                      signed-out screen is exactly where issue #56's reporter
+                      was, so the notice belongs here and not only in the
+                      diagnostics panel (which a signed-out user never sees). */}
+                  {status.quarantined && status.quarantined.length > 0
+                    ? <details className="dsm-trae-quarantine" open>
+                      <summary>{t('row.quarantineTitle')} ({status.quarantined.length})</summary>
+                      <p className="dsm-trae-quarantine-hint">{t('row.quarantineHint')}</p>
+                      <ul className="dsm-trae-quarantine-list">
+                        {status.quarantined.map(item => (
+                          <li key={item.quarantinedAs}>
+                            <code>{item.quarantinedAs}</code>
+                            <span className="dsm-trae-quarantine-reason">
+                              {item.accounts === undefined
+                                ? t('row.quarantineAccountsUnknown')
+                                : t('row.quarantineAccounts', { count: item.accounts })}
+                              {' · '}
+                              {t('row.quarantineBytes', { bytes: item.bytes })}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
+                    : null}
                   {status.searched && status.searched.length > 0
                     ? <details className="dsm-trae-searched">
                       <summary>{t('row.searchedTitle')} ({status.searched.length})</summary>

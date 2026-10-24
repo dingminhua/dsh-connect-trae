@@ -1,6 +1,6 @@
-import { copyFile, readFile, rename, rm, stat } from 'node:fs/promises'
+import { copyFile, readFile, readdir, rename, rm, stat } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
-import { join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { withFileLock, writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
 import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
 import {
@@ -135,6 +135,35 @@ export interface TraeCandidateFailure {
   source: TraeCredentialSource
   reason: 'missing' | 'unreadable' | 'invalid'
   message?: string
+}
+
+/**
+ * A plugin-owned copy that was found UNREADABLE and therefore moved aside.
+ *
+ * Since 4.4.6 a copy this build cannot parse is never merged over: it is
+ * renamed to `<file>.corrupt-<stamp>` (bytes intact, recoverable) and the merge
+ * restarts from a clean file. That trade — a quarantined copy instead of a
+ * silently emptied one — is only fair if the USER can see it happened, because
+ * the accounts the copy carried are, from that moment on, only in the
+ * quarantine file.
+ *
+ * This notice is what makes that visible: the card's diagnostics panel shows
+ * it, and so does the signed-out screen — which is exactly the state a user
+ * lands in after the loss (issue #56).
+ */
+export interface TraeQuarantineNotice {
+  /** The live path the copy had before it was moved aside. */
+  file: string
+  /** The quarantine copy's full path; its name carries the moment it was taken. */
+  quarantinedAs: string
+  /** Size of the quarantined copy in bytes (`0` when it could not be read). */
+  bytes: number
+  /**
+   * How many accounts the quarantined copy held, when it could still be read
+   * as JSON. A copy quarantined for being TORN cannot be counted, and this is
+   * then absent rather than guessed.
+   */
+  accounts?: number
 }
 
 /** Host used for CLI tokens, which carry no host claim of their own. */
@@ -381,6 +410,31 @@ async function quarantineCorruptOwn(path: string): Promise<boolean> {
 async function writeOwn(path: string, credentials: readonly TraeCredential[]): Promise<void> {
   const document = { version: OWN_VERSION, credentials: credentials.map(credential => ({ ...credential })) }
   await writeFileAtomic(path, `${JSON.stringify(document, null, 2)}\n`, { mode: 0o600, dirMode: 0o700 })
+}
+
+/**
+ * How many accounts a quarantined copy still shows, when it can be read at all.
+ *
+ * A copy is quarantined because this build could not PARSE it — but not every
+ * unparseable copy is unreadable: a file whose JSON is intact yet carries a
+ * version this build does not know still parses as JSON, and its account rows
+ * are then countable. That number is what tells the user whether one account
+ * or five went missing, so it is worth the attempt.
+ *
+ * A torn copy yields nothing: the count is then ABSENT rather than guessed,
+ * because a wrong count is worse than no count.
+ */
+function countStoredAccounts(text: string): number | undefined {
+  try {
+    const parsed: unknown = JSON.parse(text)
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return undefined
+    const document = parsed as { credential?: unknown, credentials?: unknown }
+    if (Array.isArray(document.credentials)) return document.credentials.length
+    if (document.credential !== undefined) return 1
+    return undefined
+  } catch {
+    return undefined
+  }
 }
 
 /** The key Trae stores the per-user region map under, beside the login itself. */
@@ -1364,6 +1418,59 @@ export class TraeCredentialStore {
       }
     }
     return copies
+  }
+
+  /**
+   * The copies that were found unreadable and moved aside.
+   *
+   * SCANNED, not remembered: the quarantine file is itself the durable
+   * record (its name carries the moment it was taken), so the plugin does not
+   * keep a second, parallel ledger that could disagree with the disk. The
+   * notice therefore appears exactly as long as the evidence does — and
+   * disappears when the user deletes the quarantined copy, which is what
+   * "I have dealt with it" means.
+   *
+   * A notice is a FACT about the user's disk, never about their credentials:
+   * it names a path, a size and a count, and the path is the one the plugin
+   * owns (inside DSH's own home), never a Trae application directory.
+   */
+  async quarantinedCopies(): Promise<TraeQuarantineNotice[]> {
+    const notices: TraeQuarantineNotice[] = []
+    const seen = new Set<string>()
+    for (const path of this.ownCandidates()) {
+      const directory = dirname(path)
+      const prefix = `${basename(path)}.corrupt-`
+      let entries: string[]
+      try {
+        entries = await readdir(directory)
+      } catch {
+        // The directory is unreadable or gone: there is nothing to report.
+        continue
+      }
+      for (const name of entries) {
+        if (!name.startsWith(prefix)) continue
+        const quarantinedAs = join(directory, name)
+        if (seen.has(quarantinedAs)) continue
+        seen.add(quarantinedAs)
+        let bytes = 0
+        let accounts: number | undefined
+        try {
+          const text = await readFile(quarantinedAs, 'utf8')
+          bytes = Buffer.byteLength(text)
+          accounts = countStoredAccounts(text)
+        } catch {
+          // Unreadable now (permissions, a race with the user's editor): the
+          // path is still worth reporting, the size is not.
+        }
+        notices.push({
+          file: path,
+          quarantinedAs,
+          bytes,
+          ...accounts === undefined ? {} : { accounts },
+        })
+      }
+    }
+    return notices
   }
 
   private async refreshNow(credential: TraeCredential): Promise<TraeCredential> {

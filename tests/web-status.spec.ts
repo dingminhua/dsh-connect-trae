@@ -44,9 +44,59 @@ describe('traeWebUsage', () => {
       async accounts() { return [] },
       async status() { return { state: 'signed-out' } },
       async diagnose() { return { tried: [], failures: [] } },
+      async quarantinedCopies() { return [] },
     }) as unknown as ReturnType<TraeUsageRouteOptions['store']>
     const result = await traeWebUsage(deps, 'cn')
-    expect(result).toEqual({ status: 'signed-out', accounts: [], enabled: true, searched: [] })
+    expect(result).toEqual({ status: 'signed-out', accounts: [], enabled: true, quarantined: [], searched: [] })
+  })
+
+  it('tells a signed-out user which copy was quarantined', async () => {
+    // Issue #56: the state a user lands in after an account went missing is
+    // "signed out", and the reason it went missing is a copy that was kept
+    // aside rather than erased. The document must carry that reason, or the
+    // only way to learn about it is to browse the DSH home directory.
+    const deps = makeRoute()
+    deps.store = () => ({
+      async accounts() { return [] },
+      async status() { return { state: 'signed-out' } },
+      async diagnose() { return { tried: [], failures: [] } },
+      async quarantinedCopies() {
+        return [{ file: '/home/u/.dsh/.trae-auth.cn.json', quarantinedAs: '/home/u/.dsh/.trae-auth.cn.json.corrupt-2026-10-24T06-12-33-456Z', bytes: 2048, accounts: 2 }]
+      },
+    }) as unknown as ReturnType<TraeUsageRouteOptions['store']>
+    const result = await traeWebUsage(deps, 'cn')
+    expect(result).toMatchObject({
+      status: 'signed-out',
+      quarantined: [
+        {
+          file: '/home/u/.dsh/.trae-auth.cn.json',
+          quarantinedAs: '/home/u/.dsh/.trae-auth.cn.json.corrupt-2026-10-24T06-12-33-456Z',
+          bytes: 2048,
+          accounts: 2,
+        },
+      ],
+    })
+  })
+
+  it('carries the quarantine notice on a signed-in document too', async () => {
+    // The notice is not a signed-out-only thing: a user can be signed in with
+    // one account while ANOTHER account's copy was quarantined, and that is
+    // exactly the "one account is missing" shape.
+    const deps = makeRoute()
+    deps.store = () => ({
+      async accounts() { return [{ id: 'account-1', accountName: 'LaoDing', edition: 'solo', enterprise: false, region: 'cn', source: 'desktop', tokenExpiresAtMs: expiresAtMs, selected: true }] },
+      async status() { return { state: 'signed-in', edition: 'solo', expiresAtMs: Date.now() + 1000, source: 'desktop' } },
+      async resolve() { return credential },
+      async current() { return credential },
+      async quarantinedCopies() {
+        return [{ file: '/home/u/.dsh/.trae-auth.cn.json', quarantinedAs: '/home/u/.dsh/.trae-auth.cn.json.corrupt-2026-10-24T06-12-33-456Z', bytes: 512 }]
+      },
+    }) as unknown as ReturnType<TraeUsageRouteOptions['store']>
+    const result = await traeWebUsage(deps, 'cn')
+    expect(result).toMatchObject({
+      status: 'signed-in',
+      quarantined: [{ quarantinedAs: '/home/u/.dsh/.trae-auth.cn.json.corrupt-2026-10-24T06-12-33-456Z', bytes: 512 }],
+    })
   })
 
   it('explains which paths were probed when a machine has no recognizable sign-in', async () => {

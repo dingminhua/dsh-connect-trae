@@ -45,6 +45,10 @@ export const en = {
   'row.diagRawOff': 'not checked',
   'row.diagFailures': 'Last reported failure',
   'row.diagNoFailures': 'none',
+  // A copy that was found unreadable and kept aside instead of being erased:
+  // this line is what tells the user where the account they remember went.
+  'row.diagQuarantine': 'Quarantined copies',
+  'row.diagQuarantineNone': 'none',
   'row.diagHint': 'Everything above is read-only and can be quoted verbatim into a bug report. The values are this panel’s own last refresh, not a summary of it.',
   'row.settingsWriteFailed': 'The setting was not saved: {message}',
   'row.signedOut': 'Not signed in',
@@ -52,6 +56,13 @@ export const en = {
   'row.searchedTitle': 'Paths checked',
   'row.searchedHint': 'No sign-in was found. These locations were probed; if your Trae stores its login elsewhere, please report the path.',
   'row.searchedMore': 'Show {count} more',
+  // The quarantine notice on the signed-out screen: this is where a user lands
+  // after an account went missing, so it is where the explanation has to be.
+  'row.quarantineTitle': 'Quarantined credential copies',
+  'row.quarantineHint': 'A credential copy could not be read, so the plugin did not overwrite it — it was renamed aside with its bytes intact. The accounts it held exist only in that file; delete it once you have them back.',
+  'row.quarantineAccounts': '{count} account(s)',
+  'row.quarantineAccountsUnknown': 'account count unreadable',
+  'row.quarantineBytes': '{bytes} bytes',
   'row.reasonMissing': 'not found',
   'row.reasonUnreadable': 'unreadable',
   'row.reasonInvalid': 'unreadable format',
@@ -479,6 +490,10 @@ export const zh: Record<TraeSettingsKey, string> = {
   'row.diagRawOff': '未检测',
   'row.diagFailures': '最近一次报错',
   'row.diagNoFailures': '无',
+  // 被隔离的账号副本：读不懂的副本文件被改名留存，而不是被抹掉。这一行
+  // 告诉用户「你记得的那个账号去哪了」——它只可能在那份留存文件里。
+  'row.diagQuarantine': '损坏副本留存',
+  'row.diagQuarantineNone': '无',
   'row.diagHint': '以上全部只读，可整段原样贴进反馈。数值来自本面板最近一次刷新，不是概括。',
   'row.settingsWriteFailed': '设置未能保存：{message}',
   'row.signedOut': '未登录',
@@ -486,6 +501,12 @@ export const zh: Record<TraeSettingsKey, string> = {
   'row.searchedTitle': '已检查的路径',
   'row.searchedHint': '未找到登录信息。以下是插件探测过的位置；如果你的 Trae 把登录信息存在别处，请把该路径反馈给我们。',
   'row.searchedMore': '展开其余 {count} 条',
+  // 未登录态下的隔离通知：账号消失之后，用户落地的正是这一屏。
+  'row.quarantineTitle': '被隔离的账号副本',
+  'row.quarantineHint': '有一份账号副本文件读不出来，插件没有覆盖它，而是改名留存（字节完整）。它曾经保存的账号只可能在那份文件里；确认已取回后删掉它即可不再提示。',
+  'row.quarantineAccounts': '含 {count} 个账号',
+  'row.quarantineAccountsUnknown': '账号数无法读取',
+  'row.quarantineBytes': '{bytes} 字节',
   'row.reasonMissing': '文件不存在',
   'row.reasonUnreadable': '无法读取',
   'row.reasonInvalid': '格式无法识别',

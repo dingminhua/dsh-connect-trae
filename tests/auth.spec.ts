@@ -567,6 +567,50 @@ describe('TraeCredentialStore', () => {
     }
   })
 
+  it('reports the copies it quarantined, so the user can find them again', async () => {
+    // Issue #56: a quarantined copy is the ONLY place the accounts it held
+    // still exist. If the plugin keeps that to itself, the user has to guess
+    // where to look; the store therefore reports what it set aside — the path
+    // it had, the path it now has, and how many accounts the copy still shows.
+    const dir = await temp(); const desktop = join(dir, 'storage.json'); const own = join(dir, 'own.json')
+    await writeFile(desktop, storage('stale', Date.now() - 1000))
+    const store = new TraeCredentialStore({ storagePath: desktop, edition: 'cn', ownPath: own, refresh: async () => { throw new Error('unused') } })
+    // Nothing quarantined yet: the report is empty, not a guess.
+    expect(await store.quarantinedCopies()).toEqual([])
+
+    // A copy that is still readable as JSON — quarantined for a version this
+    // build does not know — can still be COUNTED, and that count is what tells
+    // the user how many accounts are waiting in the file.
+    const counted = join(dir, 'own.json.corrupt-2026-10-24T06-12-33-456Z')
+    await writeFile(counted, JSON.stringify({ version: 99, credentials: [{ accessToken: 'a' }, { accessToken: 'b' }] }))
+    // A torn copy cannot be counted; the report says so by OMITTING the count
+    // rather than by printing zero.
+    const torn = join(dir, 'own.json.corrupt-2026-10-24T07-00-00-000Z')
+    await writeFile(torn, '{ "version": 2, "credentials": [ { "accessToken": "B-at"')
+
+    const notices = await store.quarantinedCopies()
+    expect(notices.map(notice => notice.quarantinedAs).sort()).toEqual([counted, torn].sort())
+    const countedNotice = notices.find(notice => notice.quarantinedAs === counted)
+    expect(countedNotice).toMatchObject({ file: own, accounts: 2, bytes: (await stat(counted)).size })
+    const tornNotice = notices.find(notice => notice.quarantinedAs === torn)
+    expect(tornNotice).toMatchObject({ file: own })
+    expect(tornNotice?.accounts).toBeUndefined()
+  })
+
+  it('forgets a quarantine once the user deletes the copy', async () => {
+    // The notice is SCANNED, not remembered: the evidence is the file itself.
+    // A user who has recovered their accounts deletes it, and the notice goes
+    // with it — no separate ledger to clean up, and nothing stale on screen.
+    const dir = await temp(); const desktop = join(dir, 'storage.json'); const own = join(dir, 'own.json')
+    await writeFile(desktop, storage('stale', Date.now() - 1000))
+    const store = new TraeCredentialStore({ storagePath: desktop, edition: 'cn', ownPath: own, refresh: async () => { throw new Error('unused') } })
+    const quarantine = join(dir, 'own.json.corrupt-2026-10-24T06-12-33-456Z')
+    await writeFile(quarantine, '{"version":2,"credentials":[]}')
+    expect(await store.quarantinedCopies()).toHaveLength(1)
+    await rm(quarantine)
+    expect(await store.quarantinedCopies()).toEqual([])
+  })
+
 describe('TraeCredentialStore with a CLI-only sign-in', () => {
   it('resolves an account from a CLI token with no storage.json present', async () => {
     // Issue #5 regression: on WSL2 the user signs in with `traecli`, which never
