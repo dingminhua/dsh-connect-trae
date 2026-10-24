@@ -47,7 +47,7 @@ import { refreshTraeCredential, type TraeRefreshDevice } from './refresh.ts'
 import { readTraeIdentity, resolveTraeIdentity, type TraeIdentity } from './identity.ts'
 import { traeStorageCandidates, type TraeEdition } from './paths.ts'
 import { orderTraeModels } from './model-order.ts'
-import { panelOfProvider, providerOfPanel, regionOfCredential, regionOfEdition, regionOfHost, regionOfPanel, regionOfUserRegion, REGION_GATEWAYS, TRAE_PANELS, type TraePanel, type TraeRegion, type TraeRegionGateways } from './region.ts'
+import { panelOfProvider, providerOfPanel, regionOfCredential, regionOfEdition, regionOfHost, regionOfPanel, regionOfUserRegion, REGION_GATEWAYS, TRAE_ENTERPRISE_HOST, TRAE_PANELS, type TraePanel, type TraeRegion, type TraeRegionGateways } from './region.ts'
 import { createTraeShim } from './shim.ts'
 import type { TraeShim, TraeShimPool, TraeShimRoute } from './shim.ts'
 import { applyOfficialRoster, TraeOfficialRosterClient } from './official-roster.ts'
@@ -940,6 +940,56 @@ export function apply(ctx: Context, config: Config): void {
       // networks; surface when that happened (and when the fallback is reused)
       // so "why am I on a different host" is diagnosable in the log.
       log: (message, detail) => ctx.logger.warn(message, detail),
+      /**
+       * The TENANT directory, UNIONED into the consumer one (issue #46).
+       *
+       * This is the "reads both pools" half of the routing note below, which
+       * was intent without an implementation: only the consumer host was ever
+       * asked. The `Solo` client above is routed, but THIS one is not — and
+       * `solo.trae.cn`, the primary it lands on, does not publish every model a
+       * tenant credential can call.
+       *
+       * Measured 2026-10-24 on the reporter's live CN tenant credential:
+       * `solo.trae.cn` answered 36 ids with no `DeepSeek-V4.1-Flash-1017`;
+       * `console.enterprise.trae.cn` answered 24 that include it, and the
+       * gateway really dispatching a distinct backend for it
+       * (`deepseek-v4.1-flash-economic-ark`, vs `deepseek-v4.1-flash-ark` for
+       * the plain id) is how issue #46's report was confirmed.
+       *
+       * UNION, never replace, and never a fallback candidate. The primary is
+       * the richer host — 19 of its ids are absent from the tenant answer,
+       * including the `deepseek-v4.1-flash` the reporter has saved — so
+       * replacing it would trade one missing model for nineteen. And a
+       * candidate base cannot work at all: the base loop returns on the first
+       * host that answers, and the primary always answers.
+       *
+       * Gated on a tenant pool being bindable here (an enterprise panel, or a
+       * consumer panel under `DSH_TRAE_TENANT_IN_CONSUMER`). A personal
+       * consumer account has nothing to gain from the tenant host, so it is not
+       * made to pay the extra request.
+       *
+       * The fix is not about 1017 specifically: the tenant host is a second
+       * pool, and every model it alone serves was invisible for the same
+       * reason. Verified against the live hosts: 0 rows lost, 0 duplicated.
+       *
+       * The client decides WHEN to ask it, not this construction site: the
+       * deciding fact is whether the credential being resolved is a tenant one,
+       * which does not exist until `credential()` runs. Gating on the panel here
+       * missed the reporters most likely to hit #46 in the first place — a
+       * consumer store does not hard-exclude tenant accounts (`auth.ts`'s
+       * `offered()` backs off when the filter would hide everything), so a
+       * machine whose only login is a tenant account resolves one under the
+       * Trae panel too, and an enterprise-panel-only gate never opened the
+       * union for it. `unionRegion` additionally keeps an `ai` credential from
+       * asking a `cn` host, which the old `DSH_TRAE_TENANT_IN_CONSUMER` gate on
+       * its own did not.
+       *
+       * Providing the host unconditionally is therefore safe: a personal
+       * credential and an `ai` credential both skip it before any request is
+       * made, so neither pays for a pool it cannot use.
+       */
+      unionBaseUrls: [`${TRAE_ENTERPRISE_HOST}/api/remote/v1`],
+      unionRegion: 'cn' as const,
     })
     /**
      * The IDE's own roster: which models the vendor's picker shows, per
@@ -978,7 +1028,10 @@ export function apply(ctx: Context, config: Config): void {
      * gateway and stamps the `session_id` it requires. The discovery client
      * below stays UNROUTED on purpose — it owns the roster/probe path and, for
      * a tenant credential, reads both pools so the shared catalogue keeps every
-     * model either one serves.
+     * model either one serves. That second pool is supplied by `unionBaseUrls`
+     * at the catalog client above, which is what makes this paragraph true;
+     * routing THIS client instead would have read one pool and dropped the
+     * other (see the note there, and issue #46).
      */
     /**
      * Latest successful discovery for this panel, mutated by discoverModels
