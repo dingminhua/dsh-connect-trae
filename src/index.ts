@@ -1,3 +1,22 @@
+/**
+ * `dsh-connect-trae` — the Host half: one bundle, three providers, no
+ * plugin-to-plugin interoperation.
+ *
+ * SCOPE BOUNDARY (deliberate; see README 「与其它插件的关系」):
+ *
+ *   This plugin owns its own accounts, credentials, model directory, account
+ *   pool and settings namespace, and it talks to exactly two parties: the DSH
+ *   Host (providers, settings, the usage route) and the Trae upstream. It never
+ *   reads or writes another plugin's files or state, never schedules work
+ *   across plugins, and never lets one plugin's failure borrow another's
+ *   account, credit or channel. Two connector plugins installed side by side
+ *   coexist because each only acts on its own provider — non-interference, not
+ *   collaboration.
+ *
+ *   Lessons from sibling plugins (`dsh-connect-workbuddy`) are quoted in
+ *   comments and pinned in tests; that is compile-time learning, which is a
+ *   different thing from the runtime interoperation this module refuses.
+ */
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type {} from '@deepseek-ai/dsh-settings'

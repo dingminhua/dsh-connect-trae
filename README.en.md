@@ -30,6 +30,8 @@ A [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness) bund
 
 > Apart from the daily check-in claim, every query this plugin makes is read-only and consumes nothing; the claim only happens when you click the button.
 
+> **Boundary: this plugin does not interoperate with any other plugin.** Accounts, credentials, the model directory, the account pool and the settings namespace belong to this plugin alone; a `trae` failure never borrows another plugin's account or credit, and vice versa. Why, and what that rules out, is in [Relationship to other plugins](#relationship-to-other-plugins).
+
 ## Features
 
 - **Three parallel providers** — the CN side registers as the `trae` provider (e.g. `DeepSeek-V4-Flash`, `DeepSeek-V4-Pro`), the enterprise side as `trae-enterprise`, and the international side as `trae-global` (the Gemini/GPT/MiniMax roster); **all three rosters appear in the DSH model picker simultaneously**: different sessions can each pick a side without interfering.
@@ -81,6 +83,19 @@ The CN region therefore publishes two providers side by side, and **the route is
 Usage overview hits the read-only `https://api.trae.cn/trae/api/v2/pay/*` and `/trae/api/v2/ug/*` endpoints (international accounts read their own gateway's subscription status); the daily check-in claim is the one write among them, going to `POST /trae/api/v2/ug/checkin_credits/claim` with this installation's device id (`x-device-id`, the same identity the chat path sends). That device id is also what Trae keys the "one check-in per device per day" rule on, so switching accounts does not reset the day's slot. Refreshed tokens are kept per region in `$DSH_HOME/.trae-auth.cn.json` and `$DSH_HOME/.trae-auth.ai.json` (two simultaneously signed-in accounts never overwrite each other; the legacy single file `.trae-auth.json` is still read as a migration source).
 
 > See `docs/IMPLEMENTATION_PLAN.md`, `docs/SOLO_ROUTE_DECISION.md`, `docs/USAGE_API_RESEARCH.md`.
+
+## Relationship to other plugins
+
+**This plugin does not interoperate with any other plugin.** That is a boundary, not a slogan:
+
+- **No shared state.** Accounts, credentials, the model directory, the account pool, access tokens and the device id belong to this plugin alone; it reads and writes only its own files (`$DSH_HOME/.trae-auth.*.json`, `.trae-auth.deleted.*.json`, `.trae-pool.*.json`) and its own settings namespace — it does **not** read, write, or supply data to any other plugin. It does edit the Trae desktop app's own sign-in file, but that is another **application**, not another plugin.
+- **No cross-plugin account or credit scheduling.** The pool ranks and switches only among this plugin's own accounts; a `trae` failure is a failure — it never borrows another connector plugin's account, credit or channel, and never hands a request to another plugin to retry. The reverse holds too: no plugin can send requests through this one.
+- **No slot negotiation.** Whether the card and the composer readout appear is decided by **whether this plugin's provider is selected** (read from DSH's own `modelSelection` projection), not by plugin-to-plugin messages allocating space. Two connector plugins installed together coexist because each appears only for its own provider — that is **non-interference**, not collaboration.
+- **No shared switches.** Turning one panel off withdraws only this plugin's provider and requests; it never changes another plugin's provider, models, binding or settings.
+
+**Why the boundary exists.** Once plugins depend on each other, any upgrade, uninstall or version-line change silently alters the behaviour of its neighbours — and DSH's load order, parallel versions and user-authored profiles make that coupling impossible to express reliably. Holding the boundary keeps "who is broken" answerable with **one** plugin instead of a chain.
+
+> Sibling plugins **learn from** each other (lessons from `dsh-connect-workbuddy` are quoted in this repository's comments and tests) but never **call** each other — learning is a compile-time affair, interoperation is a runtime one, and the two must stay apart.
 
 ## Image input
 
