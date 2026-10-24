@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { isEnterpriseAccount, normalizeTraeCredential, traeAccountId, TraeCredentialStore } from '../src/auth.ts'
 import type { TraeStorageCandidate } from '../src/paths.ts'
 import { TRAE_AUTH_STORAGE_KEY } from '../src/decrypt.ts'
@@ -502,6 +502,71 @@ describe('TraeCredentialStore', () => {
     // the answer now, not a dangling id.
     await expect(store.current()).resolves.toMatchObject({ userId: 'user-b' })
   })
+  it('quarantines an unparseable own file on refresh instead of overwriting its bytes', async () => {
+    // The failure this guards against: a torn write once made the own file
+    // unreadable, `parseOwn` reported "no accounts", and the next refresh
+    // merged onto that empty base — silently erasing every other account from
+    // the file. Now the unreadable file is renamed aside with its bytes intact
+    // and the refresh starts from a clean file, so the lost entries stay
+    // recoverable and the action the user pressed still succeeds.
+    const dir = await temp(); const desktop = join(dir, 'storage.json'); const own = join(dir, 'own.json')
+    await writeFile(desktop, storage('stale', Date.now() - 1000))
+    const torn = '{ "version": 2, "credentials": [ { "accessToken": "B-at"'
+    await writeFile(own, torn)
+    let refreshes = 0
+    const store = new TraeCredentialStore({ storagePath: desktop, edition: 'cn', ownPath: own, refresh: async () => {
+      refreshes += 1
+      return { accessToken: 'fresh', refreshToken: 'rt2', expiresAtMs: Date.now() + 3_600_000 }
+    } })
+    await expect(store.resolve()).resolves.toMatchObject({ accessToken: 'fresh' })
+    expect(refreshes).toBe(1)
+    const files = await readdir(dir)
+    const quarantine = files.find(name => name.startsWith('own.json.corrupt-'))
+    expect(quarantine).toBeDefined()
+    expect(await readFile(join(dir, quarantine!), 'utf8')).toBe(torn)
+    // The refreshed copy landed in a fresh own file rather than being refused.
+    expect(JSON.parse(await readFile(own, 'utf8')).credentials[0].accessToken).toBe('fresh')
+  })
+
+  it('keeps other accounts when the own file is valid but one row is malformed', async () => {
+    const dir = await temp(); const desktop = join(dir, 'storage.json'); const own = join(dir, 'own.json')
+    await writeFile(desktop, storage('stale', Date.now() - 1000))
+    const goodRow = { accessToken: 'good-at', refreshToken: 'rt', userId: 'good-user', host: 'https://api.trae.cn', expiresAtMs: Date.now() + 86_400_000, source: 'dsh', edition: 'cn' }
+    await writeFile(own, JSON.stringify({ version: 2, credentials: [goodRow, { accessToken: 7 }] }))
+    const store = new TraeCredentialStore({ storagePath: desktop, edition: 'cn', ownPath: own, refresh: async () => ({ accessToken: 'fresh', refreshToken: 'rt2', expiresAtMs: Date.now() + 3_600_000 }) })
+    await store.resolve()
+    const userIds = JSON.parse(await readFile(own, 'utf8')).credentials
+      .map((row: { userId?: string }) => row.userId).sort()
+    // A malformed ROW is dropped, not the file; the good copy survives its own
+    // refresh alongside the refreshed desktop account.
+    expect(userIds).toEqual(['good-user', 'uid'])
+  })
+
+  it('aborts the refresh write when the corrupt file cannot be quarantined', async () => {
+    // A quarantine that fails must not turn into the very overwrite it exists
+    // to prevent: the refreshed token is served to this request but the own
+    // file is left untouched, so its bytes (and any accounts they carry) stay
+    // intact for the next attempt.
+    const dir = await temp(); const desktop = join(dir, 'storage.json'); const own = join(dir, 'own.json')
+    await writeFile(desktop, storage('stale', Date.now() - 1000))
+    const torn = '{ "version": 2, "credentials": [ { "accessToken": "B-at"'
+    await writeFile(own, torn)
+    // Freeze the clock so the quarantine's timestamped name is predictable,
+    // then occupy that exact name with a non-empty directory — `rename` fails
+    // with EPERM on every platform.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+      await mkdir(join(dir, `own.json.corrupt-${stamp}`))
+      await writeFile(join(dir, `own.json.corrupt-${stamp}`, 'occupied.txt'), 'x')
+      const store = new TraeCredentialStore({ storagePath: desktop, edition: 'cn', ownPath: own, refresh: async () => ({ accessToken: 'fresh', refreshToken: 'rt2', expiresAtMs: Date.now() + 3_600_000 }) })
+      await expect(store.resolve()).resolves.toMatchObject({ accessToken: 'fresh' })
+      expect(await readFile(own, 'utf8')).toBe(torn)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
 describe('TraeCredentialStore with a CLI-only sign-in', () => {
   it('resolves an account from a CLI token with no storage.json present', async () => {
     // Issue #5 regression: on WSL2 the user signs in with `traecli`, which never

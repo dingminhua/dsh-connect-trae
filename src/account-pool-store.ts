@@ -267,24 +267,28 @@ export async function writeTraePoolProbes(
  * member, and leaving it in the file would resurrect a stale `rate-limited` row if
  * the account were added back later. Written through the same lock/atomic path so a
  * removal cannot interleave with a batch.
+ *
+ * The READ also sits inside the lock, like {@link writeTraePoolProbes}'s: a
+ * delete is a read-modify-write, and a read taken outside the lock snapshots a
+ * moment that a concurrent batch's write can then be older than — the delete
+ * would write that stale snapshot back and silently discard the measurements
+ * the batch had just learned.
  */
 export async function dropTraePoolProbe(panel: TraePanel, accountId: string): Promise<void> {
-  const existing = await readTraePoolProbes(panel)
-  if (existing[accountId] === undefined) return
   const path = traePoolStorePath(panel)
-  const probes: Record<string, TraePoolProbe> = {}
-  for (const [id, probe] of Object.entries(existing)) {
-    if (id !== accountId) probes[id] = probe
-  }
-  try {
-    await withFileLock(path, async () => {
-      await writeFileAtomic(path, `${JSON.stringify({ version: STORE_FORMAT_VERSION, probes }, null, 2)}\n`, {
-        mode: 0o600,
-        dirMode: 0o700,
-      })
+  await withFileLock(path, async () => {
+    const existing = await readTraePoolProbes(panel)
+    if (existing[accountId] === undefined) return
+    const probes: Record<string, TraePoolProbe> = {}
+    for (const [id, probe] of Object.entries(existing)) {
+      if (id !== accountId) probes[id] = probe
+    }
+    await writeFileAtomic(path, `${JSON.stringify({ version: STORE_FORMAT_VERSION, probes }, null, 2)}\n`, {
+      mode: 0o600,
+      dirMode: 0o700,
     })
-  } catch {
+  }).catch(() => {
     // Same swallow as the writer above: forgetting a measurement cannot fail a
     // user action that already happened in settings.
-  }
+  })
 }
