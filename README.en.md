@@ -153,7 +153,7 @@ Restart the DSH process after install/update/uninstall.
 ## DSH version compatibility
 
 **Requires DSH 0.1.7-rc.1 and up** (since 2.3.0 the plugin no longer targets hosts older than 0.1.7; the peer dependency ranges are narrowed accordingly).
-**The peer upper bound is `<0.3.0-0`, so both the 0.1.7 and the 0.2 line are supported (including 0.2.1-rc.2, verified).**
+**The peer upper bound is `<0.3.0-0`, so both the 0.1.7 and the 0.2 line are supported (including 0.2.1-rc.3, verified).**
 
 ### Both pi-ai context generations are supported (since 3.4.2)
 
@@ -178,13 +178,26 @@ The 0.2.0 line breaks **no** contract this plugin consumes — a symbol-by-symbo
 
 ### DSH 0.2.1 line (pi-ai 1.1.0) sync
 
-The `0.2.1-rc.1` host moved `@earendil-works/pi-ai` from `^0.85.1` to **`^1.1.0`** (unchanged through `0.2.1-rc.2`) — the only change on the 0.2 line with real behavioural impact. Three conclusions:
+The `0.2.1-rc.1` host moved `@earendil-works/pi-ai` from `^0.85.1` to **`^1.1.0`** (unchanged through `0.2.1-rc.2` and `0.2.1-rc.3`) — the only change on the 0.2 line with real behavioural impact. Three conclusions:
 
 1. **The request body did not regress (measured, not inferred).** The 1.1.0 api reads the prompt **only** from a transcript system message and never touches top-level `systemPrompt` / `tools`, while `dsh-llm-pi-ai`'s `piContext()` still emits the legacy envelope. The bidirectional adapter this plugin has shipped since 3.4.2 covers exactly that: feeding the real host envelope through real `1.1.0` with a local SSE capture yields `roles: ["system","user"]`, an intact system text and `tools: 1`; **without the adapter it degenerates to `roles: ["user"]`, system `null`, `tools: 0`** — with no error. That contrast is pinned as a wire-level matrix in `tests/pi-ai-context.spec.ts`.
 2. **Types were fixed.** 1.1.0 changed `ProviderStreams`' second parameter to a **branded** `TranscriptContext` (a `unique symbol` only `normalizeContext()` can produce). The adapter casts once at that single boundary (`withContextAdaptation` in `src/adapter.ts`) and documents why the brand cannot be obtained honestly there.
-3. **The peer range needed no change.** DSH evaluates with `semver.satisfies(runtime, range, { includePrerelease: true })` and checks only the `@deepseek-ai/dsh*` namespace, so `>=0.1.7-rc.1 <0.3.0-0` already admits both `0.2.1-rc.1` and `0.2.1-rc.2` (verified). Note the prerelease cliff only exists under **default** options — it is not this plugin's situation.
+3. **The peer range needed no change.** DSH evaluates with `semver.satisfies(runtime, range, { includePrerelease: true })` and checks only the `@deepseek-ai/dsh*` namespace, so `>=0.1.7-rc.1 <0.3.0-0` already admits `0.2.1-rc.1`, `0.2.1-rc.2` and `0.2.1-rc.3` (verified). Note the prerelease cliff only exists under **default** options — it is not this plugin's situation.
 
-The dev tree pins `@earendil-works/pi-ai` at exactly **1.1.0** (the version the host actually bundles) rather than `^1.1.0`, so local typecheck and tests run against the same contract users do; the `schemastery` override moved to `3.18.5` (`dsh-llm-pi-ai@0.2.1-rc.2` declares `~3.18.5`).
+The dev tree pins `@earendil-works/pi-ai` at exactly **1.1.0** (the version the host actually bundles — still 1.1.0 on `0.2.1-rc.3`) rather than `^1.1.0`, so local typecheck and tests run against the same contract users do; the `schemastery` override moved to `3.18.5` (`dsh-llm-pi-ai@0.2.1-rc.3` declares `~3.18.5`).
+
+### `0.2.1-rc.3` sync (since 4.4.6)
+
+The host moved to `0.2.1-rc.3` (the desktop app's `CFBundleVersion` and the bundled `dsh-desktop-runtime` both report `0.2.1-rc.3`). Upstream shipped five commits: three of them are the new "navigation entry customization" UI (pin/unpin plugin launchers, a More menu, analytics), one switches the DeepSeek API-key route to the official `/models` listing, one is the version bump.
+
+For **this plugin**:
+
+- Of the 13 host packages the plugin consumes, **only `dsh-client-ui-primitives` changed code**, and every change is **additive**: `Tooltip`'s `TooltipSide` gains `'left'` and now places the bubble from measured border boxes (preferred → opposite → perpendicular side), `MenuItemButton` gains `current`, `Menu` gains `minWidthFromAnchor`, and the icon set gains `IconAppsAddOutline*`. This plugin references `dsh-client-ui-primitives` **at the type level only** (`import type {} from ...`) and never touches those components at runtime, so **no adaptation is needed**.
+- The other 12 packages (`dsh-llm`, `dsh-llm-pi-ai`, `dsh-settings`, `dsh-host-webserver`, `dsh-atomic-write`, `dsh-home-paths`, `dsh-attachment`, `dsh-client-ui-renderer`, `dsh-client-ui-settings`, `dsh-client-ui-settings-plugins`, `dsh-client-ui-slots`, `dsh-client-locale`) are **byte-for-byte unchanged**.
+- Every slot this plugin registers (`plugins.bundle.config`, `plugins.row.config`, `conversation.input.left`, `conversation.composer.dock`, `conversation.input.model.label`) **still exists with an unchanged contract** on rc.3; the host's new slots (e.g. `conversation.session.header.views.actions`) do not overlap with them.
+- The peer range **needs no change**: `0.2.1-rc.3` is admitted by `>=0.1.7-rc.1 <0.3.0-0` (verified).
+
+Details: [section 10 of `docs/DSH_0.2.1_RC1_SYNC.md`](https://github.com/dingminhua/dsh-connect-trae/blob/main/docs/DSH_0.2.1_RC1_SYNC.md).
 
 
 ### Why the upper bound is not `<0.2.0`

@@ -1,7 +1,7 @@
 # DSH 0.2.1-rc.1 升级同步记录
 
 > 调研日期：2026-10-17
-> 宿主：DSH Desktop，随包 `@deepseek-ai/dsh-desktop-runtime@0.2.1-rc.1`（后追加 rc.2 复核，见第九节）
+> 宿主：DSH Desktop，随包 `@deepseek-ai/dsh-desktop-runtime@0.2.1-rc.1`（后追加 rc.2 复核，见第九节；rc.3 复核，见第十节）
 > 插件：`dsh-connect-trae` 3.6.1 → **3.7.0**
 > 参考：`dsh-connect-workbuddy/docs/DSH-0.2.1-RC1-FOLLOWUP.md`（同批升级的姊妹项目调研）
 > 基线：升级前 660 例全绿（pi-ai 0.85.1 / dsh 0.2.0-rc.1）
@@ -285,3 +285,104 @@ payload 的 `node_modules` 里**没有** `dsh-client-ui-primitives` 与 `dsh-cli
   此前这条清单里**没有当前正在使用的版本**，是本次复核暴露的测试盲点
 - 变异验证：把 peer 上界收窄到 `<0.2.1-rc.2` → 多个包的对应用例立刻变红
 - 双 tsconfig 类型检查通过，**670** 例测试全绿，构建通过
+
+---
+
+## 十、0.2.1-rc.3 复核（2026-10-24）
+
+宿主随包版本从 `0.2.1-rc.2` 推进到 **`0.2.1-rc.3`**。逐项核对结果如下。
+
+### 10.1 宿主版本取证
+
+| 取证点 | 值 |
+| --- | --- |
+| `DeepSeek Harness.app` → `CFBundleShortVersionString` / `CFBundleVersion` | `0.2.1-rc.3` |
+| `app.asar/dsh/package.json` → `@deepseek-ai/dsh-desktop-runtime` | `0.2.1-rc.3` |
+| `app.asar/dsh/node_modules/@earendil-works/pi-ai` | **`1.1.0`**（未变） |
+| `app.asar/dsh/package.json` → `cordis` / `schemastery` | `4.0.5` / `3.18.5`（均未变） |
+
+### 10.2 上游这一版改了什么
+
+以 DSH 源码仓的 tag 为准（`dsh-v0.2.1-rc.2..dsh-v0.2.1-rc.3`，共 6 个提交）：
+
+| 提交 | 性质 | 对本插件 |
+| --- | --- | --- |
+| `feat(ui): add navigation entry customization (#6247)` | 新增「导航项自定义」：面板固定/取消固定、More 菜单 | 不相干 |
+| `feat(analytics): track navigation entries and preset selections (#6600)` | 埋点 | 不相干 |
+| `fix(ui): separate navigation pins from selection and show menu icons (#6883)` | 上一条的修正 | 不相干 |
+| `feat(llm): follow the official /models listing on the DeepSeek API-key route (#6944)` | DeepSeek 官方 API-key 通道的模型目录 | 不相干（本插件自带 Trae 供应商） |
+| `release(dsh): 0.2.1-rc.3` | 版本号 | —— |
+
+宿主新增的客户端包 `@deepseek-ai/dsh-client-ui-entry-customization` 注册三个槽位：
+`sidebar.panellist.actions`、`conversation.session.header.views.actions`、`sidebar.right.tab.guide.actions`。
+
+### 10.3 依赖面
+
+| 包 | rc.2 | rc.3 |
+| --- | --- | --- |
+| 13 个 `@deepseek-ai/dsh-*` | `0.2.1-rc.2` | **`0.2.1-rc.3`** |
+| `@deepseek-ai/cordis` | `4.0.5` | `4.0.5`（未变） |
+| `@deepseek-ai/schemastery` | `3.18.5` | `3.18.5`（未变） |
+| `@earendil-works/pi-ai` | `1.1.0` | **`1.1.0`（未变）** |
+| `dsh-llm-pi-ai` 对 pi-ai 的声明 | `^1.1.0` | `^1.1.0`（未变） |
+
+pi-ai 仍钉在 1.1.0：3.4.2 起的双向适配结论原样成立，**适配层无需任何改动**。
+
+### 10.4 契约面：13 个包里只有 1 个有代码变化，且全是新增
+
+对插件消费的 13 个宿主包，比对 npm 上 `0.2.1-rc.2` 与 `0.2.1-rc.3` 两版的**全量文件树**：
+
+```
+= dsh-llm / dsh-llm-pi-ai / dsh-settings / dsh-host-webserver
+= dsh-atomic-write / dsh-home-paths / dsh-attachment
+= dsh-client-ui-renderer / dsh-client-ui-settings
+= dsh-client-ui-settings-plugins / dsh-client-ui-slots / dsh-client-locale
+    （除 package.json 的版本号与内部依赖号外，逐字节相同）
+≠ dsh-client-ui-primitives
+```
+
+`dsh-client-ui-primitives` 的变化逐条列举：
+
+| 变化 | 性质 |
+| --- | --- |
+| `TooltipSide` 增加 `'left'`；`Tooltip` 改用实测边框盒做「首选侧 → 对侧 → 垂直侧」换边放置，放不下时退回视口边界 | 新增能力 + 行为优化 |
+| 新增 `lib/tooltip-placement.ts`（`placeTooltip()`，含 `overflow` 标记） | 新增导出 |
+| `MenuItemButton` 增加 `current` prop | 新增可选 prop |
+| `Menu` 增加 `minWidthFromAnchor` prop | 新增可选 prop |
+| 图标新增 `IconAppsAddOutlineRegular` / `IconAppsAddOutlineMedium` | 新增导出 |
+
+**为什么不需要适配**：本插件对 `dsh-client-ui-primitives` 只有**类型层引用**
+（`import type {} from '@deepseek-ai/dsh-client-ui-primitives'`），运行时不导入它的任何组件，
+因此这些新增 prop 与新的放置算法对本插件**不可见**。既没有签名被删改，也没有导出被移除。
+
+### 10.5 槽位核对：本插件注册的 5 个槽位全部健在
+
+| 槽位 | rc.2 | rc.3 |
+| --- | --- | --- |
+| `plugins.bundle.config` | 存在 | 存在（契约未变） |
+| `plugins.row.config` | 存在 | 存在（契约未变） |
+| `conversation.input.left` | 存在 | 存在（契约未变） |
+| `conversation.composer.dock` | 存在 | 存在（契约未变） |
+| `conversation.input.model.label` | 存在 | 存在（契约未变） |
+
+宿主 rc.3 的 `dsh-client-ui-conversation` 只**新增**了一个槽位
+（`conversation.session.header.views.actions`）与两处契约字段
+（`MessageSubmission` 的 `newSession` / `agentPreset`；`DraftInitializationOptions.whenDraftExists`），
+均为**可选新增**，本插件不消费。
+
+### 10.6 peer 门禁
+
+```
+0.2.1-rc.2  -> true
+0.2.1-rc.3  -> true     ← 新增，已放行
+0.3.0-rc.1  -> false
+```
+
+范围 `>=0.1.7-rc.1 <0.3.0-0` **无需改动**。
+
+### 10.7 本次改动与验证
+
+- devDependency 13 项 → `0.2.1-rc.3`（`cordis` / `schemastery` / `pi-ai` 不变）
+- `tests/dsh-peer-range.spec.ts` 的 `MUST_ADMIT` 补入 `0.2.1-rc.3`
+- **代码零改动**：13 个宿主包里唯一有代码变化的 `dsh-client-ui-primitives` 对本插件只是类型层引用
+- 双 tsconfig 类型检查通过，**1080** 例测试全绿，构建通过

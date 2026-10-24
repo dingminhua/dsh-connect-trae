@@ -172,7 +172,7 @@ npm install dsh-connect-trae
 ## DSH 版本兼容
 
 **要求 DSH 0.1.7-rc.1 及以上**（2.3.0 起不再支持 0.1.7 之前的宿主；peer 依赖范围已按此收窄）。
-**peer 上界为 `<0.3.0-0`：0.1.7 与 0.2 两条线均受支持（含 0.2.1-rc.2，已实测）。**
+**peer 上界为 `<0.3.0-0`：0.1.7 与 0.2 两条线均受支持（含 0.2.1-rc.3，已实测）。**
 
 ### 同时支持 pi-ai 的两代上下文（3.4.2 起）
 
@@ -206,7 +206,7 @@ peer 范围不满足的 bundle 会被**整体跳过**，只往 stderr 写一行�
 
 ### DSH 0.2.1 线（pi-ai 1.1.0）同步结论
 
-宿主 `0.2.1-rc.1` 把 `@earendil-works/pi-ai` 从 `^0.85.1` 抬到了 **`^1.1.0`**（`0.2.1-rc.2` 保持不变），这是 0.2 线里
+宿主 `0.2.1-rc.1` 把 `@earendil-works/pi-ai` 从 `^0.85.1` 抬到了 **`^1.1.0`**（`0.2.1-rc.2` / `0.2.1-rc.3` 均保持不变），这是 0.2 线里
 唯一有实际行为影响的变化。三项结论：
 
 1. **请求体没有丢东西（已实测）**。1.1.0 的 api **只**读 transcript 里的 system 消息，
@@ -219,13 +219,36 @@ peer 范围不满足的 bundle 会被**整体跳过**，只往 stderr 写一行�
    `TranscriptContext`，只有 `normalizeContext()` 能产出。适配层在这条边界上做一次显式转型
    （`src/adapter.ts` 的 `withContextAdaptation`），并在两处调用点写明为何品牌在此处不可诚实获得。
 3. **peer 范围无需改动**。DSH 用 `semver.satisfies(runtime, range, { includePrerelease: true })`
-   求值，且只校验 `@deepseek-ai/dsh*` 命名空间，因此 `>=0.1.7-rc.1 <0.3.0-0` 对 `0.2.1-rc.1` / `0.2.1-rc.2` 均已判通过
+   求值，且只校验 `@deepseek-ai/dsh*` 命名空间，因此 `>=0.1.7-rc.1 <0.3.0-0` 对 `0.2.1-rc.1` / `0.2.1-rc.2` / `0.2.1-rc.3` 均已判通过
    （已实测）。**注意**：预发布悬崖只在**默认选项**下成立——那是 `dsh-connect-workbuddy` 侧
    调研文档所描述的困境，本插件不适用。
 
-开发树的 `@earendil-works/pi-ai` 钉在 **1.1.0**（宿主实际随包的版本）而非 `^1.1.0`，
+开发树的 `@earendil-works/pi-ai` 钉在 **1.1.0**（宿主实际随包的版本，`0.2.1-rc.3` 实测仍是 1.1.0）而非 `^1.1.0`，
 使本地 typecheck 与测试跑在与用户完全一致的契约上；`schemastery` 的 override 同步抬到
-`3.18.5`（`dsh-llm-pi-ai@0.2.1-rc.2` 声明 `~3.18.5`）。
+`3.18.5`（`dsh-llm-pi-ai@0.2.1-rc.3` 声明 `~3.18.5`）。
+
+### `0.2.1-rc.3` 同步结论（4.4.6 起）
+
+宿主推进到 `0.2.1-rc.3`（桌面版 `CFBundleVersion` 与随包 `dsh-desktop-runtime` 同为 `0.2.1-rc.3`）。
+上游这一版只落地了 5 个提交，其中 3 个是 UI 的「导航项自定义」（插件化面板的固定/取消固定、
+More 菜单、埋点），1 个是 DeepSeek API-key 通道改走官方 `/models` 目录，1 个是版本号。
+
+对**本插件**而言：
+
+- 插件消费的 13 个宿主包里，**只有 `dsh-client-ui-primitives` 有代码变化**，且**全是新增**：
+  `Tooltip` 的 `TooltipSide` 增加 `'left'` 并改用实测边框盒做「首选 → 对侧 → 垂直侧」的换边放置，
+  `MenuItemButton` 增加 `current`、`Menu` 增加 `minWidthFromAnchor`，图标新增 `IconAppsAddOutline*`。
+  本插件对 `dsh-client-ui-primitives` 只有**类型层引用**（`import type {} from ...`），
+  运行时不碰这些组件，**无需任何适配**。
+- 其余 12 个包（`dsh-llm`、`dsh-llm-pi-ai`、`dsh-settings`、`dsh-host-webserver`、`dsh-atomic-write`、
+  `dsh-home-paths`、`dsh-attachment`、`dsh-client-ui-renderer`、`dsh-client-ui-settings`、
+  `dsh-client-ui-settings-plugins`、`dsh-client-ui-slots`、`dsh-client-locale`）**逐字节未变**。
+- 插件注册的全部槽位（`plugins.bundle.config`、`plugins.row.config`、`conversation.input.left`、
+  `conversation.composer.dock`、`conversation.input.model.label`）在 rc.3 中**仍然存在且契约未变**；
+  宿主新增的 `conversation.session.header.views.actions` 等槽位与本插件无交集。
+- peer 范围**无需改动**：`0.2.1-rc.3` 对 `>=0.1.7-rc.1 <0.3.0-0` 已判通过（已实测）。
+
+细节见 [`docs/DSH_0.2.1_RC1_SYNC.md`](https://github.com/dingminhua/dsh-connect-trae/blob/main/docs/DSH_0.2.1_RC1_SYNC.md) 第十节。
 
 
 ### peer 上界为什么不写 `<0.2.0`
