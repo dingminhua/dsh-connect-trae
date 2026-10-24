@@ -1,4 +1,4 @@
-import type { TraeCredential } from './auth.ts'
+import { isEnterpriseAccount, type TraeCredential } from './auth.ts'
 import { parseTraeRemoteModel, type TraeDiscoveredModel } from './model-metadata.ts'
 import { REGION_GATEWAYS, regionOfCredential, type TraeRegion } from './region.ts'
 import { TRAE_DIRECTORY_FUNCTIONS } from './solo.ts'
@@ -110,9 +110,29 @@ export interface TraeSoloRemoteCatalogOptions {
    * The primary answer wins every id collision, compared case-insensitively, and
    * a colliding extra row is dropped rather than capacity-competed: a
    * `preferStrongerRow` contest could rename a model the user has already saved
-   * in `enabledModelIds`, silently breaking the saved selection.
+   * in `enabledModelIds` (`deriveCatalog` matches those ids EXACTLY), silently
+   * dropping the model out of the selection.
+   *
+   * An extra host is asked ONLY when the credential being used can call that
+   * pool at all (`region` must match the host, and a tenant host additionally
+   * requires a tenant credential). The gate lives here rather than at the
+   * construction site because the deciding fact — "is this credential a tenant
+   * one?" — only exists once `credential()` has resolved, which is per refresh.
+   * Gating on the PANEL instead missed the case that matters: a consumer store
+   * does not hard-exclude tenant accounts (`auth.ts`'s `offered()` backs off
+   * when its filter would hide everything), so a machine whose only login is a
+   * tenant account resolves a tenant credential under the Trae panel too.
    */
   unionBaseUrls?: readonly string[]
+  /**
+   * Region an extra host serves. An `ai` credential never asks a `cn` host.
+   *
+   * `unionBaseUrls` used to be ungated by region, so a `DSH_TRAE_TENANT_IN_CONSUMER`
+   * machine on the international panel issued the CN tenant request on every
+   * refresh — a 401 the union skipped, but one wasted request and one warn log
+   * per refresh (measured with an SG credential 2026-10-24).
+   */
+  unionRegion?: TraeRegion
 }
 
 /**
@@ -304,13 +324,28 @@ export class TraeSoloRemoteCatalogClient {
    * (30 s) in the worst case, so 5 minutes bounds that to ~1 attempt per 5 min.
    */
   private static readonly OFFICIAL_RETRY_MS = 5 * 60_000
+  /**
+   * When each extra union host may be asked again after it failed, as epoch
+   * milliseconds. Absent = ask it on the next refresh.
+   *
+   * The official host has {@link OFFICIAL_RETRY_MS} because a blocked network
+   * would otherwise pay its failing connect on every refresh; an extra host has
+   * the same problem and, since discovery (`discoverModels()`) passes no signal,
+   * the same 30 s ceiling. A tenant host that is unreachable from this network
+   * would therefore stall every refresh for up to 30 s. Same cooldown, same
+   * reasoning — an unhelpful host is skipped for a while instead of retried
+   * immediately.
+   */
+  private readonly extraRetryAtMs = new Map<string, number>()
 
   private readonly unionBaseUrls: readonly string[]
+  private readonly unionRegion: TraeRegion | undefined
 
   constructor(private readonly options: TraeSoloRemoteCatalogOptions) {
     this.fetchImpl = options.fetchImpl ?? fetch
     this.baseUrl = options.baseUrl
     this.unionBaseUrls = options.unionBaseUrls ?? []
+    this.unionRegion = options.unionRegion
   }
 
   private async headers(region: TraeRegion): Promise<Record<string, string>> {
@@ -394,7 +429,7 @@ export class TraeSoloRemoteCatalogClient {
         this.officialRetryAtMs = 0
       }
       this.lastSuccessfulBase = base
-      return await this.unionWithExtraHosts(region, headers, models, signal)
+      return await this.unionWithExtraHosts(region, credential, headers, models, signal)
     }
     // An empty answer is the more informative reason when every base that
     // answered said "nothing here"; otherwise report the transport/HTTP error.
@@ -416,14 +451,23 @@ export class TraeSoloRemoteCatalogClient {
    * `signal` propagates — that is the caller cancelling, not a host being
    * unhelpful. Failing here must never fail a refresh the primary host already
    * satisfied, which is why a broken extra host costs models, not the catalog.
+   * A failure also puts that host on {@link extraRetryAtMs} so a network that
+   * cannot reach it stops paying its connect timeout on every refresh.
    */
   private async unionWithExtraHosts(
     region: TraeRegion,
+    credential: TraeCredential,
     headers: Record<string, string>,
     primary: TraeDiscoveredModel[],
     signal?: AbortSignal,
   ): Promise<TraeDiscoveredModel[]> {
     if (this.unionBaseUrls.length === 0) return primary
+    // An extra pool is only asked when THIS credential could use it: the host
+    // must serve the credential's own region, and a tenant host additionally
+    // needs a tenant credential. A personal account therefore never pays for a
+    // tenant request, whichever panel it happens to be attached to.
+    if (this.unionRegion !== undefined && this.unionRegion !== region) return primary
+    if (!isEnterpriseAccount(credential)) return primary
     const functions = TRAE_REMOTE_DIRECTORY_FUNCTIONS[region].join(',')
     // The PRIMARY spelling is kept on every collision, so a saved
     // `enabledModelIds` entry whose case matches this host keeps matching.
@@ -432,6 +476,9 @@ export class TraeSoloRemoteCatalogClient {
     for (const base of this.unionBaseUrls) {
       // Already read this refresh (or a previous one) — do not ask twice.
       if (base === this.lastSuccessfulBase) continue
+      // Still in its post-failure cooldown: skip rather than pay the connect
+      // timeout again on every refresh.
+      if ((this.extraRetryAtMs.get(base) ?? 0) > Date.now()) continue
       let response: Response
       try {
         response = await this.fetchImpl(`${base}/models?functions=${functions}`, {
@@ -440,10 +487,12 @@ export class TraeSoloRemoteCatalogClient {
         })
       } catch (error) {
         if (signal?.aborted) throw error
+        this.extraRetryAtMs.set(base, Date.now() + TraeSoloRemoteCatalogClient.OFFICIAL_RETRY_MS)
         this.options.log?.(`model directory union host ${base} was unreachable; its models are missing from this refresh`, { base, error: String(error) })
         continue
       }
       if (!response.ok) {
+        this.extraRetryAtMs.set(base, Date.now() + TraeSoloRemoteCatalogClient.OFFICIAL_RETRY_MS)
         this.options.log?.(`model directory union host ${base} answered HTTP ${response.status}; its models are missing from this refresh`, { base })
         continue
       }
@@ -452,9 +501,12 @@ export class TraeSoloRemoteCatalogClient {
         const json = await response.json() as { data?: { list?: { function?: string; models?: unknown[] }[] } }
         extra = this.collectModels(region, json.data?.list ?? [])
       } catch (error) {
+        this.extraRetryAtMs.set(base, Date.now() + TraeSoloRemoteCatalogClient.OFFICIAL_RETRY_MS)
         this.options.log?.(`model directory union host ${base} answered a body that could not be read; its models are missing from this refresh`, { base, error: String(error) })
         continue
       }
+      // This host answered: leave its cooldown, whatever it contained.
+      this.extraRetryAtMs.delete(base)
       let added = 0
       for (const model of extra) {
         const key = directoryKey(model.id)

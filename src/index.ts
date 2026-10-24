@@ -971,8 +971,25 @@ export function apply(ctx: Context, config: Config): void {
        * The fix is not about 1017 specifically: the tenant host is a second
        * pool, and every model it alone serves was invisible for the same
        * reason. Verified against the live hosts: 0 rows lost, 0 duplicated.
+       *
+       * The client decides WHEN to ask it, not this construction site: the
+       * deciding fact is whether the credential being resolved is a tenant one,
+       * which does not exist until `credential()` runs. Gating on the panel here
+       * missed the reporters most likely to hit #46 in the first place — a
+       * consumer store does not hard-exclude tenant accounts (`auth.ts`'s
+       * `offered()` backs off when the filter would hide everything), so a
+       * machine whose only login is a tenant account resolves one under the
+       * Trae panel too, and an enterprise-panel-only gate never opened the
+       * union for it. `unionRegion` additionally keeps an `ai` credential from
+       * asking a `cn` host, which the old `DSH_TRAE_TENANT_IN_CONSUMER` gate on
+       * its own did not.
+       *
+       * Providing the host unconditionally is therefore safe: a personal
+       * credential and an `ai` credential both skip it before any request is
+       * made, so neither pays for a pool it cannot use.
        */
-      ...panel === 'enterprise' || tenantLocal ? { unionBaseUrls: [`${TRAE_ENTERPRISE_HOST}/api/remote/v1`] } : {},
+      unionBaseUrls: [`${TRAE_ENTERPRISE_HOST}/api/remote/v1`],
+      unionRegion: 'cn' as const,
     })
     /**
      * The IDE's own roster: which models the vendor's picker shows, per

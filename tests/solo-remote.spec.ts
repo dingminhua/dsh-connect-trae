@@ -280,6 +280,15 @@ describe('catalog host fallback', () => {
   // host would never be read, i.e. the case that is broken today.
   describe('unioning an extra directory host', () => {
     const TENANT = 'https://console.enterprise.trae.cn/api/remote/v1'
+    /**
+     * A TENANT credential. The union is gated on the CREDENTIAL, not on the
+     * panel: `console.enterprise.trae.cn` only serves a tenant pool, so a
+     * personal credential must not be made to ask it — but a consumer store
+     * still resolves a tenant credential when that is the machine's only login
+     * (`auth.ts`'s `offered()` backs off rather than reading as "signed out"),
+     * so a panel-shaped gate would miss exactly that machine.
+     */
+    const tenantCredential: TraeCredential = { ...credential, tenantId: '269612032' }
     /** Primary = solo.trae.cn with `shared`; extra = tenant with `shared` + `only-tenanted`. */
     const duoHost = () => vi.fn(async (url: string | URL | Request) => {
       const target = String(url)
@@ -292,7 +301,7 @@ describe('catalog host fallback', () => {
     it('keeps the primary rows AND adds the rows only the extra host lists', async () => {
       const fetchImpl = duoHost()
       const client = new TraeSoloRemoteCatalogClient({
-        credential: async () => credential,
+        credential: async () => tenantCredential,
         unionBaseUrls: [TENANT],
         fetchImpl: fetchImpl as unknown as typeof fetch,
       })
@@ -307,6 +316,53 @@ describe('catalog host fallback', () => {
       expect(fetchImpl.mock.calls.map(([url]) => String(url))).toHaveLength(2)
     })
 
+    it('never asks the extra host when the credential cannot use that pool', async () => {
+      // A tenant host serves a tenant pool only. Asking it with a personal
+      // credential can only spend a request to be told so: skip before the
+      // request, not after a 401.
+      const fetchImpl = duoHost()
+      const client = new TraeSoloRemoteCatalogClient({
+        credential: async () => credential,
+        unionBaseUrls: [TENANT],
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      })
+      const models = await client.fetchModels()
+      expect(models.map(model => model.id).sort()).toEqual(['deepseek-v4.1-flash', 'glm-5.3'])
+      expect(fetchImpl.mock.calls).toHaveLength(1)
+    })
+
+    it('never asks a host that serves another region, even with a tenant credential', async () => {
+      // `DSH_TRAE_TENANT_IN_CONSUMER` is an env flag with no region, so an `ai`
+      // panel used to send the CN tenant request on every refresh: a 401 the
+      // union skipped silently, but a wasted request each time.
+      const PRIMARY = 'https://coresg-normal.trae.ai/api/remote/v1'
+      const fetchImpl = vi.fn(async (url: string | URL | Request) => new Response(JSON.stringify({ code: 0, data: { list: [
+        { function: 'solo_work_remote', models: [{ name: 'glm-5.3', display_name: 'GLM-5.3' }] },
+      ] } }), { status: 200 }))
+      // An `ai` credential resolves `regionOfCredential` to `ai`; the extra host
+      // declares it serves `cn`, so it must not be asked.
+      const aiCredential: TraeCredential = { ...tenantCredential, host: PRIMARY }
+      const aiClient = new TraeSoloRemoteCatalogClient({
+        credential: async () => aiCredential,
+        baseUrl: PRIMARY,
+        unionBaseUrls: [TENANT],
+        unionRegion: 'cn',
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      })
+      await aiClient.fetchModels()
+      expect(fetchImpl.mock.calls.map(([url]) => String(url))).toEqual([`${PRIMARY}/models?functions=${TRAE_REMOTE_DIRECTORY_FUNCTIONS.ai.join(',')}`])
+      expect(fetchImpl.mock.calls.some(([url]) => String(url).startsWith(TENANT))).toBe(false)
+      // The same configuration DOES ask it for a cn credential.
+      const cnClient = new TraeSoloRemoteCatalogClient({
+        credential: async () => tenantCredential,
+        unionBaseUrls: [TENANT],
+        unionRegion: 'cn',
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      })
+      await cnClient.fetchModels()
+      expect(fetchImpl.mock.calls.some(([url]) => String(url).startsWith(TENANT))).toBe(true)
+    })
+
     it('keeps the PRIMARY spelling when both hosts list an id that differs only by case', async () => {
       // The two hosts disagree on the case of at least 3 ids. The saved
       // `enabledModelIds` entry matches the primary's spelling, so promoting
@@ -317,7 +373,7 @@ describe('catalog host fallback', () => {
           : [{ name: 'deepseek-v4.1-flash', display_name: 'DeepSeek-V4.1-Flash' }] },
       ] } }), { status: 200 }))
       const client = new TraeSoloRemoteCatalogClient({
-        credential: async () => credential,
+        credential: async () => tenantCredential,
         unionBaseUrls: [TENANT],
         fetchImpl: fetchImpl as unknown as typeof fetch,
       })
@@ -337,12 +393,34 @@ describe('catalog host fallback', () => {
           ? new Response(JSON.stringify({ code: 0, data: { list: [{ function: 'solo_work_remote', models: [{ name: 'glm-5.3', display_name: 'GLM-5.3' }] }] } }), { status: 200 })
           : broken())
         const client = new TraeSoloRemoteCatalogClient({
-          credential: async () => credential,
+          credential: async () => tenantCredential,
           unionBaseUrls: [TENANT],
           fetchImpl: fetchImpl as unknown as typeof fetch,
         })
         await expect(client.fetchModels()).resolves.toMatchObject([{ id: 'glm-5.3' }])
       }
+    })
+
+    it('stops asking a failed extra host for a cooldown instead of paying its timeout every refresh', async () => {
+      // Discovery passes no signal, so each attempt falls back to the 30 s
+      // ceiling. A tenant host unreachable from this network must not stall
+      // every refresh, the same reasoning as OFFICIAL_RETRY_MS.
+      const fetchImpl = vi.fn(async (url: string | URL | Request) => String(url).startsWith('https://solo.trae.cn/')
+        ? new Response(JSON.stringify({ code: 0, data: { list: [{ function: 'solo_work_remote', models: [{ name: 'glm-5.3', display_name: 'GLM-5.3' }] }] } }), { status: 200 })
+        : Promise.reject(new TypeError('fetch failed')))
+      const client = new TraeSoloRemoteCatalogClient({
+        credential: async () => tenantCredential,
+        unionBaseUrls: [TENANT],
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      })
+      await client.fetchModels()
+      const afterFirst = fetchImpl.mock.calls.length
+      await client.fetchModels()
+      await client.fetchModels()
+      // Only the primary was asked again: the extra host is cooling down.
+      expect(afterFirst).toBe(2)
+      expect(fetchImpl.mock.calls.length).toBe(afterFirst + 2)
+      expect(fetchImpl.mock.calls.filter(([url]) => String(url).startsWith(TENANT))).toHaveLength(1)
     })
 
     it('does not ask the extra host when it is the host that just served the catalog', async () => {
@@ -352,7 +430,7 @@ describe('catalog host fallback', () => {
         { function: 'solo_work_remote', models: [{ name: 'glm-5.3', display_name: 'GLM-5.3' }] },
       ] } }), { status: 200 }))
       const client = new TraeSoloRemoteCatalogClient({
-        credential: async () => credential,
+        credential: async () => tenantCredential,
         baseUrl: TENANT,
         unionBaseUrls: [TENANT],
         fetchImpl: fetchImpl as unknown as typeof fetch,
@@ -363,7 +441,7 @@ describe('catalog host fallback', () => {
 
     it('is inert without unionBaseUrls, so single-host behavior is unchanged', async () => {
       const fetchImpl = duoHost()
-      const client = new TraeSoloRemoteCatalogClient({ credential: async () => credential, fetchImpl: fetchImpl as unknown as typeof fetch })
+      const client = new TraeSoloRemoteCatalogClient({ credential: async () => tenantCredential, fetchImpl: fetchImpl as unknown as typeof fetch })
       const models = await client.fetchModels()
       expect(models.map(model => model.id).sort()).toEqual(['deepseek-v4.1-flash', 'glm-5.3'])
       expect(fetchImpl.mock.calls).toHaveLength(1)
