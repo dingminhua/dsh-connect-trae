@@ -63,10 +63,8 @@ export interface TraeImageAccount {
 export interface TraeImageGenerated {
   readonly url: string
   readonly credit?: number
-  /** 尽力下载到本地的绝对路径；undefined = 下载没成功（url 仍然可用）。 */
-  readonly path?: string
-  /** 下载失败的原因（观察用；不算工具失败）。 */
-  readonly downloadError?: string
+  /** 已落盘的本地绝对路径。取不回字节时 generate 直接抛 IMAGE_UNAVAILABLE。 */
+  readonly path: string
 }
 
 function messageOf(error: unknown): string {
@@ -142,22 +140,24 @@ export class TraeImageClient {
     // 真机探针若暴露新的未知字段形态，也会在这里以 EMPTY_RESULT 浮出原文线索。
     const outcome = parseTraeImageResponse(json)
 
-    // 尽力把图下载到本地：Trae 的结果 URL 可能要求登录态或 x-ide-sign，
-    // 直接给用户看远端链接不如给本地文件路径。下载失败不影响工具成功。
-    let path: string | undefined
-    let downloadError: string | undefined
+    // 把字节取到本地。这一跳**不是**免费的缓存查询：2026-10-26 的非法尺寸探针
+    // 证明它一路走到 Ark 的 [callArkImageGeneration]（"image size must be at
+    // least 3686400 pixels"是 Ark 原话）——命中缓存才免费，未命中就是一次新
+    // 的生成。所以取不回来时绝不能当"任务成功"交回去：用户已经被扣了积分，
+    // 手里却只有一个打不开的对象 key，那是最坏的形态（#62 实测）。工具在这里
+    // 失败，并把"钱已经花了"和"图在 Trae 客户端里"一起讲清楚。
+    let path: string
     try {
       path = await downloadTraeImage(account, body.prompt, body.image_size ?? DEFAULT_TRAE_IMAGE_SIZE, outcome.url, fetchImpl)
     } catch (error: unknown) {
-      downloadError = messageOf(error)
-      this.options.logger?.warn('dsh-connect-trae: 结果图下载失败（仍返回 tos key）：' + downloadError)
+      const reason = messageOf(error)
+      this.options.logger?.warn('dsh-connect-trae: 结果图取回失败（已计费，图没交到用户手上）：' + reason)
+      throw new TraeImageError(unavailableMessage(outcome.url, reason), 'IMAGE_UNAVAILABLE')
     }
 
-    const base: { url: string, path?: string, downloadError?: string, credit?: number } = { url: outcome.url }
-    if (path !== undefined) base.path = path
-    if (downloadError !== undefined) base.downloadError = downloadError
-    if (outcome.credit !== undefined) base.credit = outcome.credit
-    return base
+    const result: { url: string, path: string, credit?: number } = { url: outcome.url, path }
+    if (outcome.credit !== undefined) result.credit = outcome.credit
+    return result
   }
 }
 
@@ -176,9 +176,10 @@ function imageExtension(contentType: string): string {
  * 这是 Trae 桌面端自己取图的形态（out/main.js 的资源拦截器就是给这种
  * 请求补签名的）。服务端按 (用户, prompt 小写, image_size) 定位图片：
  * 命中时返回的是同一张（这里若回 JSON，会看到与 POST 相同的 uri）；
- * 未命中才重新生成——那意味着多花一张的积分，故结果里如实标出。
+ * 未命中就真画一张——多花一张的积分（探针实证，见 traeImageFetchUrl 注释）。
  *
- * 返回本地路径；拿不到字节就抛错（上层只记 downloadError，不影响工具成功）。
+ * 返回本地路径；拿不到字节就抛错。**这个错必须往上抛到工具失败**：图已经
+ * 计费了，只回一个打不开的对象 key 等于让用户白花钱（#62 实测的坏形态）。
  */
 async function downloadTraeImage(
   account: TraeImageAccount,
@@ -189,11 +190,16 @@ async function downloadTraeImage(
 ): Promise<string> {
   const url = traeImageFetchUrl(account.baseUrl, prompt, size)
   const sign = computeTraeIdeSign(prompt.toLowerCase(), size.toLowerCase())
-  const headers: Record<string, string> = {
-    'Authorization': 'Cloud-IDE-JWT ' + account.credential.accessToken,
-    'x-ide-sign': sign,
-    'Accept': 'image/avif,image/webp,image/png,image/jpeg,image/*;q=0.9,*/*;q=0.8',
-  }
+  // 取图不是一条裸 GET：服务端要先按 x-app-id 找到该 app 的配置，再按
+  // (用户, prompt, size) 回查图片。只带 Authorization + x-ide-sign 时，
+  // 实测回的是 "failed to get app config: record not found"——那一步缺的
+  // 正是这套网关头，所以这里复用同一份 header 构造，只把 Accept 换成图片。
+  const headers: Record<string, string> = buildTraeHeaders(account.credential, account.identity, {
+    profile: 'model-detail',
+  })
+  headers['x-ide-sign'] = sign
+  headers['Accept'] = 'image/avif,image/webp,image/png,image/jpeg,image/*;q=0.9,*/*;q=0.8'
+  delete headers['Content-Type']
   const response = await fetchImpl(url, { method: 'GET', headers, signal: AbortSignal.timeout(IMAGE_DOWNLOAD_TIMEOUT_MS) })
   if (!response.ok) throw new Error('HTTP ' + response.status + '（GET 取图）')
   const contentType = response.headers.get('content-type') ?? ''
@@ -229,6 +235,31 @@ function asNonEmptyString(value: unknown): string | undefined {
 }
 
 /**
+ * 取图失败里最不该重试的一种：服务端在取图那一跳找不到 app config
+ * （实测 code=3003 / LLMRawChatV2 2001 'failed to get app config: record not found'）。
+ * 那是账号侧的能力缺失，不是这条 prompt 的问题——重跑只会白花积分，
+ * 所以要在这里点名，别让它看起来像"换张图试试"就能好的错。
+ */
+function isMissingAppConfig(reason: string | undefined): boolean {
+  if (reason === undefined) return false
+  return reason.includes('app config') || reason.includes('code=3003')
+}
+
+/**
+ * 取不回字节时的失败文案。这条错误会被模型读到、也可能被用户读到，所以必须
+ * 同时讲清三件事：钱已经花了、图在哪能找到、要不要再重跑。缺任何一条都会
+ * 引发最糟的反应——用户以为没成功，于是再花一次积分。
+ */
+function unavailableMessage(uri: string, reason: string): string {
+  const advice = isMissingAppConfig(reason)
+    ? '这次是服务端取图通道缺 app config（code=3003），换 prompt 重跑同样取不回，不要重试。'
+    : '可以稍后重跑，但那会再扣一次积分。'
+  return 'trae image: 图片已经生成、积分已经扣了，但字节取不回来：' + reason
+    + '\n图片对象 key：' + uri + '（Trae 内部 uri，直接打不开；在 Trae 客户端的历史里能看到这张图）'
+    + '\n' + advice
+}
+
+/**
  * 这些失败码都发生在「生图请求已经发出去」之后或尝试发出它——上游可能已经
  * 扣了积分或排了队，连续重试只会把它们再花一遍，所以进冷却。
  * INVALID_ARGS / NOT_LOGGED_IN 一分钱没花，不冷却（判据同 workbuddy）。
@@ -239,6 +270,8 @@ const BILLABLE_FAILURE_CODES: ReadonlySet<string> = new Set([
   'NO_ROUTE',
   'UPSTREAM',
   'EMPTY_RESULT',
+  // 图已经画出来了（积分已扣），只是字节没取回：重试等于再买一张。
+  'IMAGE_UNAVAILABLE',
 ])
 
 function isBillableFailure(error: unknown): boolean {
@@ -288,9 +321,10 @@ export function createTraeDrawImageTool(deps: TraeImageToolDeps): TraeToolDefini
       + '（尺寸越大越贵），而上游不回传扣费数字，以 Trae 额度面板为准。'
       + '不是常开能力：只有插件设置里为该区打开「允许模型自主生图」(drawImageEnabled) 时本工具才存在，'
       + '没打开就没得调——不要用报错去试探它开没开。'
-      + '取图口径：生成只回一个图片对象 key（tos uri），工具随后拿同一 (prompt, size) 带签名再请求一次，'
-      + '尝试把字节取回并落成本地文件；这一跳是否额外计费尚未验证，缓存未命中时可能一张图扣两次，'
-      + '所以不要为了换张图重复跑同一条 prompt；失败后有 30 秒冷却，冷却内重试不会打到上游。'
+      + '取图口径：生成只回一个图片对象 key（tos uri，打不开），工具随后拿同一 (prompt, size) 带签名再请求一次，'
+      + '把字节取回并落成本地文件。实测这一跳不是免费的缓存查询——它会真的走到上游图像生成，'
+      + '缓存命中才免费，未命中就是一次新的生成。所以取不回字节时本工具直接失败并说清积分已经扣了；'
+      + '失败后有 30 秒冷却，冷却内重试不会打到上游。不要为了换张图重复跑同一条 prompt。'
       + '尺寸：默认 ' + DEFAULT_TRAE_IMAGE_SIZE + '，也可给 宽x高（总像素需在 3686400~16777216 之间，'
       + '如 2048x2048）或预设 2k/3k/4k；过小（如 1024x1024）会被上游直接拒绝。'
       + '（改图与文生视频暂未开放：改图需要先走 TOS 上传预签名，视频要轮询素材结果。）',
@@ -315,15 +349,14 @@ export function createTraeDrawImageTool(deps: TraeImageToolDeps): TraeToolDefini
         type: 'object',
         properties: {
           url: { type: 'string', description: 'Trae 图片对象 key（tos uri），不是可直接打开的 URL。' },
-          path: { type: 'string', description: '尽力下载的本地绝对路径；缺省 = 下载失败。' },
+          path: { type: 'string', description: '已落盘的本地绝对路径；取不回字节时工具直接失败，不会走到这里。' },
           model: { type: 'string', description: '实际使用的生图模型 id。' },
           prompt: { type: 'string', description: '实际提交的画面描述。' },
           size: { type: 'string', description: '实际提交的尺寸。' },
           hint: { type: 'string', description: '给模型的后续提示（如何展示、扣费口径）。' },
-          note: { type: 'string', description: '取图失败时的说明（工具本身仍成功）。' },
           credit: { type: 'number', description: '上游若回传扣费数字，这里给出积分数。' },
         },
-        required: ['url', 'model', 'prompt', 'size', 'hint'],
+        required: ['url', 'path', 'model', 'prompt', 'size', 'hint'],
         additionalProperties: false,
       },
       render(_args: unknown, value: unknown): TraeToolContentBlock[] {
@@ -334,15 +367,19 @@ export function createTraeDrawImageTool(deps: TraeImageToolDeps): TraeToolDefini
         const credit = typeof record['credit'] === 'number' ? record['credit'] : undefined
         const path = asNonEmptyString(record['path'])
         const hint = asNonEmptyString(record['hint']) ?? ''
-        const lines = [
-          '![Trae 文生图](' + (path ?? url) + ')',
+        // 只有真拿到本地文件才画 markdown 图片：url 是 tos 对象 key（形如
+        // tos-cn-i-xxx/cn/<uid>/gen_image/…），拼进 ![](...) 只会得到一个
+        // 以当前目录为基准的坏相对路径，在宿主里渲染成碎图标。正常路径下
+        // 取图失败已经是工具失败（不会有 value），这里只是防御性兜底。
+        const lines = path === undefined
+          ? ['图片对象 key（不能直接打开）：`' + url + '`']
+          : ['![Trae 文生图](' + path + ')']
+        lines.push(
           '',
           '文生图 · 模型：' + model + (size === '' ? '' : ' · 尺寸：' + size)
           + (credit === undefined ? '' : ' · 消耗 ' + credit + ' 积分'),
-        ]
+        )
         if (path !== undefined) lines.push('本地文件：' + path)
-        const note = asNonEmptyString(record['note'])
-        if (note !== undefined) lines.push('取图说明：' + note)
         if (hint !== '') lines.push('', hint)
         return [{ type: 'text', text: lines.join('\n') }]
       },
@@ -382,24 +419,14 @@ export function createTraeDrawImageTool(deps: TraeImageToolDeps): TraeToolDefini
         const outcome = await deps.generate(account, { prompt, size }, signal)
         const value: Record<string, unknown> = {
           url: outcome.url,
+          path: outcome.path,
           model: TRAE_IMAGE_MODEL,
           prompt,
           size,
           hint:
             '这张图来自 Trae 文生图（模型 ' + TRAE_IMAGE_MODEL + '），按张计入该账号积分'
             + '（实测 1920x1920 约 8.8，上游不回传数字，以 Trae 额度面板为准）。'
-            + (outcome.path === undefined
-              ? '图片字节没能取回（url 是 Trae 的对象 key，不能直接打开）——请如实告诉用户这一点，'
-                + '不要为了"换成能打开的图"立刻重跑同一条 prompt：取图那一跳是否另计费尚未确认。'
-              : '已落本地文件，优先用 path 展示。')
-            + (outcome.downloadError === undefined ? '' : '（本地下载失败：' + outcome.downloadError + '）'),
-        }
-        if (outcome.path !== undefined) value.path = outcome.path
-        else {
-          // 生成成功、字节没取回：结果里点名这件事，别让上层只看到一个打不开的 key。
-          value.note = outcome.downloadError === undefined
-            ? '取图请求没有返回图片字节（上游未说明原因）；url 是 Trae 的对象 key，不能直接打开。'
-            : '本地取图失败：' + outcome.downloadError
+            + '已落本地文件，优先用 path 展示。',
         }
         if (outcome.credit !== undefined) value.credit = outcome.credit
         return value

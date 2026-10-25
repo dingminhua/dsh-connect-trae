@@ -66,6 +66,8 @@ export type TraeImageErrorCode =
   | 'UPSTREAM'
   | 'EMPTY_RESULT'
   | 'COOLDOWN'
+  /** 图已生成（积分已扣）但字节取不回；重试等于再买一张。 */
+  | 'IMAGE_UNAVAILABLE'
 
 export class TraeImageError extends Error {
   readonly code: TraeImageErrorCode
@@ -124,9 +126,12 @@ export function buildTraeImageBody(input: TraeImageRequestInput): TraeImageReque
 /**
  * 取图 GET 的完整 URL：与生成同路径，prompt 与 image_size 走查询参数。
  * 服务端按 (用户, prompt 小写, size) 查缓存：命中返回既有 uri（免费），
- * 未命中才生成（计费）——所以调用方应"先 POST 生成、再 GET 取字节"，
- * 并且 GET 必须带 x-ide-sign。size 缺省时与生成缺省一致（1920x1920），
- * 但 GET 无法复现"缺省"（签名要求显式 image_size 参数），故这里补默认值。
+ * 未命中**就真画一张**（计费）——2026-10-26 的非法尺寸探针用 100x100 打这条
+ * GET，拿回来的是 Ark 自己的报错 "image size must be at least 3686400 pixels"，
+ * 说明它一路走到了 [callArkImageGeneration]，不是纯缓存查询。所以 GET 必须带
+ * x-ide-sign，且只在"刚 POST 出图、要取这一张的字节"时调用；把它当免费探测
+ * 会白烧积分。size 缺省时与生成缺省一致（1920x1920），但 GET 无法复现"缺省"
+ * （签名要求显式 image_size 参数），故这里补默认值。
  */
 export function traeImageFetchUrl(baseUrl: string, prompt: string, size: string | undefined): string {
   const u = new URL(TRAE_TOOL_TEXT_TO_IMAGE_PATH, baseUrl)
