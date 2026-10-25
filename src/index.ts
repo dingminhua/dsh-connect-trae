@@ -179,6 +179,12 @@ export { createTraeShim, type TraeShim } from './shim.ts'
 export { UnconfiguredTraeUpstreamClient, type TraeChatResult, type TraeUpstreamClient } from './upstream.ts'
 export { classifyProbeError, classifyProbeResult, MAX_PROBE_INPUT_TOKENS, probeBody, probeModelsSequentially, probeOneModel, TRAE_PROBE_TIMEOUT_MS, type TraeProbeResult, type TraeProbeVerdict } from './model-probe.ts'
 export { TRAE_MODELS_TEST_PATH, type TraeModelsTestResponse, type TraeModelProbeVerdict } from './status-paths.ts'
+import {
+  TraeImageClient,
+  registerTraeDrawImageTool,
+  type TraeImageAccount,
+  type ToolsServiceLike,
+} from './image-tool.ts'
 
 export const name = 'dsh-connect-trae'
 export const inject = ['llm']
@@ -230,6 +236,13 @@ export interface TraeRegionState {
   enabledModelIds?: string[]
   /** Models the user explicitly enabled for image input in this region. */
   imageModelIds?: string[]
+  /**
+   * Whether the model may call trae_draw_image for this panel. Opt-IN:
+   * image generation spends real credits, so an absent value is never consent
+   * (the same rule workbuddy's imageToolEnabled follows). Declared in the
+   * schema below — a field missing from the schema is dropped on every save.
+   */
+  drawImageEnabled?: boolean
   /** Local DSH context budget per model in this region. */
   contextBudgets?: Record<string, number>
   /**
@@ -464,6 +477,9 @@ const regionStateConfig = z.object({
   lastCatalog: z.array(modelConfig).default([]),
   enabledModelIds: z.array(z.string()).default([]),
   imageModelIds: z.array(z.string()).default([]),
+  // Opt-IN gate for the trae_draw_image tool. Declared here because an
+  // undeclared field is dropped on every save of the settings form.
+  drawImageEnabled: z.boolean().default(false).description('Allow the model to generate images with trae_draw_image on this panel (consumes credits; default off)'),
   contextBudgets: z.dict(z.number().step(1).min(1)).default({}),
   // WHERE this region's credit readout sits (learned from workbuddy #62).
   // Defaults to `composer` because that is the seat that already existed, so an
@@ -2056,6 +2072,66 @@ export function apply(ctx: Context, config: Config): void {
     ctx.effect(() => settings.configure({ auto: true }, ctx.fiber))
   })
 
+  // ── trae_draw_image: Trae text-to-image exposed as an agent tool ─────────
+  //
+  // Opt-IN per panel (only drawImageEnabled === true counts as consent):
+  // generation charges credits, so upgrading a user into a spend-capability
+  // they never asked for is off the table. Awaited through ctx.inject like
+  // workbuddy's tools mount — a one-time sample would silently miss a Host
+  // that publishes the tools service after this line runs.
+  const drawImageClient = new TraeImageClient({ logger: ctx.logger })
+  let drawImageTools: ToolsServiceLike | undefined
+  let disposeDrawImageTool: (() => void) | undefined
+  const drawImagePanels = (value: Config): TraePanel[] =>
+    TRAE_PANELS.filter(panel => panel !== 'enterprise'
+      && regionEnabled(value, panel)
+      && regionStateOf(value, panel).drawImageEnabled === true)
+  const syncTraeDrawImageTool = (value: Config): void => {
+    if (drawImagePanels(value).length === 0) {
+      disposeDrawImageTool?.()
+      disposeDrawImageTool = undefined
+      return
+    }
+    if (disposeDrawImageTool !== undefined || drawImageTools === undefined) return
+    disposeDrawImageTool = registerTraeDrawImageTool(drawImageTools, {
+      // Every call re-picks the panel and re-reads the credential: accounts
+      // and per-panel switches may flip between two calls. Only enabled AND
+      // opted-in panels qualify; store.resolve() throws while logged out,
+      // folded into "try the next panel", finally undefined — the tool then
+      // reports "no usable account" instead of a raw exception.
+      // v1 skips the enterprise panel: its tenant gateway is a second
+      // billing surface with unverified image behaviour; the consumer CN
+      // gateway serves the same accounts.
+      resolveAccount: async (): Promise<TraeImageAccount | undefined> => {
+        for (const panel of drawImagePanels(current())) {
+          const stack = stacks[panel]
+          try {
+            return {
+              credential: await stack.store.resolve(),
+              identity: await stack.identity(),
+              baseUrl: REGION_GATEWAYS[stack.region].chat,
+            }
+          } catch {
+            continue
+          }
+        }
+        return undefined
+      },
+      generate: (account, request, signal) => drawImageClient.generate(account, request, signal),
+      logger: ctx.logger,
+    })
+  }
+  ctx.inject(['tools'], (toolsCtx) => {
+    drawImageTools = (toolsCtx as unknown as { tools?: ToolsServiceLike }).tools
+    if (drawImageTools === undefined) return
+    syncTraeDrawImageTool(current())
+    toolsCtx.effect(() => () => {
+      disposeDrawImageTool?.()
+      disposeDrawImageTool = undefined
+      drawImageTools = undefined
+    })
+  })
+
   // 0.1.7 hands volatile values back as live references and announces each
   // write on this event, so the selections are re-read after one — the live
   // references resolve to the updated document, which is how `current()` picks
@@ -2063,6 +2139,7 @@ export function apply(ctx: Context, config: Config): void {
   ;(ctx as unknown as { on(name: string, listener: () => void): unknown })
     .on('loader/volatile-update', () => {
       applySelection(current())
+      syncTraeDrawImageTool(current())
     })
 
   let stopped = false
