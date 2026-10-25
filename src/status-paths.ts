@@ -1223,6 +1223,70 @@ export function nextRegionPool(
 }
 
 /**
+ * Panels whose text-to-image path this plugin has actually MEASURED, in
+ * `TRAE_PANELS` tab order.
+ *
+ * ONE entry today. The other two are refused for the SAME reason — no evidence
+ * — which is exactly the asymmetry the review of #62 held the PR on:
+ *
+ *  - `enterprise` bills through the tenant gateway, a second billing surface
+ *    whose image behaviour has never been probed;
+ *  - `ai` answers on `coresg-normal.trae.ai`, where no `tool_text_to_image`
+ *    request has ever run either — every measurement behind this tool was
+ *    taken against `trae-api-cn.mchost.guru`. Refusing one unverified gateway
+ *    while serving another is not a rule, it is an accident.
+ *
+ * Adding a panel means adding its evidence in the same change (the precedent
+ * for international claims is `docs/INTL_SG_EVIDENCE.md`). Order is
+ * significant: the tool's resolver walks `TRAE_PANELS` order and takes the
+ * FIRST consenting panel, so `cn` — the only measured one — always answers
+ * first.
+ */
+export const DRAW_IMAGE_PANELS: readonly TraePanel[] = ['cn']
+
+/**
+ * Whether ONE panel's 「允许模型自主生图」 grant is in force, i.e. its box was
+ * ticked. ONLY the literal `true` counts: a hand-edited `'yes'` or a `1` is a
+ * typo, not consent to spend credits. (A `{ get(): true }` live reference — the
+ * DSH 0.1.7 slot shape — IS decoded to the true it holds first, see
+ * {@link unwrapVolatileDeep}: that is the Host's own document, not a hand edit.)
+ *
+ * `value` may be the whole settings section or the `regions` map (see
+ * {@link regionsMapOf}).
+ */
+export function drawImageEnabledOf(value: unknown, panel: TraePanel): boolean {
+  return regionSlotOf(value, panel)['drawImageEnabled'] === true
+}
+
+/**
+ * The panels that may register `trae_draw_image` RIGHT NOW — the single
+ * judgment behind both the tool's registration and its account resolver, and
+ * therefore the only place a user's credits can be exposed by accident.
+ *
+ * Pure and exported on purpose (review of #62, item 3): the first version kept
+ * this rule inside `apply()`'s closure, so "does ticking the box actually
+ * grant anything" could only be code-reviewed, never tested.
+ *
+ * THREE gates, all required: the panel must be measured
+ * ({@link DRAW_IMAGE_PANELS}), its provider must be switched ON (opt-out rule,
+ * so a config written before the switch existed still counts), and the panel
+ * must carry an explicit grant. A tick on a switched-off provider is STORED
+ * consent, not a live grant: flipping the provider back on restores the tool
+ * without asking again, which is why both gates are read here rather than at
+ * the checkbox.
+ *
+ * `enterprise` is refused structurally, even if someone later adds it to
+ * {@link DRAW_IMAGE_PANELS}: consent must never cross into the tenant billing
+ * surface by editing a list.
+ */
+export function drawImagePanelsOf(value: unknown): TraePanel[] {
+  return TRAE_PANELS.filter(panel => panel !== 'enterprise'
+    && DRAW_IMAGE_PANELS.includes(panel)
+    && regionEnabledOf(value, panel)
+    && drawImageEnabledOf(value, panel))
+}
+
+/**
  * Build the next `regions` settings value for one panel's 「允许模型自主生图」
  * switch (`drawImageEnabled`, `trae_draw_image`).
  *

@@ -37,7 +37,7 @@ import {
 } from './adapter.ts'
 import type { TraeWebAccountState, TraeWebCredits } from './status-paths.ts'
 import type { TraeCheckinClaim, TraeCheckinStatus } from './usage.ts'
-import { configuredAccountsOf, unwrapVolatile, unwrapVolatileDeep } from './status-paths.ts'
+import { configuredAccountsOf, drawImagePanelsOf, unwrapVolatile, unwrapVolatileDeep } from './status-paths.ts'
 import type { TraeAdapter } from './adapter.ts'
 import { isTraeAccountId, traeAccountId, TraeCredentialStore } from './auth.ts'
 import { piAiRuntimeInfo } from './pi-ai-runtime.ts'
@@ -2079,15 +2079,17 @@ export function apply(ctx: Context, config: Config): void {
   // they never asked for is off the table. Awaited through ctx.inject like
   // workbuddy's tools mount — a one-time sample would silently miss a Host
   // that publishes the tools service after this line runs.
+  //
+  // WHICH panels may serve is deliberately NOT decided here: the whole rule —
+  // measured panel (cn only for now), provider switched on, explicit grant —
+  // lives in `drawImagePanelsOf` (status-paths.ts) as a pure function, so it is
+  // unit-tested instead of only code-reviewed (review of #62, item 3). This
+  // block only translates that answer into a registration.
   const drawImageClient = new TraeImageClient({ logger: ctx.logger })
   let drawImageTools: ToolsServiceLike | undefined
   let disposeDrawImageTool: (() => void) | undefined
-  const drawImagePanels = (value: Config): TraePanel[] =>
-    TRAE_PANELS.filter(panel => panel !== 'enterprise'
-      && regionEnabled(value, panel)
-      && regionStateOf(value, panel).drawImageEnabled === true)
   const syncTraeDrawImageTool = (value: Config): void => {
-    if (drawImagePanels(value).length === 0) {
+    if (drawImagePanelsOf(value).length === 0) {
       disposeDrawImageTool?.()
       disposeDrawImageTool = undefined
       return
@@ -2096,14 +2098,12 @@ export function apply(ctx: Context, config: Config): void {
     disposeDrawImageTool = registerTraeDrawImageTool(drawImageTools, {
       // Every call re-picks the panel and re-reads the credential: accounts
       // and per-panel switches may flip between two calls. Only enabled AND
-      // opted-in panels qualify; store.resolve() throws while logged out,
+      // opted-in AND measured panels qualify (`drawImagePanelsOf` decides which,
+      // in `TRAE_PANELS` order); store.resolve() throws while logged out,
       // folded into "try the next panel", finally undefined — the tool then
       // reports "no usable account" instead of a raw exception.
-      // v1 skips the enterprise panel: its tenant gateway is a second
-      // billing surface with unverified image behaviour; the consumer CN
-      // gateway serves the same accounts.
       resolveAccount: async (): Promise<TraeImageAccount | undefined> => {
-        for (const panel of drawImagePanels(current())) {
+        for (const panel of drawImagePanelsOf(current())) {
           const stack = stacks[panel]
           try {
             return {

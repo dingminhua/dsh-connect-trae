@@ -10,6 +10,7 @@ import type { ReactNode } from 'react'
 import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client'
 import {
   configuredAccountsOf,
+  DRAW_IMAGE_PANELS,
   nextRegionEnabled,
   nextRegionCreditPosition,
   nextRegionDirectory,
@@ -1178,6 +1179,17 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
    */
   const committedDrawImage = (regionSlot as { drawImageEnabled?: unknown } | undefined)?.drawImageEnabled === true
   const drawImageOn = drawImageDraft ?? committedDrawImage
+  /**
+   * Whether the active panel can serve text-to-image at all. This is the SAME
+   * list the Host registers from (`DRAW_IMAGE_PANELS`, imported rather than
+   * restated), so the box can never offer a grant the Host will then refuse:
+   * a switch that ticks and does nothing is the exact failure this whole
+   * opt-in must not have. Two panels are out — `enterprise` bills through a
+   * tenant gateway, and `ai` has never been probed at all (every measurement
+   * behind the credit figures is CN), so neither may spend credits.
+   */
+  const drawImageServable = (DRAW_IMAGE_PANELS as readonly TraePanel[]).includes(activeRegion)
+  const drawImageUnavailableHint = activeRegion === 'ai' ? t('row.drawImageHintAi') : t('row.drawImageHintEnterprise')
   void settingsRevision
   // The card always renders the last-refreshed raw directory (`status.models`
   // carries `lastCatalog`), never a stale saved snapshot. Enabled flags come
@@ -2139,25 +2151,27 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
                       {/* Per-panel 生图 consent (opt-in). The tool is registered
                           ONLY while this box is ticked, so an unticked box means
                           the model has no way to spend credits on images — the
-                          grant is the affordance, not a hint. Enterprise is
-                          refused outright: that panel bills through a tenant
-                          gateway this plugin has never measured. */}
+                          grant is the affordance, not a hint. The two panels
+                          that never measured image behaviour are refused
+                          outright and say why (`DRAW_IMAGE_PANELS`, the same
+                          list the Host registers from): enterprise bills through
+                          a tenant gateway, ai was never probed. */}
                       <label
                         className="dsm-trae-draw-image"
-                        data-disabled={activeRegion === 'enterprise' ? 'true' : undefined}
-                        title={activeRegion === 'enterprise' ? t('row.drawImageHintEnterprise') : t('row.drawImageHint')}
+                        data-disabled={drawImageServable ? undefined : 'true'}
+                        title={drawImageServable ? t('row.drawImageHint') : drawImageUnavailableHint}
                       >
                         <input
                           type="checkbox"
                           checked={drawImageOn}
-                          disabled={activeRegion === 'enterprise' || busy || saving || savingSettings || settingsScope?.getSnapshot().writable !== true}
+                          disabled={!drawImageServable || busy || saving || savingSettings || settingsScope?.getSnapshot().writable !== true}
                           onChange={event => { void writeDrawImage(event.target.checked) }}
                         />
                         <span>
                           {t('row.drawImage')}
                           <span className="dsm-trae-draw-image-hint">
                             {' '}
-                            {activeRegion === 'enterprise' ? t('row.drawImageHintEnterprise') : t('row.drawImageHint')}
+                            {drawImageServable ? t('row.drawImageHint') : drawImageUnavailableHint}
                           </span>
                         </span>
                       </label>

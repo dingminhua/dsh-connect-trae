@@ -139,6 +139,31 @@ describe('the 自主生图 switch on the card', () => {
     expect(cn.pool).toEqual({ enabled: true, order: ['account-1'] })
   })
 
+  it('refuses the international panel: the box is disabled and says why', async () => {
+    // Image generation has only been measured on Trae CN, so the AI panel must
+    // not offer a grant the Host would refuse anyway. Disabled + explained, not
+    // hidden: a missing switch reads as "the plugin forgot this panel".
+    vi.stubGlobal('fetch', async (input: string | URL | Request) => {
+      const url = String(input)
+      if (url.includes(TRAE_USAGE_PATH)) return new Response(JSON.stringify(usageDocument()), { status: 200 })
+      throw new Error(`unexpected fetch: ${url}`)
+    })
+    const { scope } = makeScope({ regions: { ai: { enabled: true, drawImageEnabled: true } } })
+    render(<TraeUsageCard t={t} settingsScope={scope as never} />)
+    fireEvent.click(screen.getByRole('button', { name: /row\.title/ }))
+    fireEvent.click(await screen.findByRole('tab', { name: 'row.tabAi' }))
+    fireEvent.click(await screen.findByRole('tab', { name: 'row.panelModels' }))
+    await waitFor(() => { expect(drawImageSwitch()).toBeTruthy() })
+
+    const box = drawImageSwitch()
+    expect(box.disabled).toBe(true)
+    // A stored tick does not survive the refusal either: the box shows the
+    // panel's refusal, never "checked but dead".
+    expect(box.checked).toBe(true)
+    expect(box.closest('label')?.textContent).toContain('row.drawImageHintAi')
+    expect(box.closest('label')?.getAttribute('title')).toBe('row.drawImageHintAi')
+  })
+
   it('renders CHECKED from a stored grant, and unticks it back to false', async () => {
     stubFetch(usageDocument())
     const { scope, writes } = makeScope({ regions: { cn: { enabled: true, drawImageEnabled: true } } })
