@@ -15,11 +15,14 @@
  *   - image_size 校验在 Ark 侧：格式 'WIDTHxHEIGHT' 或预设 2k/3k/4k，
  *     总像素 ∈ [3686400, 16777216]（512x512 与 1024x1024 会被拒）；
  *     缺省时输出 1920x1920。
- *   - 同一路径支持 GET：?prompt=<P>&image_size=<S> + x-ide-sign 头。GET 会
- *     按 (prompt, size) 查找该用户的既有缓存图：命中直接返回 uri（免费，不
- *     重新生成），未命中才真正生成（计费）。桌面端取图用的正是这个 GET。
- *     —— 故 POST 生成之后必须立刻 GET 同一 (prompt, size) 才能把图片字节
- *     下载下来；这是图片链路的组成部分，不是第二次计费。
+ *   - 同一路径的 GET（?prompt=<P>&image_size=<S> + x-ide-sign 头）**不是取图**，
+ *     而是又一次生成：2026-10-26 决定性实测，同一 (prompt, size) 紧接着 GET，
+ *     回来的是另一个 uri、耗时 27 秒、零像素（等于多扣一张）。发版代码不再调它。
+ *   - 真正的取图是两步、不再生成（同日实测，零成本）：POST
+ *     /api/ide/v1/get_resource_url { uri_list: [<tos key>] } →
+ *     { url_map: { "<key>": "<byteimg 签名 URL>" } }，再直接 GET 那个签名 URL
+ *     （不带任何 Trae 头）即得图片字节（实测 image/jpeg、1,155,578 字节、
+ *     头 ffd8ffe0）。签名 URL 带 x-expires，过期重新解析即可。
  *   - SSE 端点 tool_text_to_image_stream 的事件名是小写：heartbeat（data:
  *     {timestamp_ms, status}）、result（data: {uri}）、done（data:
  *     {finish_reason}）。
@@ -65,6 +68,8 @@ export type TraeImageErrorCode =
   | 'NO_ROUTE'
   | 'UPSTREAM'
   | 'EMPTY_RESULT'
+  /** 图已经生成、积分已经扣了，但字节取不回来（解析签名 URL 或下载失败）。 */
+  | 'IMAGE_UNAVAILABLE'
   | 'COOLDOWN'
 
 export class TraeImageError extends Error {
@@ -131,15 +136,65 @@ export function buildTraeImageBody(input: TraeImageRequestInput): TraeImageReque
  * 更早的非法尺寸探针（100x100）也印证了同一件事：报错直接来自 Ark 的
  * "[callArkImageGeneration] … image size must be at least 3686400 pixels"。
  *
- * 所以发版代码**不再调用它**（保留仅为测试与将来可能的探测）。Trae 客户端
- * 能显示这张图，说明另有一条按 uri 取字节的通道（iCube material 的
- * get_url + x-icube-token，基址来自运行时 boot config），还没打通。
+ * 所以发版代码**不再调用它**（保留仅为测试与将来可能的探测）。按 uri 取字节
+ * 的正路是 getResourceUrlBody + parseTraeResourceUrlMap（见下方），它不会再画一张。
  */
 export function traeImageFetchUrl(baseUrl: string, prompt: string, size: string | undefined): string {
   const u = new URL(TRAE_TOOL_TEXT_TO_IMAGE_PATH, baseUrl)
   u.searchParams.set('prompt', prompt)
   u.searchParams.set('image_size', (size ?? DEFAULT_TRAE_IMAGE_SIZE).toLowerCase())
   return u.toString()
+}
+
+/**
+ * uri → 可下载 URL 的解析端点。2026-10-26 活体确认：body 必须正是
+ * `{ uri_list: [<tos key>] }`；其它所有形态（{uri}、{path}、{resource_uri}、
+ * {uris:[…]}、{resources:[…]}、{scene:'report',uri}、GET ?uri=）都回
+ * HTTP 200 + 空 url_map——不报错，只是什么都不给。
+ */
+export const TRAE_RESOURCE_URL_PATH = '/api/ide/v1/get_resource_url'
+
+/** get_resource_url 的请求体。 */
+export interface TraeResourceUrlBody {
+  uri_list: string[]
+}
+
+/** 组一次解析请求体；空 uri 在这里拦下（INVALID_ARGS，一分钱没花）。 */
+export function buildTraeResourceUrlBody(uri: string): TraeResourceUrlBody {
+  const key = typeof uri === 'string' ? uri.trim() : ''
+  if (key === '') throw new TraeImageError('trae image: 解析图片地址需要非空的 uri。', 'INVALID_ARGS')
+  return { uri_list: [key] }
+}
+
+/**
+ * 解析应答里的 url_map。服务端对认不出的 key 就回空表（不报错），
+ * 所以非字符串/空串条目一律丢弃，由调用方按"缺地址"处理。
+ */
+export function parseTraeResourceUrlMap(json: unknown): Record<string, string> {
+  const record = json !== null && typeof json === 'object' ? json as Record<string, unknown> : {}
+  const raw = record['url_map']
+  const map: Record<string, string> = {}
+  if (raw === null || typeof raw !== 'object') return map
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof value === 'string' && value.trim() !== '') map[key] = value.trim()
+  }
+  return map
+}
+
+/**
+ * 取该 uri 的签名下载地址。空表 = 服务端认不出这个 key，此时图片已经
+ * 生成并计费，却拿不到字节——如实抛 IMAGE_UNAVAILABLE，别谎报成功。
+ */
+export function signedTraeResourceUrl(json: unknown, uri: string): string {
+  const map = parseTraeResourceUrlMap(json)
+  const signed = map[uri] ?? map[uri.trim()]
+  if (signed === undefined) {
+    throw new TraeImageError(
+      'trae image: 图片已经生成、积分已经扣了，但服务端没给出可下载地址（url_map 里没有这个 key）：' + uri,
+      'IMAGE_UNAVAILABLE',
+    )
+  }
+  return signed
 }
 
 /** 应答里图片地址的字段名。活体看到的就是 uri；其余字段是 Rust 端
