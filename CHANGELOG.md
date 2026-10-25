@@ -1,5 +1,89 @@
 # Changelog
 
+## 4.6.1 (2026-10-26)
+
+> **4.6.0 说「图片字节插件拿不到」，这一版把这句话纠正过来。** 那条按
+> `?prompt=&image_size=` 再打一次 GET 的路确实不是取图、而是**又一次生成**，但
+> 「uri → 字节」不是没有通道，只是请求体形态特殊。现在图片会被取回来、落成会话文件、
+> 直接显示在聊天里。
+
+### 修复
+
+- **文生图把图片真的取回来了**。
+  - **取图通道**：`POST /api/ide/v1/get_resource_url`，body 必须正是
+    `{"uri_list":["<tos key>"]}`——`{uri}`/`{path}`/`{resource_uri}`/`{uris:[…]}`/
+    `{resources:[…]}`/`{scene:'report',uri}` 以及 GET `?uri=` 统统只回 200 + 空
+    `url_map`（不报错、也不给地址）。应答是
+    `{"url_map":{"<key>":"<byteimg 签名 URL>"}}`，再直接 GET 那个签名地址（**不带任何
+    Trae 头**，签名在 query 里）即得字节——实测 `image/jpeg`、1,155,578 字节、头
+    `ffd8ffe0`。对已有 key 这一步**零成本**，不会重新生成。
+  - **图片落成会话文件并直接显示**：`generate` 返回 `{url, credit?, bytes, mimeType}`，
+    `execute` 把字节写进 `<session cwd>/trae-images/trae-YYYYMMDD-HHMMSS-<hex>.<ext>`
+    （扩展名跟 mime 走），`output.schema` 恢复 `path` 并进 `required`，`render` 输出
+    `![Trae 文生图](trae-images/…)`。DSH 的聊天按 session cwd 解析相对路径、再过宿主的
+    `api/file` 鉴权路由取字节，所以图真的显示出来，不需要用户去 Trae 客户端翻历史。
+  - **失败语义**：图已生成、积分已扣、但字节取不回来（`url_map` 里没有这个 key / CDN 非
+    2xx / 0 字节 / 落盘失败）→ `IMAGE_UNAVAILABLE`，进 30 秒冷却，文案明说「积分已经扣了」
+    并给出对象 key 供排障，要求模型**不要重试**。
+  - 改图与文生视频仍然**不做**，也不留半截入口。
+- **图片现在落在会话目录，不再落到宿主进程的 cwd**。
+  - 用户在实际 web 会话里跑了一次：工具返回 `trae-images/trae-20261026-034146-1c0a91.jpg`，
+    聊天里却显示「图片无法预览」。文件确实生成了（789,453 字节真 JPEG），但落在**启动 DSH
+    的那个目录**里，而不是会话目录。
+  - 根因：宿主的 `ToolExecution` 不带会话目录。`cwd` 字段 4.15.x 仍标 `Reserved`（不填），
+    `agent.session.cwd` 这个字段不存在，`agent.session.header.cwd` 又只是**创建时**目录
+    （`/cd` 之后就不对）。插件此前只能回退到 `process.cwd()`。
+  - 现在照宿主自己的 `dsh-tool-*` 取法：`ctx.inject(['workingDirectory'])` 后调
+    `workingDirectory.ensure(exec.agent, exec.signal)`（它读 session projection
+    `workingDirectory`，即实时目录，并确认目录还在）。阶梯：宿主 service →
+    `agent.session.header.cwd` → `process.cwd()`。`TraeImageToolDeps` 新增可选
+    `directoryOf`，service 读取放在 `src/index.ts` 注入，`image-tool` 保持纯函数可单测。
+- **取图那一跳的 HTTP 错误不再谎报成因**。
+  - 此前它复用生图那套状态码映射，取图接口回 403 会报 `AUTH`（「上游拒绝了凭据」）、回
+    429 会报 `RATE_LIMIT`——可这时图早已生成、积分早已扣掉，用户照这句话去重新登录，
+    钱花了图还是拿不到。
+  - 现在取图阶段（解析地址、下载字节）的 HTTP 失败一律归 `IMAGE_UNAVAILABLE`，文案保留
+    状态码与上游原文、附上对象 key。冷却判据只看 code，`IMAGE_UNAVAILABLE` 仍在冷却集合里，
+    不会因此变成可重试。
+- **下载回来的东西必须是图片**。签名地址过期时 CDN 常拿 `200` 回一页 HTML，而
+  `content-type` 可能仍写着 `image/jpeg`。现在按字节魔数判定
+  （JPEG/PNG/GIF/WebP/BMP），认不出就如实报 `IMAGE_UNAVAILABLE`（带前 4 字节），
+  不再落一个打不开的 `.jpg`。
+
+### 变更
+
+- **删掉已证明是「又一次生成」的配套代码**：`src/image-gen-trae.ts` 里的
+  `traeImageFetchUrl()`、`computeTraeIdeSign()`、`traeImageSignFields()` 与
+  `TRAE_IMAGE_SIGN_SALT` 全部移除（连同它们的测试）。取图跟 prompt 没有任何关系，
+  留着只会诱导后人再打一次那条会再扣费的 GET。
+
+### 测试
+
+- `tests/image-tool-download.spec.ts` 5 例：stub fetch 断言**三跳**（POST 生图 →
+  POST `get_resource_url` → GET 签名地址），且**没有任何**带 `image_size=` 的请求；
+  `uri_list` 请求体；CDN 请求不带 `Authorization`、只带 `Accept: image/*`；
+  空 `url_map` → `IMAGE_UNAVAILABLE`；取图跳回 401/403/429/500/502 一律
+  `IMAGE_UNAVAILABLE`（断言文案含状态码与对象 key，且**不含**「拒绝了凭据」「限流」）；
+  取图跳回 `200` 但字节不是图片（HTML 错误页）→ `IMAGE_UNAVAILABLE`。
+- `tests/image-gen-trae.spec.ts` 21 例：新增 `buildTraeResourceUrlBody`（只产出
+  `uri_list`、去空白、空 uri → `INVALID_ARGS`）、`parseTraeResourceUrlMap`（去空白、
+  坏形状回空表、丢弃非字符串/空串）、`signedTraeResourceUrl`（取到地址、缺 key 即
+  `IMAGE_UNAVAILABLE` 并带 key）三组纯函数单测。
+- `tests/image-tool-render.spec.ts` 12 例：字节真落盘、文件名与后缀、markdown 用相对路径
+  且不含 key、credit 回显、写盘失败即 `IMAGE_UNAVAILABLE`、`IMAGE_UNAVAILABLE` 进冷却而
+  `INVALID_ARGS` 不进；以及会话目录阶梯三条——只有 `agent.session.header.cwd` 时写进它、
+  实时 `workingDirectory` 优先于创建时目录、`directoryOf` 注入（`index.ts` 接 projection
+  的方式）优先于两者。
+- 全量 **92 files / 1180 tests** 通过（16 个 live 探针被 `TRAE_LIVE` 跳过且未提交，
+  跑一次烧一次积分）；CI 在 `ubuntu-latest` 与 `windows-latest` 双平台通过。
+- 真机（零成本，复用既有 key）：签名 → 1,155,578 字节 JPEG → 落盘同样字节 →
+  render 输出 markdown 图片，整条链路跑通。除 POST 之外整条链路都在真账号上验过。
+
+### 文档
+
+- `README.md` / `README.en.md` 的「文生图」条目与协议表改成「两步取图 + 落盘 + 相对
+  路径显示」，并保留「那条 GET 是又一次生成」的实测记录作为反面证据。
+
 ## 4.6.0 (2026-10-26)
 
 > **文生图先只在国内版面世，并且必须由用户亲手勾选。** 企业版的租户网关是另一条
