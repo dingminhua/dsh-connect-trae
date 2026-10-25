@@ -315,6 +315,57 @@ function displayKey(name: string): string {
 }
 
 /**
+ * DSH thinking level -> the `reasoning_effort` name Trae's wire accepts.
+ *
+ * The INVERSE of `EFFORT_MAP` in `model-metadata.ts`, and it must stay an exact
+ * mirror of it: a level this table does not name has no wire spelling, so it is
+ * DROPPED rather than guessed (issue #60).
+ *
+ * The previous form was a ternary chain ending in a bare `'high'`:
+ *
+ *     effort === 'low' ? 'light' : effort === 'xhigh' ? 'extra_high' : 'high'
+ *
+ * so EVERY unnamed level was sent as `high`. That is not a harmless default: it
+ * is a silent downgrade. Trae's own vocabulary carries five levels
+ * (`low / medium / high / extra_high / max`, verified in the client bundle's
+ * `reasoning_effort` i18n keys), and its remote config publishes the list per
+ * model (`AI.agent.model.reasoning_effort_level_by_agent_model_v2`). The day
+ * upstream starts advertising `max`, a user picking Max would have sent `high`
+ * — no error, no log, and a cheaper answer than the one they asked for. A
+ * dropped field lets the upstream apply its own default, which is at least the
+ * model's real behaviour instead of a wrong claim about it.
+ *
+ * Measured 2026-10-25 on a live CN credential (98 directory rows): options are
+ * `["light","high"]`, `["high","extra_high"]`, `["light","high","extra_high"]`
+ * or absent — `max` is not published YET, which is exactly why this must not
+ * wait for it to be.
+ */
+const WIRE_EFFORT_MAP: Readonly<Record<string, string>> = {
+  low: 'light',
+  medium: 'medium',
+  high: 'high',
+  xhigh: 'extra_high',
+  max: 'max',
+}
+
+/**
+ * Map a model's advertised levels to their wire names, dropping unnamed ones.
+ *
+ * `flatMap` rather than `map` + a placeholder: an unmappable level must not
+ * produce an entry at all, because every consumer reads "is there a value here"
+ * as "may this level be sent" (see `thinkingLevelMap` in `adapter.ts` and the
+ * `delete input['reasoning_effort']` fallback in `solo-bridge.ts`).
+ */
+function wireEffortsOf(supported: readonly TraeReasoningEffort[]): Partial<Record<TraeReasoningEffort, string>> {
+  return Object.fromEntries(
+    supported.flatMap(effort => {
+      const wire = WIRE_EFFORT_MAP[effort]
+      return wire === undefined ? [] : [[effort, wire]]
+    }),
+  ) as Partial<Record<TraeReasoningEffort, string>>
+}
+
+/**
  * Merge the two Trae model sources into one authoritative catalog.
  *
  * `remote` (the solo.trae.cn `/models` directory) is the authoritative model
@@ -474,7 +525,7 @@ export function mergeTraeModelSources(
       reasoningSupported: model.reasoningSupported,
       ...model.reasoning === undefined ? {} : {
         reasoning: model.reasoning,
-        reasoningEfforts: Object.fromEntries(model.reasoning.supported.map(effort => [effort, effort === 'low' ? 'light' : effort === 'xhigh' ? 'extra_high' : 'high'])) as Partial<Record<TraeReasoningEffort, string>>,
+        reasoningEfforts: wireEffortsOf(model.reasoning.supported),
       },
       ...wireModel !== undefined && wireModel.id !== '' && wireModel.id !== model.id ? { wireConfigName: wireModel.id } : {},
       ...wireFunction === undefined ? {} : { wireFunction },
@@ -583,7 +634,7 @@ export function mergeTraeModelSources(
           supported: [...wireModel.reasoning.supported],
           ...wireModel.reasoning.defaultEffort === undefined ? {} : { defaultEffort: wireModel.reasoning.defaultEffort },
         },
-        reasoningEfforts: Object.fromEntries(wireModel.reasoning.supported.map(effort => [effort, effort === 'low' ? 'light' : effort === 'xhigh' ? 'extra_high' : 'high'])) as Partial<Record<TraeReasoningEffort, string>>,
+        reasoningEfforts: wireEffortsOf(wireModel.reasoning.supported),
       },
       // The row's own id IS its wire `config_name` (the roster's ids are the
       // names `llm_utils_chat` accepts), so no `wireConfigName` is emitted.
@@ -677,7 +728,7 @@ export function discoveredCatalog(models: readonly TraeDiscoveredModel[]): TraeM
       reasoningSupported: model.reasoningSupported,
       ...model.reasoning === undefined ? {} : {
         reasoning: model.reasoning,
-        reasoningEfforts: Object.fromEntries(model.reasoning.supported.map(effort => [effort, effort === 'low' ? 'light' : effort === 'xhigh' ? 'extra_high' : 'high'])) as Partial<Record<TraeReasoningEffort, string>>,
+        reasoningEfforts: wireEffortsOf(model.reasoning.supported),
       },
     })
   }

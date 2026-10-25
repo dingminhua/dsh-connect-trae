@@ -66,10 +66,31 @@ function parseFeatures(value: unknown): Record<string, unknown> | undefined {
   try { return record(JSON.parse(value) as unknown) } catch { return undefined }
 }
 
+/**
+ * Trae's wire effort name -> the DSH thinking level.
+ *
+ * The FORWARD half of the mapping; `WIRE_EFFORT_MAP` in `catalog.ts` is its
+ * exact inverse. Both halves must name the same levels, or a level survives one
+ * direction and vanishes in the other.
+ *
+ * `medium` and `max` are here because Trae's own client advertises them
+ * (`reasoning_effort.{low,medium,high,extra_high,max}` in its i18n bundle) and
+ * publishes the per-model list remotely — so the day upstream starts sending
+ * either, the parser must not filter it away before anything can use it (issue
+ * #60). Measured 2026-10-25 on a live CN credential, the published options were
+ * only `light / high / extra_high`; these entries are therefore inert today and
+ * ready tomorrow, not a claim that the levels are served now.
+ *
+ * An unknown name is deliberately ABSENT rather than defaulted: `parse` drops
+ * it, and the reverse map drops it too, so an unrecognised level can never be
+ * reported to the user or sent upstream under a name the vendor never said.
+ */
 const EFFORT_MAP: Readonly<Record<string, TraeReasoningEffort>> = {
   light: 'low',
+  medium: 'medium',
   high: 'high',
   extra_high: 'xhigh',
+  max: 'max',
 }
 
 /**

@@ -131,14 +131,27 @@ function toPiModel(info: TraeModelInfo, baseUrl: string, providerId: string, wit
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     reasoning: info.reasoningEfforts !== undefined,
     ...(info.reasoningEfforts === undefined ? {} : {
+      /**
+       * Which DSH levels this model may be asked for, and under which wire name.
+       *
+       * Every level is read from the model's OWN advertised capability, never
+       * hardcoded. `minimal / medium / max` used to be pinned to `null`, so a
+       * level the upstream published could not be selected even after it was
+       * parsed — the second of the three places issue #60 reported. `null`
+       * still means "not offered", which is what a model that does not
+       * advertise the level reports: nothing here fabricates a level.
+       *
+       * `off` stays `null` deliberately: Trae's wire has no "no reasoning"
+       * spelling, so an explicit off is not something this provider can send.
+       */
       thinkingLevelMap: {
         off: null,
-        minimal: null,
+        minimal: info.reasoningEfforts.minimal ?? null,
         low: info.reasoningEfforts.low ?? null,
-        medium: null,
+        medium: info.reasoningEfforts.medium ?? null,
         high: info.reasoningEfforts.high ?? null,
         xhigh: info.reasoningEfforts.xhigh ?? null,
-        max: null,
+        max: info.reasoningEfforts.max ?? null,
       },
     }),
     ...(info.contextWindow === undefined ? {} : { contextWindow: info.contextWindow }),

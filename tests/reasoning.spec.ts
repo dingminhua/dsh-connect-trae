@@ -2,8 +2,15 @@ import { describe, expect, it } from 'vitest'
 import { applyReasoningEffort, parseReasoningCapability, TRAE_REASONING_EFFORTS } from '../src/reasoning.ts'
 
 describe('Trae reasoning effort capability', () => {
-  it('recognizes the five effort symbols evidenced by the client binary', () => {
-    expect(TRAE_REASONING_EFFORTS).toEqual(['minimal', 'low', 'medium', 'high', 'xhigh'])
+  it('recognizes every effort symbol evidenced by the client binary', () => {
+    // Was five (`minimal … xhigh`) until issue #60. Trae's client advertises
+    // FIVE wire levels, and `max` is one of them:
+    // `trae-chat-core.model.reasoning_effort.{low,medium,high,extra_high,max}`.
+    // The DSH-side list is those five plus `minimal`, which is a DSH level no
+    // CN model has advertised yet but the type must be able to represent.
+    // Leaving `max` out filtered it at PARSE time, before anything could decide
+    // whether to offer it.
+    expect(TRAE_REASONING_EFFORTS).toEqual(['minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
   })
 
   it('parses advertised options and validates the default', () => {

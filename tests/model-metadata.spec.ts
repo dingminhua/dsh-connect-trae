@@ -45,4 +45,29 @@ describe('Trae remote model metadata', () => {
     expect(parseTraeRemoteModel({ name: 'glm-5.3', display_name: 'GLM-5.3' })).not.toHaveProperty('function')
     expect(parseTraeRemoteModel({ name: 'glm-5.3', display_name: 'GLM-5.3' }, '')).not.toHaveProperty('function')
   })
+
+  /**
+   * Issue #60: the parse list was the FIRST of three places a level could be
+   * swallowed. Trae's client advertises `low / medium / high / extra_high /
+   * max`, and publishes the per-model list from a remote config, so `max` can
+   * appear in `options` the moment a grey release flips. Filtering it here
+   * meant nothing downstream could ever offer it.
+   */
+  it('accepts every level Trae names, including medium and max', () => {
+    expect(parseTraeRemoteModel({
+      name: 'glm-5.3', display_name: 'GLM-5.3',
+      reasoning_effort_config: { support_thinking: true, options: ['light', 'medium', 'high', 'extra_high', 'max'], default_level: 'max' },
+      features: JSON.stringify({ reasoning: { enable: true } }),
+    })?.reasoning).toEqual({ supported: ['low', 'medium', 'high', 'xhigh', 'max'], defaultEffort: 'max' })
+  })
+
+  it('still drops a level Trae never advertised, and keeps the known three intact', () => {
+    // The vocabulary widened; the claim did not. An unknown wire name must not
+    // become a level, or the reverse map would have something to mis-send.
+    expect(parseTraeRemoteModel({
+      name: 'glm-5.3', display_name: 'GLM-5.3',
+      reasoning_effort_config: { support_thinking: true, options: ['light', 'high', 'extra_high', 'ultra'], default_level: 'high' },
+      features: JSON.stringify({ reasoning: { enable: true } }),
+    })?.reasoning).toEqual({ supported: ['low', 'high', 'xhigh'], defaultEffort: 'high' })
+  })
 })

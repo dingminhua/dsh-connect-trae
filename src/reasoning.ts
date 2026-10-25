@@ -1,4 +1,20 @@
-export const TRAE_REASONING_EFFORTS = ['minimal', 'low', 'medium', 'high', 'xhigh'] as const
+/**
+ * The DSH thinking levels this plugin can carry, in ascending order.
+ *
+ * `max` is the fifth level Trae's own client advertises — its bundle ships the
+ * i18n keys `trae-chat-core.model.reasoning_effort.{low,medium,high,extra_high,max}`
+ * and `ai.model.reasoning_effort.{low,medium,high,xhigh,max}`, and publishes the
+ * per-model list from a remote config (`AI.agent.model.reasoning_effort_level_by_agent_model_v2`).
+ * Leaving it out of this list meant a level the vendor could start serving was
+ * filtered away at PARSE time, before anything downstream could decide (issue
+ * #60). Listing it does not fabricate the level: `supported` is still built
+ * only from what the upstream response actually contains, so a model that does
+ * not advertise `max` never offers it.
+ *
+ * `minimal` is kept for the same reason in reverse — it is a DSH level, so the
+ * type must be able to represent it even though no CN model has advertised it.
+ */
+export const TRAE_REASONING_EFFORTS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const
 export type TraeReasoningEffort = typeof TRAE_REASONING_EFFORTS[number]
 
 export interface TraeReasoningCapability {

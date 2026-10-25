@@ -149,3 +149,47 @@ describe('createTraeAdapter — generation source', () => {
     }
   })
 })
+
+describe('createTraeAdapter — thinkingLevelMap follows the model, not a hardcoded table (issue #60)', () => {
+  /**
+   * The third of the three sites that swallowed a level: `minimal / medium /
+   * max` were pinned to `null` in the map the host reads to decide which levels
+   * the picker may offer. A level the upstream published therefore could not be
+   * selected even once it was parsed.
+   *
+   * These go through `createTraeAdapter` on purpose, not `toPiModel` directly:
+   * the same reasoning as the rest of this file — the factory is what the host
+   * actually consumes, and the defect being fixed was a hardcoded value inside
+   * it.
+   */
+  const modelsWith = async (reasoningEfforts: Record<string, string>) => {
+    const { createTraeAdapter, TRAE_PROVIDER } = await import('../src/adapter.ts')
+    const { TraeCatalog } = await import('../src/catalog.ts')
+    const catalog = new TraeCatalog('cn')
+    catalog.set([{ id: 'glm-5.3', name: 'GLM-5.3', reasoningSupported: true, reasoningEfforts }])
+    const built = createTraeAdapter({ shim, catalog })
+    const snapshot = (built.adapter as unknown as {
+      current: () => { profiles: Map<string, { piProvider?: { getModels?: () => unknown[] } }> },
+    }).current()
+    const provider = snapshot.profiles.get(TRAE_PROVIDER)?.piProvider as { getModels?: () => unknown[] } | undefined
+    const rows = provider?.getModels?.() ?? []
+    return (rows[0] ?? {}) as { thinkingLevelMap?: Record<string, string | null> }
+  }
+
+  it('exposes max and medium when the model advertises them', async () => {
+    const built = await modelsWith({ low: 'light', medium: 'medium', high: 'high', xhigh: 'extra_high', max: 'max' })
+    expect(built.thinkingLevelMap).toMatchObject({ low: 'light', medium: 'medium', high: 'high', xhigh: 'extra_high', max: 'max' })
+  })
+
+  it('leaves max null when the model does NOT advertise it — the level is never faked', async () => {
+    // Today's live CN roster publishes only light/high/extra_high, so this is
+    // the shape real users get: widening the vocabulary must not invent a level.
+    const built = await modelsWith({ low: 'light', high: 'high', xhigh: 'extra_high' })
+    expect(built.thinkingLevelMap).toMatchObject({ low: 'light', high: 'high', xhigh: 'extra_high', medium: null, max: null })
+  })
+
+  it('keeps off null: the wire has no "no reasoning" spelling to send', async () => {
+    const built = await modelsWith({ low: 'light', high: 'high', xhigh: 'extra_high', max: 'max' })
+    expect(built.thinkingLevelMap?.off).toBeNull()
+  })
+})

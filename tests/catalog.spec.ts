@@ -601,6 +601,69 @@ describe('directory group function backs up the wire function', () => {
   })
 })
 
+describe('reasoning effort wire mapping (issue #60)', () => {
+  /**
+   * The three sites that used to swallow a level, and the one that LIED about
+   * it. Trae's own client advertises five levels
+   * (`reasoning_effort.{low,medium,high,extra_high,max}`); the plugin's parse
+   * list, its reverse map and `thinkingLevelMap` each dropped some of them.
+   *
+   * The worst was the reverse map: a ternary chain ending in a bare `'high'`
+   * sent EVERY unnamed level as `high`, so the day upstream advertised `max` a
+   * user picking Max would have been answered at `high` — no error, no log.
+   */
+  const row = (supported: string[]): TraeDiscoveredModel => ({
+    id: 'glm-5.3',
+    name: 'GLM-5.3',
+    multimodal: false,
+    reasoningSupported: true,
+    reasoning: { supported: supported as never },
+  })
+
+  it('maps every level Trae names, including max and medium', () => {
+    const merged = mergeTraeModelSources([row(['low', 'medium', 'high', 'xhigh', 'max'])], [])
+    expect(merged[0]?.reasoningEfforts).toEqual({
+      low: 'light',
+      medium: 'medium',
+      high: 'high',
+      xhigh: 'extra_high',
+      max: 'max',
+    })
+  })
+
+  it('DROPS a level it cannot name instead of downgrading it to high', () => {
+    // `ultra` is not in Trae's vocabulary. The old chain would have sent it as
+    // `high`; the fix must leave no entry at all, because every consumer reads
+    // "no entry" as "may not be sent".
+    const merged = mergeTraeModelSources([row(['low', 'high', 'ultra'])], [])
+    expect(merged[0]?.reasoningEfforts).toEqual({ low: 'light', high: 'high' })
+    expect(merged[0]?.reasoningEfforts).not.toHaveProperty('ultra')
+  })
+
+  it('keeps the three long-standing levels byte-identical (no regression)', () => {
+    // Measured on live CN credentials: these three are the only ones upstream
+    // publishes today, so their mapping must not move.
+    const merged = mergeTraeModelSources([row(['low', 'high', 'xhigh'])], [])
+    expect(merged[0]?.reasoningEfforts).toEqual({ low: 'light', high: 'high', xhigh: 'extra_high' })
+  })
+
+  it('applies the same rule in discoveredCatalog, which carries its own copy', () => {
+    // `discoveredCatalog` is the directory-only path (no wire roster). It had
+    // the same ternary, so both had to change together.
+    const rows = discoveredCatalog([row(['low', 'high', 'max', 'ultra'])])
+    expect(rows[0]?.reasoningEfforts).toEqual({ low: 'light', high: 'high', max: 'max' })
+  })
+
+  it('does not fabricate a level upstream never advertised', () => {
+    // The fix widens the VOCABULARY, not the claim: a model that publishes only
+    // low/high must not gain medium or max.
+    const merged = mergeTraeModelSources([row(['low', 'high'])], [])
+    expect(merged[0]?.reasoningEfforts).toEqual({ low: 'light', high: 'high' })
+    expect(merged[0]?.reasoningEfforts).not.toHaveProperty('max')
+    expect(merged[0]?.reasoningEfforts).not.toHaveProperty('medium')
+  })
+})
+
 describe('withChatCallableFunctions', () => {
   it('keeps chat-function rows and functionless rows, and CLEARS a non-chat function instead of dropping the row', () => {
     // Dropping the row was a regression: the directory lists exactly these
