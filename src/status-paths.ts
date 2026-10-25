@@ -1223,6 +1223,29 @@ export function nextRegionPool(
 }
 
 /**
+ * Build the next `regions` settings value for one panel's 「允许模型自主生图」
+ * switch (`drawImageEnabled`, `trae_draw_image`).
+ *
+ * Same merge rule as every sibling region write: only the addressed panel's
+ * `drawImageEnabled` changes, so flipping the switch carries that slot's model
+ * directory, selection, budgets, pool and credit seat through, and leaves the
+ * other panels alone. The flag is a PANEL's consent, not the account's: cn and
+ * enterprise bill the same Trae CN account but route through different gateways,
+ * so consent must not cross the boundary (the tool resolver reads it per panel).
+ *
+ * `value` may be the whole settings section or the `regions` map; the RETURN
+ * value is always the `regions` map, i.e. exactly what `settingsScope.set(
+ * 'regions', ...)` needs.
+ */
+export function nextRegionDrawImage(
+  value: unknown,
+  panel: TraePanel,
+  enabled: boolean,
+): Record<string, unknown> {
+  return nextRegionSlots(regionsMapOf(value), panel, { ...regionSlotOf(value, panel), drawImageEnabled: enabled })
+}
+
+/**
  * Build the next `regions` settings value for one panel's MODEL DIRECTORY.
  *
  * The model-directory save REPLACES the whole region slot, so every field of

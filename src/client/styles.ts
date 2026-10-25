@@ -407,6 +407,14 @@ export const TRAE_CARD_CSS = `
    capability note. Wraps on narrow cards; keeps the two buttons visually a
    pair and distinct from the save footer below. */
 .dsm-trae-context-bulk{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+/* Per-panel 「自主生图」 consent (trae_draw_image). Sits under the bulk-context
+   row, above the capability note, because it is a per-REGION runtime choice like
+   the model picks above it — not a global preference. The input stays a real
+   checkbox so the card's tests can find it by its accessible name. */
+.dsm-trae-draw-image{display:flex;align-items:flex-start;gap:8px;margin-top:10px;font-size:11px;line-height:16px;cursor:pointer}
+.dsm-trae-draw-image input{flex:none;margin:2px 0 0}
+.dsm-trae-draw-image[data-disabled="true"]{cursor:not-allowed;opacity:.6}
+.dsm-trae-draw-image-hint{color:var(--dsw-alias-label-tertiary,#999)}
 /* Verdict badge. Only a real refusal is coloured as a warning; an unknown
    verdict stays neutral because an inconclusive probe is not evidence against
    the model. */

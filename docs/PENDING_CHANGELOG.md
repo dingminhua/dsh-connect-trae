@@ -41,6 +41,11 @@
   - 新增 **17** 例单测 `tests/image-gen-trae.spec.ts`：尺寸边界与像素区间、请求体字段对齐
     （只发 `{prompt, image_size}`、缺省不填）、扁平响应解析（含 `code 3003`）、`x-ide-sign`
     的 md5 稳定性与取图 URL、SSE 帧只认小写事件名。
+  - **开关就在卡片里，不是一个只有 schema 的字段**：模型栏新增「允许模型自主生图」勾选框，
+    真值是 `regions.<panel>.drawImageEnabled`（Host 的工具解析按面板读它，所以写的是 `regions`
+    而不是顶层设置键）。勾选即写、不经过「保存」，写后**回读文档**核对——一个谎报授权的勾选框
+    会让「工具没出现」看起来像 bug。4 例卡片测试 `tests/card-draw-image-switch.spec.tsx`
+    断言写入字段是 `regions`、该槽位的模型目录/图片模型/上下文预算/账号池一个都不能丢。
 
 ### 文档
 

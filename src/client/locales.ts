@@ -195,6 +195,9 @@ export const en = {
   'row.modelsTestAllHint': 'The「test all」button probes every model in the catalog, enabled or not, so it spends noticeably more quota than the enabled-only run.',
   'row.showPointsInMainUi': 'Show credits in the composer row',
   'row.showPointsInMainUiHint': 'A clickable readout in the composer tool row while a model from this plugin is selected: Trae CN · <balance> on the CN side, Trae Global · <plan> on the international one.',
+  'row.drawImage': 'Let the model draw images (trae_draw_image)',
+  'row.drawImageHint': 'Adds a trae_draw_image tool to this panel: the model can generate one image when you ask for one, at this account\'s real credit cost (measured ~8.8 for 1920x1920 on Trae CN). Off by default — while this is unticked the tool does not exist, so the model cannot spend credits on its own.',
+  'row.drawImageHintEnterprise': 'Not available on the enterprise panel: that path bills through the tenant gateway and has not been verified.',
   'row.showPointsInMainUiHintAi': 'A clickable readout in the composer tool row while a model from this plugin is selected: Trae Global · <plan>.',
   // WHERE the readout sits (learned from workbuddy #62). The composer tool row is
   // a LIST seat shared with any other plugin that registers there — the reported
@@ -625,6 +628,9 @@ export const zh: Record<TraeSettingsKey, string> = {
   'row.showPointsInMainUi': '在输入框工具栏显示积分读数',
   'row.showPointsInMainUiHint': '在输入框工具栏显示可点击读数（选中本插件模型时出现）：国内版为「Trae CN · 余额」，国际版为「Trae 国际版 · 套餐」。',
   'row.showPointsInMainUiHintAi': '在输入框工具栏显示可点击读数（选中本插件模型时出现）：国际版为「Trae 国际版 · 套餐」。',
+  'row.drawImage': '允许模型自主生图（trae_draw_image）',
+  'row.drawImageHint': '为本面板挂上 trae_draw_image 工具：你要求时模型能生成一张图，按本账号真实扣积分（国内版实测 1920x1920 约 8.8）。默认关闭——不勾选时工具根本不存在，模型无法自己花额度。',
+  'row.drawImageHintEnterprise': '企业面板不提供：那条路径走租户网关计费，未经验证。',
   // 积分显示在哪个位置（学自 dsh-connect-workbuddy issue #62）。输入框工具栏是
   // **共享**的 list 插槽，别的插件也注册在那里时本插件读数会消失（报告者遇到的
   // 就是这个），所以位置做成可选项。
