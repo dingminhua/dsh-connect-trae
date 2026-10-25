@@ -1989,7 +1989,13 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
                                         />
                                         <span>{t('row.modelImage')}</span>
                                       </label>
-                                    <fieldset className="dsm-trae-context-budget" aria-label={t('row.contextBudget')}>
+                                    <fieldset className="dsm-trae-context-budget" aria-label={t('row.contextBudget')} title={t('row.contextBudgetHint')}>
+                                      {/* Issue #60: the window a row shows is Trae's OWN
+                                          advertisement, while these radios only set DSH's
+                                          local budget — the request body carries no window
+                                          or Max-mode field, so raising it does not make the
+                                          upstream serve the wider window. The hint says so
+                                          rather than letting the label imply otherwise. */}
                                       {contextBudgetOptions(model).map(option => {
                                         // Each radio is one selectable window. A model with no
                                         // Max window has a single option (its dev window), which
@@ -2081,6 +2087,7 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
                           {t('row.contextAllDefault')}
                         </button>
                       </div>
+                      <p className="dsm-trae-model-capability-note">{t('row.contextBudgetHint')}</p>
                       <p className="dsm-trae-model-capability-note">{t('row.modelCapabilityPending')}</p>
                       <div className="dsm-trae-model-actions">
                         <a

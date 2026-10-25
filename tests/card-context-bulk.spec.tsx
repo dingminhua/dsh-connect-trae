@@ -169,4 +169,25 @@ describe('TraeUsageCard bulk context-budget buttons', () => {
     const { max } = await renderOpenBulk(scope)
     expect(max.disabled).toBe(true)
   })
+
+  /**
+   * Issue #60's side question, made visible rather than inferred.
+   *
+   * A row shows Trae's OWN advertised window (`row.modelContext`), while the
+   * radios beneath it only set DSH's LOCAL budget: the request body carries no
+   * window and no Max-mode field, so raising the budget does not make the
+   * upstream serve the wider window. Without a note, the label reads as "you
+   * have been upgraded to 1M", which is the misreading the reporter warned
+   * about. The note is asserted as VISIBLE TEXT, not a `title` tooltip — a
+   * hint nobody hovers is not a hint.
+   */
+  it('says out loud that the context budget is DSH-side only', async () => {
+    stubFetch(usageDocument(MAXABLE, ['glm-5.2', 'kimi-k3', 'deepseek-v4']))
+    const { scope } = makeScope()
+    await renderOpenBulk(scope)
+    const note = screen.getByText('row.contextBudgetHint')
+    expect(note).toBeTruthy()
+    // It belongs to the models section, next to the bulk controls.
+    expect(note.className).toContain('dsm-trae-model-capability-note')
+  })
 })
