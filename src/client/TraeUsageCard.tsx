@@ -10,9 +10,11 @@ import type { ReactNode } from 'react'
 import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client'
 import {
   configuredAccountsOf,
+  DRAW_IMAGE_PANELS,
   nextRegionEnabled,
   nextRegionCreditPosition,
   nextRegionDirectory,
+  nextRegionDrawImage,
   regionCreditPositionOf,
   regionEnabledOf,
   TRAE_ACCOUNT_STATUS_PATH,
@@ -395,6 +397,8 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
   const optimisticSettings = useRef<{ showPointsInMainUi?: boolean | undefined }>({})
   /** True while a preference is crossing the wire; serializes both writers. */
   const [savingSettings, setSavingSettings] = useState(false)
+  /** The in-flight flip of the per-panel 「自主生图」 switch (undefined = read the document). */
+  const [drawImageDraft, setDrawImageDraft] = useState<boolean | undefined>(undefined)
   /**
    * Per-account status (check-in / balances / subscription) shown in each row of
    * the account table, keyed by region then account id. Loaded per account via
@@ -504,6 +508,42 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
         setSettingsRevision(revision => revision + 1)
       }
       if (mounted.current) setSavingSettings(false)
+    }
+  }
+
+  /**
+   * Flip ONE panel's 「允许模型自主生图」 switch (`drawImageEnabled`).
+   *
+   * Not a top-level preference like the two above: the flag lives INSIDE
+   * `regions.<panel>`, because it is per-panel consent and the Host's tool
+   * resolver reads it per panel. `nextRegionDrawImage` carries the rest of that
+   * slot through, so flipping this cannot drop the model directory, budgets,
+   * pool or credit seat — the failure #44 fixed for the pool.
+   *
+   * Serialized by `savingSettings` with the sibling writers: they all write the
+   * same settings document. The read-back re-reads the document, so a write that
+   * silently reverted cannot leave the box claiming a grant the Host never got —
+   * the one failure that matters here, because a box that lies about consent
+   * makes the tool's absence look like a bug.
+   */
+  const writeDrawImage = async (value: boolean): Promise<void> => {
+    if (settingsScope === undefined || settingsScope.getSnapshot().writable !== true) return
+    setSavingSettings(true)
+    setWriteError(undefined)
+    setDrawImageDraft(value)
+    try {
+      await writeSettingsField(settingsScope, 'regions',
+        nextRegionDrawImage(settingsScope.getSnapshot().value, activeRegion, value),
+        readBack => (regionSlotsOf(readBack)[activeRegion] as { drawImageEnabled?: unknown } | undefined)?.drawImageEnabled === value)
+    } catch (error: unknown) {
+      if (mounted.current) setWriteError(error instanceof Error ? error.message : t('row.requestFailed'))
+    } finally {
+      // Drop the overlay either way: on success the document now agrees, on
+      // failure the Host's value is the truth the box must show.
+      if (mounted.current) {
+        setDrawImageDraft(undefined)
+        setSavingSettings(false)
+      }
     }
   }
 
@@ -1130,6 +1170,26 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
     ? (settingsValue as { imageModelIds: unknown[] }).imageModelIds.filter((id): id is string => typeof id === 'string')
     : []
   const savedImageIds = new Set(slotImageIds ?? legacyImageIds)
+  /**
+   * The active panel's 「自主生图」 consent, read from the SAME place the Host
+   * reads it (`regions.<panel>.drawImageEnabled`, see regionStateOf) with any
+   * in-flight flip laid over it. There is deliberately no legacy flat fallback:
+   * this flag was born after the region split, and reading a top-level key here
+   * would show consent the Host's per-panel resolver never grants.
+   */
+  const committedDrawImage = (regionSlot as { drawImageEnabled?: unknown } | undefined)?.drawImageEnabled === true
+  const drawImageOn = drawImageDraft ?? committedDrawImage
+  /**
+   * Whether the active panel can serve text-to-image at all. This is the SAME
+   * list the Host registers from (`DRAW_IMAGE_PANELS`, imported rather than
+   * restated), so the box can never offer a grant the Host will then refuse:
+   * a switch that ticks and does nothing is the exact failure this whole
+   * opt-in must not have. Two panels are out — `enterprise` bills through a
+   * tenant gateway, and `ai` has never been probed at all (every measurement
+   * behind the credit figures is CN), so neither may spend credits.
+   */
+  const drawImageServable = (DRAW_IMAGE_PANELS as readonly TraePanel[]).includes(activeRegion)
+  const drawImageUnavailableHint = activeRegion === 'ai' ? t('row.drawImageHintAi') : t('row.drawImageHintEnterprise')
   void settingsRevision
   // The card always renders the last-refreshed raw directory (`status.models`
   // carries `lastCatalog`), never a stale saved snapshot. Enabled flags come
@@ -2088,6 +2148,33 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
                         </button>
                       </div>
                       <p className="dsm-trae-model-capability-note">{t('row.contextBudgetHint')}</p>
+                      {/* Per-panel 生图 consent (opt-in). The tool is registered
+                          ONLY while this box is ticked, so an unticked box means
+                          the model has no way to spend credits on images — the
+                          grant is the affordance, not a hint. The two panels
+                          that never measured image behaviour are refused
+                          outright and say why (`DRAW_IMAGE_PANELS`, the same
+                          list the Host registers from): enterprise bills through
+                          a tenant gateway, ai was never probed. */}
+                      <label
+                        className="dsm-trae-draw-image"
+                        data-disabled={drawImageServable ? undefined : 'true'}
+                        title={drawImageServable ? t('row.drawImageHint') : drawImageUnavailableHint}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={drawImageOn}
+                          disabled={!drawImageServable || busy || saving || savingSettings || settingsScope?.getSnapshot().writable !== true}
+                          onChange={event => { void writeDrawImage(event.target.checked) }}
+                        />
+                        <span>
+                          {t('row.drawImage')}
+                          <span className="dsm-trae-draw-image-hint">
+                            {' '}
+                            {drawImageServable ? t('row.drawImageHint') : drawImageUnavailableHint}
+                          </span>
+                        </span>
+                      </label>
                       <p className="dsm-trae-model-capability-note">{t('row.modelCapabilityPending')}</p>
                       <div className="dsm-trae-model-actions">
                         <a

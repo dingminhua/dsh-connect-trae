@@ -42,6 +42,7 @@ A [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness) bund
 - **Multiplier in the model name** — model names show the credit multiplier in Trae's own menu format (e.g. `GLM-5.2 · x0.79`), updated with each directory refresh.
 - **Promotion badge** — Trae publishes its discount rules in the model directory (`activity_discount`: pay ratio, list price, off-peak windows with their time zone). The plugin judges them against **the clock at render time** and paints one capsule beside the model name (`5 折` / `off-peak 5 折` / `limited 5 折`), with the old price, the new price and the window on hover. Judging at render time is what keeps a night-time discount from still hanging there the next morning; when upstream says nothing is discounted right now no badge is painted, the multiplier is never used to guess a promotion, and no campaign without an end time is labelled "limited". It is information only: no request and no billing changes, and the international region (subscription) has no such data and therefore shows no badge. See [docs/PROMO_BADGE.md](docs/PROMO_BADGE.md).
 - **DSH local tool loop** — gets pending structured `tool_calls` from Trae `llm_utils_chat`, lets DSH execute its own local tools, then returns tool results to the model.
+- **Text-to-image (`trae_draw_image`)** — brings the signed-in account's Trae text-to-image service into the conversation: the model draws one image and the plugin hands back the Trae object key (the image itself is visible in the Trae client; the bytes are not reachable from the plugin). **Off by default, enabled per panel** — generation really spends credits (measured: ~8.8 for one `1920x1920` on CN personal), so unlike the image-input declaration it only happens when you say so. Protocol, size bounds and why the "fetch" GET is really a second generation are in "Text-to-image" below.
 - **Dual-region detection (CN / international)** — detects local sign-ins across Trae CN, TRAE SOLO CN, Trae, and TRAE SOLO installs. The region is derived from the credential's own `userRegion` claim (host suffix and edition label as fallbacks), with no manual switch.
 - **Region-isolated directories and selections** — CN and international each keep their own model directory, enabled picks, image opt-ins, and context budgets, and each provider reads only its own slot.
 - **Vision follows Trae's own declaration** — when Trae marks a model `multimodal`, the plugin advertises it as such with no manual tick per model (issue #16). The rule is "**models you tick ∪ models Trae marks multimodal**": models Trae marks `false`, or does not mark at all, stay text-only and can still be turned on by hand. A row enabled automatically is shown ticked and read-only, with the reason. See "Image input" below.
@@ -114,6 +115,27 @@ Notes:
 - **Automatic does not mean automatic sending.** It only lets DSH attach an image to that model; you still choose to attach one per message. The plugin never sends an image on your behalf.
 - **An automatically enabled row is shown ticked and read-only.** Under the union, unticking it would be re-applied immediately, so offering a clickable box would be a lie. There is currently no per-model "force off" escape hatch; if you want one, say so on issue #16.
 - Manual ticks still work for models Trae marks `false` (or does not mark), which is the escape hatch for "upstream does not say so, but it actually works".
+
+## Text-to-image (`trae_draw_image`)
+
+The text-to-image service behind TraeWork / SOLO is now reachable from a DSH conversation: the model **draws one image** and the result is written to a local file.
+
+**Off by default, switched on per panel.** Generation **really spends credits** (measured: ~8.8 for one `1920x1920` on CN personal), so this is not the image-input kind of declaration — it is an explicit spend gate. Tick "Allow the model to generate images" (`drawImageEnabled`) in the card's model column and that panel's `trae_draw_image` gets registered with DSH; unticking removes it immediately. Each panel stores its own switch; the enterprise and international panels do not offer one — the former's tenant gateway is a separate billing surface, the latter bills under another plan, and neither has been measured, so the plugin does not pretend otherwise.
+
+**The protocol (all measured, none of it guessed from the binary):**
+
+| Item | Fact |
+|---|---|
+| Endpoint | `POST /api/ide/v1/tool_text_to_image` (plus an SSE variant `..._stream`), model `seedream_5` |
+| Request body | Only `{prompt, image_size?}`. Adding known fields (`mode_type` / `session_id` / `image_urls` / `watermark`) earns a 400 with an empty body; unknown fields are ignored |
+| Success | Flat `{"message":"success","uri":"tos-cn-i-…/cn/<uid>/gen_image/<ts>_<hex>_jpeg_1920x1920"}` — **no** `{code,msg,data}` envelope |
+| Sizes | Total pixels must land in **3686400 ~ 16777216**: `1024x1024` is rejected as too small (`code 3003`, no charge) and `4608x4608` as too large; presets `2k`/`3k`/`4k` work, default is `1920x1920` |
+| Fetch | **There is no working fetch channel.** The `uri` is an object key, not an openable URL, and the same-path GET is not a fetch but another generation (next row). So the tool returns the key and nothing else; the picture is visible in the Trae client's history |
+| What that GET really is | Decisive probe: after the POST returned `…/1792954795741_44f94116_jpeg_1920x1920`, the GET with the same `(prompt, size)` came back with a **different** uri (`…/1792954810505_b107ac11_jpeg_1920x1920`) after 27 s and zero pixels — a second image and a second charge (~17.6 for the pair). The illegal-size probe agreed: the error is Ark's own `[callArkImageGeneration]` |
+
+**Key only, no fetch.** On success the tool returns `url` (the Trae object key, shaped `tos-cn-i-…/cn/<uid>/gen_image/…`), `model`, `prompt`, `size` and a `hint`; the renderer shows the key as **inline code** labelled "cannot be opened directly" and never splices it into `![](...)` — a key is not a path, and pasting it there only yields a broken icon resolved against the cwd. Missing bytes are a capability boundary here, not an error: turning a uri into pixels needs another channel (iCube material `get_url` plus `x-icube-token`, base URL from the runtime boot config) that is not wired up yet. Failures still start a 30-second cooldown — generation is billed per image, so a retry buys another one.
+
+**Image editing and text-to-video are not opened up.** Editing needs a TOS upload presign first (this plugin has no such path); video polls a material result — a separate async pipeline. Neither ships, and neither leaves half an entry point behind.
 
 ## Model coverage
 
