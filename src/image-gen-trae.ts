@@ -66,8 +66,6 @@ export type TraeImageErrorCode =
   | 'UPSTREAM'
   | 'EMPTY_RESULT'
   | 'COOLDOWN'
-  /** 图已生成（积分已扣）但字节取不回；重试等于再买一张。 */
-  | 'IMAGE_UNAVAILABLE'
 
 export class TraeImageError extends Error {
   readonly code: TraeImageErrorCode
@@ -125,13 +123,17 @@ export function buildTraeImageBody(input: TraeImageRequestInput): TraeImageReque
 
 /**
  * 取图 GET 的完整 URL：与生成同路径，prompt 与 image_size 走查询参数。
- * 服务端按 (用户, prompt 小写, size) 查缓存：命中返回既有 uri（免费），
- * 未命中**就真画一张**（计费）——2026-10-26 的非法尺寸探针用 100x100 打这条
- * GET，拿回来的是 Ark 自己的报错 "image size must be at least 3686400 pixels"，
- * 说明它一路走到了 [callArkImageGeneration]，不是纯缓存查询。所以 GET 必须带
- * x-ide-sign，且只在"刚 POST 出图、要取这一张的字节"时调用；把它当免费探测
- * 会白烧积分。size 缺省时与生成缺省一致（1920x1920），但 GET 无法复现"缺省"
- * （签名要求显式 image_size 参数），故这里补默认值。
+ *
+ * **实测结论：这条 GET 不是取图，而是又一次生成。** 2026-10-26 的决定性探针：
+ * POST 拿到 uri …1792954795741_44f94116_jpeg_1920x1920 之后，紧接着用同一
+ * (prompt, size) 打这条 GET，回来的是**另一个** uri …1792954810505_b107ac11_…，
+ * 耗时 27 秒，一个像素都没有——等于又画了一张、又扣一次积分（两次共约 17.6）。
+ * 更早的非法尺寸探针（100x100）也印证了同一件事：报错直接来自 Ark 的
+ * "[callArkImageGeneration] … image size must be at least 3686400 pixels"。
+ *
+ * 所以发版代码**不再调用它**（保留仅为测试与将来可能的探测）。Trae 客户端
+ * 能显示这张图，说明另有一条按 uri 取字节的通道（iCube material 的
+ * get_url + x-icube-token，基址来自运行时 boot config），还没打通。
  */
 export function traeImageFetchUrl(baseUrl: string, prompt: string, size: string | undefined): string {
   const u = new URL(TRAE_TOOL_TEXT_TO_IMAGE_PATH, baseUrl)

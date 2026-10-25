@@ -1,11 +1,12 @@
 /**
- * What the tool hands back once the bytes arrive — and what it refuses to hand
- * back when they do not.
+ * What the tool hands back — and, more importantly, what it stops doing.
  *
- * Measured run (see #62): the call reported success with a broken markdown image
- * and the same error twice, while the account had already been charged. Now the
- * retrieval hop is part of the contract: no bytes → tool failure, no credit lost
- * silently, and a cooldown so the model cannot buy a second image by retrying.
+ * Measured twice on #62: the call reported success with a broken markdown image
+ * while the account had already been charged, and the "retrieval" GET turned out
+ * to be a second generation (a fresh uri, 27s, ~8.8 more credits). So the tool
+ * now never fetches: it returns the tos object key as inline code, which is the
+ * only thing it can honestly hand over. These tests pin that contract so the
+ * fetch hop cannot creep back in.
  */
 import { describe, expect, it } from 'vitest'
 import {
@@ -19,7 +20,6 @@ import { TraeImageError, type TraeImageErrorCode } from '../src/image-gen-trae.t
 const ACCOUNT = {} as unknown as TraeImageAccount
 
 const TOS_KEY = 'tos-cn-i-zaeny81f73/cn/1905882027265802/gen_image/1792952678813_3a22ca8a_jpeg_2160x3840'
-const LOCAL_PATH = '/tmp/trae-image-gen/seedream_5-x.png'
 
 function toolReturning(result: TraeImageGenerated): TraeToolDefinition {
   return createTraeDrawImageTool({
@@ -48,31 +48,29 @@ async function rejection(work: Promise<unknown>): Promise<unknown> {
 }
 
 describe('trae_draw_image render', () => {
-  it('draws the local file and never the object key as an image', async () => {
-    const text = await rendered({ url: TOS_KEY, path: LOCAL_PATH })
-    expect(text.startsWith('![Trae 文生图](' + LOCAL_PATH + ')')).toBe(true)
-    expect(text).toContain('本地文件：' + LOCAL_PATH)
-    // The tos key must not leak into the markdown: it is not a path.
-    expect(text).not.toContain(TOS_KEY)
+  it('shows the object key as inline code and never as a markdown image', async () => {
+    const text = await rendered({ url: TOS_KEY })
+    expect(text.startsWith('图片对象 key（不能直接打开）：`' + TOS_KEY + '`')).toBe(true)
+    expect(text).not.toContain('![')
   })
 
   it('echoes the credit the upstream reported', async () => {
-    const text = await rendered({ url: TOS_KEY, path: LOCAL_PATH, credit: 12.5 })
+    const text = await rendered({ url: TOS_KEY, credit: 12.5 })
     expect(text).toContain('消耗 12.5 积分')
+  })
+
+  it('carries the hint that says not to retry for the bytes', async () => {
+    const text = await rendered({ url: TOS_KEY })
+    expect(text).toContain('不能直接打开')
+    expect(text).toContain('不要为了取图')
   })
 })
 
-describe('trae_draw_image when the bytes never arrive', () => {
-  it('fails the call instead of returning a key without pixels', async () => {
-    const tool = failingTool('图片已经生成并计费，但字节取不回来', 'IMAGE_UNAVAILABLE')
-    const error = await rejection(tool.execute({ prompt: '猫' }, {}))
-    expect(error).toBeInstanceOf(TraeImageError)
-    expect((error as TraeImageError).code).toBe('IMAGE_UNAVAILABLE')
-  })
-
-  it('cools down, so a retry cannot buy a second image', async () => {
-    const tool = failingTool('图片已经生成并计费，但字节取不回来', 'IMAGE_UNAVAILABLE')
-    await rejection(tool.execute({ prompt: '猫' }, {}))
+describe('trae_draw_image cooldown', () => {
+  it('cools down after a billable failure, so a retry cannot buy a second image', async () => {
+    const tool = failingTool('上游 502', 'UPSTREAM')
+    const first = await rejection(tool.execute({ prompt: '猫' }, {}))
+    expect((first as TraeImageError).code).toBe('UPSTREAM')
     const second = await rejection(tool.execute({ prompt: '猫' }, {}))
     expect((second as TraeImageError).code).toBe('COOLDOWN')
     expect((second as Error).message).toContain('秒后再试')
