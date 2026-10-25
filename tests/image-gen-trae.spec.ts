@@ -1,16 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
-  DEFAULT_TRAE_IMAGE_SIZE,
   TRAE_IMAGE_MAX_PIXELS,
   TRAE_IMAGE_MIN_PIXELS,
   TraeImageError,
   buildTraeImageBody,
-  computeTraeIdeSign,
   isTraeImageSize,
   parseTraeImageResponse,
   parseTraeImageStreamFrame,
-  traeImageFetchUrl,
-  traeImageSignFields,
 } from '../src/image-gen-trae.ts'
 
 describe('isTraeImageSize', () => {
@@ -96,29 +92,6 @@ describe('parseTraeImageResponse', () => {
   it('兼容 tos_uri/display_url 等历史字段', () => {
     expect(parseTraeImageResponse({ data: { tos_uri: 'k1' } }).url).toBe('k1')
     expect(parseTraeImageResponse({ data: { display_url: 'https://x/y.png' } }).url).toBe('https://x/y.png')
-  })
-})
-
-describe('x-ide-sign', () => {
-  it('签名是 md5(prompt小写 + image_size + 盐)', () => {
-    const sign = computeTraeIdeSign('a cat', '1920x1920')
-    expect(sign).toMatch(/^[0-9a-f]{32}$/)
-    expect(computeTraeIdeSign('a cat', '1920x1920')).toBe(computeTraeIdeSign('a cat', '1920x1920'))
-    expect(computeTraeIdeSign('a cat', '1920x1920')).not.toBe(computeTraeIdeSign('a cat', '2048x2048'))
-  })
-
-  it('从 URL 里读出签名参数', () => {
-    const url = traeImageFetchUrl('https://trae-api-cn.mchost.guru', 'A Cat', '1920x1920')
-    const fields = traeImageSignFields(url)
-    expect(fields).toEqual({ prompt: 'a cat', image_size: '1920x1920' })
-    expect(traeImageSignFields('https://x/y.png')).toBeUndefined()
-  })
-
-  it('取图 URL 用同一路径，缺省尺寸补 1920x1920', () => {
-    const url = new URL(traeImageFetchUrl('https://gw.example', 'cat', undefined))
-    expect(url.pathname).toBe('/api/ide/v1/tool_text_to_image')
-    expect(url.searchParams.get('prompt')).toBe('cat')
-    expect(url.searchParams.get('image_size')).toBe(DEFAULT_TRAE_IMAGE_SIZE)
   })
 })
 

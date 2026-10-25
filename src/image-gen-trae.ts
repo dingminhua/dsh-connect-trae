@@ -1,5 +1,5 @@
 /**
- * Trae 文生图的纯逻辑层：请求体、响应解析、尺寸校验、x-ide-sign、SSE 帧。
+ * Trae 文生图的纯逻辑层：请求体、响应解析、尺寸校验、取图地址解析、SSE 帧。
  *
  * 与 dsh-connect-workbuddy 的 image-gen.ts 同一分工——本文件只做纯函数与
  * 常量，不发网络请求；网络与工具注册在 image-tool.ts。
@@ -17,7 +17,9 @@
  *     缺省时输出 1920x1920。
  *   - 同一路径的 GET（?prompt=<P>&image_size=<S> + x-ide-sign 头）**不是取图**，
  *     而是又一次生成：2026-10-26 决定性实测，同一 (prompt, size) 紧接着 GET，
- *     回来的是另一个 uri、耗时 27 秒、零像素（等于多扣一张）。发版代码不再调它。
+ *     回来的是另一个 uri、耗时 27 秒、零像素（等于多扣一张）。曾为它写下的
+ *     traeImageFetchUrl / computeTraeIdeSign / traeImageSignFields 与签名盐已删除——
+ *     取图跟 prompt 没有任何关系。
  *   - 真正的取图是两步、不再生成（同日实测，零成本）：POST
  *     /api/ide/v1/get_resource_url { uri_list: [<tos key>] } →
  *     { url_map: { "<key>": "<byteimg 签名 URL>" } }，再直接 GET 那个签名 URL
@@ -30,8 +32,6 @@
  *
  * @module dsh-connect-trae/image-gen-trae
  */
-
-import { createHash } from 'node:crypto'
 
 /** 文生图（同步）：一次 POST 拿回结果。Trae 客户端的 ToolText2Image 用的就是它。 */
 export const TRAE_TOOL_TEXT_TO_IMAGE_PATH = '/api/ide/v1/tool_text_to_image'
@@ -55,9 +55,6 @@ export const TRAE_IMAGE_SIZE_PRESETS: readonly string[] = ['2k', '3k', '4k', 'sq
 /** 总像素下限/上限（Ark 报错原文里的数字）。 */
 export const TRAE_IMAGE_MIN_PIXELS = 3686400
 export const TRAE_IMAGE_MAX_PIXELS = 16777216
-
-/** out/main.js 资源拦截器里写死的签名盐。 */
-export const TRAE_IMAGE_SIGN_SALT = 'D39&a9..f0+c2-b5e.@'
 
 /** 生图失败码。语义与 dsh-connect-workbuddy 的同名码保持一致。 */
 export type TraeImageErrorCode =
@@ -124,26 +121,6 @@ export function buildTraeImageBody(input: TraeImageRequestInput): TraeImageReque
     out.image_size = size
   }
   return out
-}
-
-/**
- * 取图 GET 的完整 URL：与生成同路径，prompt 与 image_size 走查询参数。
- *
- * **实测结论：这条 GET 不是取图，而是又一次生成。** 2026-10-26 的决定性探针：
- * POST 拿到 uri …1792954795741_44f94116_jpeg_1920x1920 之后，紧接着用同一
- * (prompt, size) 打这条 GET，回来的是**另一个** uri …1792954810505_b107ac11_…，
- * 耗时 27 秒，一个像素都没有——等于又画了一张、又扣一次积分（两次共约 17.6）。
- * 更早的非法尺寸探针（100x100）也印证了同一件事：报错直接来自 Ark 的
- * "[callArkImageGeneration] … image size must be at least 3686400 pixels"。
- *
- * 所以发版代码**不再调用它**（保留仅为测试与将来可能的探测）。按 uri 取字节
- * 的正路是 getResourceUrlBody + parseTraeResourceUrlMap（见下方），它不会再画一张。
- */
-export function traeImageFetchUrl(baseUrl: string, prompt: string, size: string | undefined): string {
-  const u = new URL(TRAE_TOOL_TEXT_TO_IMAGE_PATH, baseUrl)
-  u.searchParams.set('prompt', prompt)
-  u.searchParams.set('image_size', (size ?? DEFAULT_TRAE_IMAGE_SIZE).toLowerCase())
-  return u.toString()
 }
 
 /**
@@ -275,27 +252,6 @@ export function parseTraeImageResponse(json: unknown): TraeImageOutcome {
   }
   const credit = findCredit(record)
   return credit === undefined ? { url } : { url, credit }
-}
-
-/**
- * x-ide-sign：GET 带 prompt 与 image_size 查询参数的 Trae 图片 URL 时必须
- * 带上（out/main.js 拦截器原样实现：md5(prompt 小写 + image_size + 盐)）。
- */
-export function computeTraeIdeSign(promptLower: string, imageSize: string): string {
-  return createHash('md5').update(promptLower + imageSize + TRAE_IMAGE_SIGN_SALT).digest('hex')
-}
-
-/** 从图片 URL 里读出签名所需的两个查询参数；缺一即"不需要签名"。 */
-export function traeImageSignFields(url: string): { prompt: string, image_size: string } | undefined {
-  try {
-    const u = new URL(url)
-    const prompt = u.searchParams.get('prompt')
-    const size = u.searchParams.get('image_size')
-    if (prompt === null || size === null) return undefined
-    return { prompt: prompt.toLowerCase(), image_size: size }
-  } catch {
-    return undefined
-  }
 }
 
 /** SSE 流式端点的事件名（活体探测 4 实测：小写 result/done/heartbeat）。 */
