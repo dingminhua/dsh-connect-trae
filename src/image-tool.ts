@@ -17,16 +17,22 @@
  * @module dsh-connect-trae/image-tool
  */
 
+import { mkdir, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+
 import type { TraeCredential } from './auth.ts'
 import type { TraeIdentity } from './identity.ts'
 import { buildTraeHeaders, traeEndpoint } from './protocol.ts'
 import {
   DEFAULT_TRAE_IMAGE_SIZE,
   TRAE_IMAGE_MODEL,
+  TRAE_RESOURCE_URL_PATH,
   TRAE_TOOL_TEXT_TO_IMAGE_PATH,
   TraeImageError,
   buildTraeImageBody,
+  buildTraeResourceUrlBody,
   parseTraeImageResponse,
+  signedTraeResourceUrl,
   type TraeImageRequestBody,
   type TraeImageRequestInput,
 } from './image-gen-trae.ts'
@@ -54,10 +60,17 @@ export interface TraeImageAccount {
 }
 
 export interface TraeImageGenerated {
-  /** Trae 的图片对象 key（tos uri），不是可直接打开的 URL。 */
+  /** Trae 的图片对象 key（tos uri），不是可直接打开的 URL；留作记录与排障。 */
   readonly url: string
   readonly credit?: number
+  /** 图片字节（已按 key 解析出签名地址并下载好）。 */
+  readonly bytes: Uint8Array
+  /** 下载应答的 content-type（实测 image/jpeg）。 */
+  readonly mimeType: string
 }
+
+/** 图片落地目录名，相对会话工作目录。 */
+export const TRAE_IMAGE_DIR = 'trae-images'
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
@@ -72,8 +85,27 @@ function mapHttpToImageError(status: number, detail: string): TraeImageError {
 }
 
 /**
- * 发一次真机文生图请求。所有可预期的失败都归一成 TraeImageError，
- * 让上层的冷却判据只看 code（见 createTraeDrawImageTool 的注释）。
+ * 取图阶段（解析签名地址 / 下载字节）的 HTTP 失败。
+ *
+ * 这里**不能**复用 mapHttpToImageError：那套映射是给「生图那一跳」用的，401/403 报
+ * AUTH、429 报 RATE_LIMIT 都还有意义。到了取图这一跳，图早已生成、积分早已扣掉，
+ * 再把 403 说成「上游拒绝了凭据」就是谎报——用户会去重新登录，而钱已经花了、图还是
+ * 拿不到。所以一律归成 IMAGE_UNAVAILABLE，文案保留状态码与原文便于排障，并附上对象
+ * key。冷却判据只看 code，IMAGE_UNAVAILABLE 同样在冷却集合里，不会因为换了 code 就
+ * 变成可重试（重试等于再买一张）。
+ */
+function mapRetrievalHttpError(status: number, detail: string, uri: string): TraeImageError {
+  const tail = detail === '' ? '' : '：' + detail.slice(0, 200)
+  return new TraeImageError(
+    'trae image: 图片已经生成、积分已经扣了，但取图接口回了 HTTP ' + status + tail
+    + '\n图片对象 key：' + uri,
+    'IMAGE_UNAVAILABLE',
+  )
+}
+
+/**
+ * 发一次真机文生图请求，并把图片字节一起取回来。所有可预期的失败都归一成
+ * TraeImageError，让上层的冷却判据只看 code（见 createTraeDrawImageTool 的注释）。
  */
 export class TraeImageClient {
   constructor(
@@ -132,21 +164,173 @@ export class TraeImageClient {
     // 真机探针若暴露新的未知字段形态，也会在这里以 EMPTY_RESULT 浮出原文线索。
     const outcome = parseTraeImageResponse(json)
 
-    // 只发这一次 POST，**不再补一次 GET「取图」**。2026-10-26 的活体探针推翻了这个
-    // 假设：同一个 prompt/size 紧接着 GET，回来的 uri 是新的
-    // （…_1792954795741_44f94116_… → …_1792954810505_b107ac11_…），耗时 27 秒、
-    // 一个字节都没有——那条 GET 是又一次生成，等于每张图稳定多扣一张。
-    // 真正把 uri 变成字节的通道（iCube material，需要运行时 boot config 与
-    // x-icube-token）还没打通，所以这里如实只交 uri，并在文案里说清「图在 Trae
-    // 客户端的历史里能看到，插件拿不到字节」。
-    const result: { url: string, credit?: number } = { url: outcome.url }
+    // 取图（2026-10-26 实测的通路，不生成图、不额外计费）：先把 tos key 换成
+    // byteimg 签名地址（get_resource_url 的 {uri_list:[key]}），再直接 GET 那个
+    // 地址拿字节（实测 image/jpeg、1,155,578 字节、头 ffd8ffe0）。
+    // 注意**不是**同路径那条 ?prompt=&image_size= 的 GET——那才是又一次生成
+    // （回新 uri、27 秒、零像素、多扣一张），已彻底停用。
+    const signed = await this.resolveSignedUrl(account, outcome.url, requestSignal)
+    const image = await this.download(signed, requestSignal, outcome.url)
+
+    const result: { url: string, credit?: number, bytes: Uint8Array, mimeType: string } = {
+      url: outcome.url,
+      bytes: image.bytes,
+      mimeType: image.mimeType,
+    }
     if (outcome.credit !== undefined) result.credit = outcome.credit
     return result
+  }
+
+  /**
+   * 把 tos key 解析成一个可直接 GET 的签名地址（byteimg CDN，带 x-expires）。
+   * 这一步只是向服务端要地址，不会重新画图。
+   */
+  async resolveSignedUrl(
+    account: TraeImageAccount,
+    uri: string,
+    signal?: AbortSignal,
+  ): Promise<string> {
+    // 参数毛病先在本地拦下：INVALID_ARGS 一分钱没花，也不该说成"图已经生成了"。
+    const body = buildTraeResourceUrlBody(uri)
+    const endpoint = traeEndpoint(account.baseUrl, TRAE_RESOURCE_URL_PATH)
+    const headers = buildTraeHeaders(account.credential, account.identity, { profile: 'model-detail' })
+    const fetchImpl = this.options.fetchImpl ?? globalThis.fetch
+    const requestSignal = signal ?? AbortSignal.timeout(IMAGE_TOOL_TIMEOUT_MS)
+
+    let response: Response
+    try {
+      response = await fetchImpl(endpoint, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+        signal: requestSignal,
+      })
+    } catch (error: unknown) {
+      throw new TraeImageError(
+        'trae image: 图片已经生成、积分已经扣了，但解析下载地址的请求发不出去：' + messageOf(error),
+        'IMAGE_UNAVAILABLE',
+      )
+    }
+
+    let payload: string
+    try {
+      payload = await response.text()
+    } catch (error: unknown) {
+      throw new TraeImageError(
+        'trae image: 图片已经生成、积分已经扣了，但读取解析应答失败：' + messageOf(error),
+        'IMAGE_UNAVAILABLE',
+      )
+    }
+    if (!response.ok) throw mapRetrievalHttpError(response.status, payload, uri)
+
+    let json: unknown
+    try {
+      json = JSON.parse(payload)
+    } catch {
+      throw new TraeImageError(
+        'trae image: 图片已经生成、积分已经扣了，但解析应答不是 JSON（HTTP 200）：' + payload.slice(0, 200),
+        'IMAGE_UNAVAILABLE',
+      )
+    }
+    if (json === null || typeof json !== 'object') {
+      throw new TraeImageError(
+        'trae image: 图片已经生成、积分已经扣了，但解析应答里没有 url_map：' + payload.slice(0, 200),
+        'IMAGE_UNAVAILABLE',
+      )
+    }
+    return signedTraeResourceUrl(json, uri)
+  }
+
+  /** 下载签名地址上的图片字节。CDN 不需要任何 Trae 头——签名就在 query 里。 */
+  async download(
+    signed: string,
+    signal?: AbortSignal,
+    uri?: string,
+  ): Promise<{ bytes: Uint8Array, mimeType: string }> {
+    const fetchImpl = this.options.fetchImpl ?? globalThis.fetch
+    const requestSignal = signal ?? AbortSignal.timeout(IMAGE_TOOL_TIMEOUT_MS)
+
+    let response: Response
+    try {
+      response = await fetchImpl(signed, {
+        method: 'GET',
+        headers: { Accept: 'image/*' },
+        signal: requestSignal,
+      })
+    } catch (error: unknown) {
+      throw new TraeImageError(
+        'trae image: 图片已经生成、积分已经扣了，但下载字节失败：' + messageOf(error),
+        'IMAGE_UNAVAILABLE',
+      )
+    }
+    if (!response.ok) {
+      const key = uri === undefined || uri === '' ? '' : '\n图片对象 key：' + uri
+      throw new TraeImageError(
+        'trae image: 图片已经生成、积分已经扣了，但下载地址回了 HTTP ' + response.status + '。' + key,
+        'IMAGE_UNAVAILABLE',
+      )
+    }
+
+    let buffer: ArrayBuffer
+    try {
+      buffer = await response.arrayBuffer()
+    } catch (error: unknown) {
+      throw new TraeImageError(
+        'trae image: 图片已经生成、积分已经扣了，但读取图片字节失败：' + messageOf(error),
+        'IMAGE_UNAVAILABLE',
+      )
+    }
+    if (buffer.byteLength === 0) {
+      throw new TraeImageError(
+        'trae image: 图片已经生成、积分已经扣了，但下载回来是 0 字节。',
+        'IMAGE_UNAVAILABLE',
+      )
+    }
+    const contentType = response.headers.get('content-type') ?? ''
+    const mimeType = contentType.split(';')[0]?.trim() ?? ''
+    // content-type 是 CDN 自己说的，不足为凭：签名地址过期/被改写时，CDN 会拿
+    // 200 回一页 HTML（错误页），照着写就会落一个打不开的 .jpg。以魔数为准，
+    // 认不出就如实失败——图已经付过钱了，宁可说清楚也别给个坏文件。
+    const sniffed = imageMimeTypeOf(new Uint8Array(buffer))
+    if (sniffed === undefined) {
+      throw new TraeImageError(
+        'trae image: 图片已经生成、积分已经扣了，但下载回来的不是图片（content-type '
+        + (mimeType === '' ? '缺失' : mimeType) + '，前 4 字节 '
+        + hexPrefix(new Uint8Array(buffer)) + '）。'
+        + (uri === undefined || uri === '' ? '' : '\n图片对象 key：' + uri),
+        'IMAGE_UNAVAILABLE',
+      )
+    }
+    return { bytes: new Uint8Array(buffer), mimeType: sniffed }
   }
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null ? value as Record<string, unknown> : {}
+}
+
+/**
+ * 从字节魔数判断图片类型（JPEG / PNG / GIF / WebP / BMP）。
+ *
+ * 为什么不信 content-type：签名地址过期或被劫持时，CDN 常拿 200 回一页 HTML。
+ * 那样写下去的文件扩展名是 .jpg 却打不开，用户只看到碎图标，而积分已经扣了。
+ * 认不出就返回 undefined，由调用方如实报 IMAGE_UNAVAILABLE。
+ */
+function imageMimeTypeOf(bytes: Uint8Array): string | undefined {
+  const at = (index: number): number => bytes[index] ?? -1
+  if (at(0) === 0xff && at(1) === 0xd8 && at(2) === 0xff) return 'image/jpeg'
+  if (at(0) === 0x89 && at(1) === 0x50 && at(2) === 0x4e && at(3) === 0x47) return 'image/png'
+  if (at(0) === 0x47 && at(1) === 0x49 && at(2) === 0x46) return 'image/gif'
+  // RIFF....WEBP
+  if (at(0) === 0x52 && at(1) === 0x49 && at(2) === 0x46 && at(3) === 0x46
+    && at(8) === 0x57 && at(9) === 0x45 && at(10) === 0x42 && at(11) === 0x50) return 'image/webp'
+  if (at(0) === 0x42 && at(1) === 0x4d) return 'image/bmp'
+  return undefined
+}
+
+/** 前若干字节的十六进制，只用于排障文案。 */
+function hexPrefix(bytes: Uint8Array): string {
+  return [...bytes.slice(0, 4)].map(value => value.toString(16).padStart(2, '0')).join('')
 }
 
 function asNonEmptyString(value: unknown): string | undefined {
@@ -164,6 +348,8 @@ const BILLABLE_FAILURE_CODES: ReadonlySet<string> = new Set([
   'NO_ROUTE',
   'UPSTREAM',
   'EMPTY_RESULT',
+  // 图已经生成、积分已经扣了，只是字节没落地——重试等于再买一张。
+  'IMAGE_UNAVAILABLE',
 ])
 
 function isBillableFailure(error: unknown): boolean {
@@ -183,6 +369,43 @@ export interface TraeImageToolDeps {
     signal?: AbortSignal,
   ) => Promise<TraeImageGenerated>
   readonly logger: { warn(message: string): void }
+  /**
+   * 会话**实时**工作目录（宿主 session projection 的 `workingDirectory`）。
+   *
+   * 为什么不是读 exec 上的字段：宿主的 ToolExecution 只带 `signal` 和 `agent`，
+   * `cwd` 是「Reserved by the Host」，4.15.x 起仍然不填；`agent.session.cwd`
+   * 这个字段也不存在。agent.session.header.cwd 只是**创建时**目录，
+   * /cd 之后就不对了。实时目录是宿主维护的 projection（key `workingDirectory`，
+   * 每次 working-directory/change 都提交一次），宿主自己也把它写进模型系统提示里。
+   * src/index.ts 通过 ctx.inject(['workingDirectory']) 调宿主的
+   * `workingDirectory.ensure(agent, signal)` 后接到这里（宿主自己的工具都这么取 cwd）；
+   * 宿主没有这个服务时保持 undefined，下面的阶梯照旧回退。
+   */
+  readonly directoryOf?: (exec: TraeToolExec) => string | undefined | Promise<string | undefined>
+}
+
+/**
+ * execute 收到的执行上下文（宿主原样传进工具的那个对象）。
+ *
+ * 会话目录有三个候选，可信度从高到低：
+ * 1. `agent.session.workingDirectory` —— 测试/命令层塞进来的 session 形状对象
+ *    （真实宿主不会在 session 上挂这个字段，它是 projection 的状态）；
+ * 2. `agent.session.header.cwd` —— 宿主保证绝对路径的**创建时**目录；
+ * 3. `cwd` —— 宿主预留字段，4.15.x 仍不填。
+ * 真实宿主里最可靠的来源是 projection（`deps.directoryOf`），这里只做兜底：
+ * 拿不到就别猜，交给调用方回退到 process.cwd()。
+ */
+export interface TraeToolExec {
+  readonly signal?: AbortSignal
+  /** 宿主预留；4.15.x 不会填会话目录。 */
+  readonly cwd?: string
+  readonly agent?: {
+    readonly session?: {
+      readonly cwd?: string
+      readonly workingDirectory?: string | null
+      readonly header?: { readonly cwd?: string }
+    }
+  }
 }
 
 /**
@@ -198,7 +421,7 @@ export interface TraeToolDefinition {
     render(args: unknown, value: unknown): TraeToolContentBlock[]
   }
   readonly timeoutMs: number
-  execute(args: unknown, exec: { readonly signal?: AbortSignal }): Promise<Record<string, unknown>>
+  execute(args: unknown, exec: TraeToolExec): Promise<Record<string, unknown>>
 }
 
 /** 造出工具定义。每次 apply() 只造一个实例，冷却状态挂在闭包里。 */
@@ -213,10 +436,12 @@ export function createTraeDrawImageTool(deps: TraeImageToolDeps): TraeToolDefini
       + '（尺寸越大越贵），而上游不回传扣费数字，以 Trae 额度面板为准。'
       + '不是常开能力：只有插件设置里为该区打开「允许模型自主生图」(drawImageEnabled) 时本工具才存在，'
       + '没打开就没得调——不要用报错去试探它开没开。'
-      + '取图口径：生成只回一个图片对象 key（tos uri，形如 tos-cn-i-xxx/cn/<uid>/gen_image/…，打不开），'
-      + '本工具不会再发取图请求——实测对同一 (prompt, size) 再 GET 一次不是缓存查询，而是又一次生成，'
-      + '只会再扣一张的钱并回一个**新的** uri。图片字节目前插件拿不到，图只在 Trae 客户端的历史里能看到；'
-      + '把 key 原样告诉用户即可。不要为了"取图"或"换张"重跑同一条 prompt。失败后有 30 秒冷却，冷却内重试不会打到上游。'
+      + '取图口径：生成成功后本工具会把图片字节取回来、写进会话工作目录的 trae-images/ 下，'
+      + '结果里给相对路径 path，渲染层已经据此把图显示给用户了——不需要你再写 markdown。'
+      + '取图走 get_resource_url 解析签名地址（只是要地址，不会重新生成、不额外计费）。'
+      + '不要为了"取图"或"换张"重跑同一条 prompt（那会再扣一张）。'
+      + '失败码 IMAGE_UNAVAILABLE 表示图已生成、积分已扣、但字节没落地：同样不要重跑。'
+      + '失败后有 30 秒冷却，冷却内重试不会打到上游。'
       + '尺寸：默认 ' + DEFAULT_TRAE_IMAGE_SIZE + '，也可给 宽x高（总像素需在 3686400~16777216 之间，'
       + '如 2048x2048）或预设 2k/3k/4k；过小（如 1024x1024）会被上游直接拒绝。'
       + '（改图与文生视频暂未开放：改图需要先走 TOS 上传预签名，视频要轮询素材结果。）',
@@ -240,33 +465,36 @@ export function createTraeDrawImageTool(deps: TraeImageToolDeps): TraeToolDefini
       schema: {
         type: 'object',
         properties: {
-          url: { type: 'string', description: 'Trae 图片对象 key（tos uri），不是可直接打开的 URL；图片字节插件拿不到。' },
+          url: { type: 'string', description: 'Trae 图片对象 key（tos uri），留作记录与排障，不是可直接打开的 URL。' },
+          path: { type: 'string', description: '图片文件相对会话工作目录的路径（如 trae-images/trae-20261026-041500-ab12cd.jpg）；渲染层已据此显示图片。' },
           model: { type: 'string', description: '实际使用的生图模型 id。' },
           prompt: { type: 'string', description: '实际提交的画面描述。' },
           size: { type: 'string', description: '实际提交的尺寸。' },
-          hint: { type: 'string', description: '给模型的后续提示（如何展示、扣费口径）。' },
+          hint: { type: 'string', description: '给模型的后续提示（图片位置、扣费口径）。' },
           credit: { type: 'number', description: '上游若回传扣费数字，这里给出积分数。' },
         },
-        required: ['url', 'model', 'prompt', 'size', 'hint'],
+        required: ['url', 'path', 'model', 'prompt', 'size', 'hint'],
         additionalProperties: false,
       },
       render(_args: unknown, value: unknown): TraeToolContentBlock[] {
         const record = asRecord(value)
         const url = asNonEmptyString(record['url']) ?? ''
+        const path = asNonEmptyString(record['path']) ?? ''
         const model = asNonEmptyString(record['model']) ?? 'unknown'
         const size = asNonEmptyString(record['size']) ?? ''
         const credit = typeof record['credit'] === 'number' ? record['credit'] : undefined
         const hint = asNonEmptyString(record['hint']) ?? ''
-        // 永远不画 ![](...)：url 是 tos 对象 key（形如 tos-cn-i-xxx/cn/<uid>/gen_image/…），
-        // 不是 URL，拼进 markdown 图片语法只会得到以当前目录为基准的坏相对路径，
-        // 在宿主里渲染成碎图标。而字节目前没有任何可用通道（取图 GET 是又一次生成，
-        // 见 image-gen-trae.ts 的注释），所以这里只给 key，且用行内代码标成不可打开。
-        const lines = [
-          '图片对象 key（不能直接打开）：`' + url + '`',
+        // 只有真落盘了才画 ![](...)：path 是相对会话工作目录的文件路径，DSH 的聊天
+        // 按 session cwd 解析它、再过 api/file 鉴权路由取字节，所以能显示。
+        // url 是 tos 对象 key，拼进 markdown 只会得到碎图标——那种情况只给行内代码。
+        const lines = path === ''
+          ? ['图片已生成，但字节没取回来（只有对象 key）：`' + url + '`']
+          : ['![Trae 文生图](' + path + ')']
+        lines.push(
           '',
           '文生图 · 模型：' + model + (size === '' ? '' : ' · 尺寸：' + size)
           + (credit === undefined ? '' : ' · 消耗 ' + credit + ' 积分'),
-        ]
+        )
         if (hint !== '') lines.push('', hint)
         return [{ type: 'text', text: lines.join('\n') }]
       },
@@ -304,17 +532,20 @@ export function createTraeDrawImageTool(deps: TraeImageToolDeps): TraeToolDefini
 
       try {
         const outcome = await deps.generate(account, { prompt, size }, signal)
+        const cwd = (await deps.directoryOf?.(exec)) ?? sessionCwdOf(exec) ?? process.cwd()
+        const saved = await saveTraeImage(cwd, outcome)
         const value: Record<string, unknown> = {
           url: outcome.url,
+          path: saved.relativePath,
           model: TRAE_IMAGE_MODEL,
           prompt,
           size,
           hint:
             '这张图来自 Trae 文生图（模型 ' + TRAE_IMAGE_MODEL + '），按张计入该账号积分'
             + '（实测 1920x1920 约 8.8，上游不回传数字，以 Trae 额度面板为准）。'
-            + 'url 是 Trae 的图片对象 key，不能直接打开，图片字节插件也拿不到——'
-            + '这张图能在 Trae 客户端的历史/作品里看到。不要把 key 拼进 markdown 图片语法；'
-            + '也不要为了取图或换张重跑同一条 prompt（取图那条请求本身就是又一次生成，会再扣一张）。',
+            + '图片已保存到会话目录下的 ' + saved.relativePath + '（绝对路径 ' + saved.absolutePath + '），'
+            + '渲染层已经把它显示给用户了，不需要你再写 markdown。'
+            + '不要为了取图或换张重跑同一条 prompt——那会再扣一张。',
         }
         if (outcome.credit !== undefined) value.credit = outcome.credit
         return value
@@ -323,6 +554,67 @@ export function createTraeDrawImageTool(deps: TraeImageToolDeps): TraeToolDefini
         throw error
       }
     },
+  }
+}
+
+/** 从 exec 里读会话工作目录（宿主没给就返回 undefined）。 */
+function sessionCwdOf(exec: TraeToolExec): string | undefined {
+  const session = exec.agent?.session
+  return (
+    nonEmptyPath(session?.workingDirectory)
+    ?? nonEmptyPath(session?.header?.cwd)
+    ?? nonEmptyPath(session?.cwd)
+    ?? nonEmptyPath(exec.cwd)
+  )
+}
+
+/** 只在真拿到非空字符串时返回它（空串/空白/null 一律当「不知道」）。 */
+function nonEmptyPath(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  return value.trim() === '' ? undefined : value
+}
+
+/** mime → 文件后缀（上游目前只回 image/jpeg）。 */
+function imageExtensionFor(mimeType: string): string {
+  const type = mimeType.toLowerCase()
+  if (type.includes('png')) return 'png'
+  if (type.includes('webp')) return 'webp'
+  if (type.includes('gif')) return 'gif'
+  return 'jpg'
+}
+
+/** 文件名：本地时间的可排序时间戳 + 随机后缀，同一秒两张图也不会互相覆盖。 */
+function imageFileName(mimeType: string, now: number): string {
+  const date = new Date(now)
+  const pad = (value: number): string => String(value).padStart(2, '0')
+  const stamp = String(date.getFullYear()) + pad(date.getMonth() + 1) + pad(date.getDate())
+    + '-' + pad(date.getHours()) + pad(date.getMinutes()) + pad(date.getSeconds())
+  const rand = Math.random().toString(16).slice(2, 8)
+  return 'trae-' + stamp + '-' + rand + '.' + imageExtensionFor(mimeType)
+}
+
+/**
+ * 把图片字节写成 <cwd>/trae-images/<name>，返回绝对路径与相对路径。
+ * 相对路径给 render 用：DSH 的聊天按 session cwd 解析 markdown 图片地址，
+ * 再过 api/file 鉴权路由取字节，所以相对路径就能显示。
+ */
+async function saveTraeImage(
+  cwd: string,
+  outcome: TraeImageGenerated,
+): Promise<{ absolutePath: string, relativePath: string }> {
+  const name = imageFileName(outcome.mimeType, Date.now())
+  const directory = join(cwd, TRAE_IMAGE_DIR)
+  try {
+    await mkdir(directory, { recursive: true })
+    const absolutePath = join(directory, name)
+    await writeFile(absolutePath, outcome.bytes)
+    return { absolutePath, relativePath: TRAE_IMAGE_DIR + '/' + name }
+  } catch (error: unknown) {
+    throw new TraeImageError(
+      'trae image: 图片已经生成、积分已经扣了，但写入本地文件失败（目录 ' + directory + '）：'
+      + messageOf(error) + '\n图片对象 key：' + outcome.url,
+      'IMAGE_UNAVAILABLE',
+    )
   }
 }
 

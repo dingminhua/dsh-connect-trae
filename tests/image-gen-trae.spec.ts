@@ -1,16 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import {
-  DEFAULT_TRAE_IMAGE_SIZE,
   TRAE_IMAGE_MAX_PIXELS,
   TRAE_IMAGE_MIN_PIXELS,
   TraeImageError,
   buildTraeImageBody,
-  computeTraeIdeSign,
+  buildTraeResourceUrlBody,
   isTraeImageSize,
   parseTraeImageResponse,
   parseTraeImageStreamFrame,
-  traeImageFetchUrl,
-  traeImageSignFields,
+  parseTraeResourceUrlMap,
+  signedTraeResourceUrl,
 } from '../src/image-gen-trae.ts'
 
 describe('isTraeImageSize', () => {
@@ -99,29 +98,6 @@ describe('parseTraeImageResponse', () => {
   })
 })
 
-describe('x-ide-sign', () => {
-  it('签名是 md5(prompt小写 + image_size + 盐)', () => {
-    const sign = computeTraeIdeSign('a cat', '1920x1920')
-    expect(sign).toMatch(/^[0-9a-f]{32}$/)
-    expect(computeTraeIdeSign('a cat', '1920x1920')).toBe(computeTraeIdeSign('a cat', '1920x1920'))
-    expect(computeTraeIdeSign('a cat', '1920x1920')).not.toBe(computeTraeIdeSign('a cat', '2048x2048'))
-  })
-
-  it('从 URL 里读出签名参数', () => {
-    const url = traeImageFetchUrl('https://trae-api-cn.mchost.guru', 'A Cat', '1920x1920')
-    const fields = traeImageSignFields(url)
-    expect(fields).toEqual({ prompt: 'a cat', image_size: '1920x1920' })
-    expect(traeImageSignFields('https://x/y.png')).toBeUndefined()
-  })
-
-  it('取图 URL 用同一路径，缺省尺寸补 1920x1920', () => {
-    const url = new URL(traeImageFetchUrl('https://gw.example', 'cat', undefined))
-    expect(url.pathname).toBe('/api/ide/v1/tool_text_to_image')
-    expect(url.searchParams.get('prompt')).toBe('cat')
-    expect(url.searchParams.get('image_size')).toBe(DEFAULT_TRAE_IMAGE_SIZE)
-  })
-})
-
 describe('parseTraeImageStreamFrame', () => {
   it('解出小写 result/done/heartbeat 帧', () => {
     const r = parseTraeImageStreamFrame('event: result\ndata: {"uri":"k1"}')
@@ -136,5 +112,62 @@ describe('parseTraeImageStreamFrame', () => {
   it('未知事件返回 undefined', () => {
     expect(parseTraeImageStreamFrame('event: StreamResult\ndata: {}')).toBeUndefined()
     expect(parseTraeImageStreamFrame('data: {}')).toBeUndefined()
+  })
+})
+
+describe('buildTraeResourceUrlBody', () => {
+  it('只产出 uri_list，且去掉首尾空白', () => {
+    expect(buildTraeResourceUrlBody('  tos-cn-i-x/cn/1/gen_image/a  ')).toEqual({
+      uri_list: ['tos-cn-i-x/cn/1/gen_image/a'],
+    })
+    // 请求体形态是实测出来的：换任何别的字段名/结构，上游只回 200 + 空 url_map。
+    expect(Object.keys(buildTraeResourceUrlBody('k'))).toEqual(['uri_list'])
+  })
+
+  it('空 uri 就地抛 INVALID_ARGS（一分钱没花，也不该说成图已生成）', () => {
+    for (const uri of ['', '   ', '\n\t']) {
+      const error = (() => {
+        try { buildTraeResourceUrlBody(uri) } catch (thrown: unknown) { return thrown }
+        return undefined
+      })()
+      expect(error).toBeInstanceOf(TraeImageError)
+      expect((error as TraeImageError).code).toBe('INVALID_ARGS')
+    }
+  })
+})
+
+describe('parseTraeResourceUrlMap', () => {
+  it('解出 url_map 并去掉首尾空白', () => {
+    expect(parseTraeResourceUrlMap({ url_map: { k: ' https://cdn/x?sig=1 ' } })).toEqual({ k: 'https://cdn/x?sig=1' })
+  })
+
+  it('对认不出的形状一律回空表（上游对坏 key 就是这么回的，不报错）', () => {
+    for (const json of [null, undefined, 'x', 42, [], {}, { url_map: null }, { url_map: 'x' }, { url_map: [] }]) {
+      expect(parseTraeResourceUrlMap(json)).toEqual({})
+    }
+  })
+
+  it('丢弃非字符串与空串条目', () => {
+    const map = parseTraeResourceUrlMap({ url_map: { a: ' https://cdn/a ', b: '', c: '   ', d: 1, e: null, f: {} } })
+    expect(map).toEqual({ a: 'https://cdn/a' })
+  })
+})
+
+describe('signedTraeResourceUrl', () => {
+  it('取到该 uri 的签名地址', () => {
+    const key = 'tos-cn-i-x/cn/1/gen_image/a'
+    expect(signedTraeResourceUrl({ url_map: { [key]: 'https://cdn/signed' } }, key)).toBe('https://cdn/signed')
+  })
+
+  it('url_map 里没有这个 key 时抛 IMAGE_UNAVAILABLE 并带上 key（图已生成、积分已扣）', () => {
+    const key = 'tos-cn-i-x/cn/1/gen_image/missing'
+    const error = (() => {
+      try { signedTraeResourceUrl({ url_map: { other: 'https://cdn/x' } }, key) } catch (thrown: unknown) { return thrown }
+      return undefined
+    })()
+    expect(error).toBeInstanceOf(TraeImageError)
+    expect((error as TraeImageError).code).toBe('IMAGE_UNAVAILABLE')
+    expect((error as Error).message).toContain(key)
+    expect((error as Error).message).toContain('积分已经扣了')
   })
 })
