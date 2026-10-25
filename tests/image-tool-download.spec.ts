@@ -120,4 +120,64 @@ describe('trae_draw_image retrieval', () => {
     expect((error as Error).message).toContain(KEY)
     expect((error as Error).message).toContain('积分已经扣了')
   })
+
+  /**
+   * 取图这一跳的 HTTP 失败**不能**沿用生图那套映射。
+   *
+   * 图已经生成、积分已经扣掉了。回 403 时若照旧报 AUTH（"上游拒绝了凭据"），
+   * 用户会去重新登录，而钱已经花了、图还是拿不到——这是谎报成因。
+   */
+  it('maps a retrieval-hop HTTP failure to IMAGE_UNAVAILABLE, never to AUTH/RATE_LIMIT/UPSTREAM', async () => {
+    for (const status of [401, 403, 429, 500, 502]) {
+      const calls: Call[] = []
+      const fetchImpl = (async (input: unknown, init?: { method?: string, headers?: Record<string, string>, body?: string }) => {
+        calls.push({ url: String(input), method: init?.method ?? 'GET', headers: (init?.headers ?? {}) as Record<string, string>, body: init?.body })
+        const url = String(input)
+        if (url.includes('/api/ide/v1/tool_text_to_image')) {
+          return new Response(JSON.stringify({ message: 'success', uri: KEY }), { status: 200, headers: { 'content-type': 'application/json' } })
+        }
+        if (url.includes('/api/ide/v1/get_resource_url')) return new Response('denied', { status })
+        throw new Error('the generation already succeeded; the CDN must not be reached')
+      }) as unknown as typeof fetch
+
+      const client = new TraeImageClient({ fetchImpl })
+      const error = await client.generate(ACCOUNT, { prompt: PROMPT, size: SIZE })
+        .then(() => undefined, (thrown: unknown) => thrown)
+
+      expect(calls).toHaveLength(2)
+      expect(error).toBeInstanceOf(TraeImageError)
+      expect((error as TraeImageError).code).toBe('IMAGE_UNAVAILABLE')
+      expect((error as Error).message).toContain(String(status))
+      expect((error as Error).message).toContain('积分已经扣了')
+      expect((error as Error).message).toContain(KEY)
+      // 不许把已付过钱的事说成凭据/限流问题。
+      expect((error as Error).message).not.toContain('拒绝了凭据')
+      expect((error as Error).message).not.toContain('限流')
+    }
+  })
+
+  it('rejects a 200 response whose bytes are not an image, even if content-type says jpeg', async () => {
+    const calls: Call[] = []
+    const fetchImpl = (async (input: unknown, init?: { method?: string, headers?: Record<string, string> }) => {
+      calls.push({ url: String(input), method: init?.method ?? 'GET', headers: (init?.headers ?? {}) as Record<string, string>, body: undefined })
+      const url = String(input)
+      if (url.includes('/api/ide/v1/tool_text_to_image')) {
+        return new Response(JSON.stringify({ message: 'success', uri: KEY }), { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      if (url.includes('/api/ide/v1/get_resource_url')) {
+        return new Response(JSON.stringify({ url_map: { [KEY]: SIGNED } }), { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      // 签名过期时 CDN 常拿 200 回一页 HTML：content-type 骗人，字节骗不了人。
+      return new Response('<!doctype html><title>expired</title>', { status: 200, headers: { 'content-type': 'image/jpeg' } })
+    }) as unknown as typeof fetch
+
+    const client = new TraeImageClient({ fetchImpl })
+    const error = await client.generate(ACCOUNT, { prompt: PROMPT, size: SIZE })
+      .then(() => undefined, (thrown: unknown) => thrown)
+
+    expect(error).toBeInstanceOf(TraeImageError)
+    expect((error as TraeImageError).code).toBe('IMAGE_UNAVAILABLE')
+    expect((error as Error).message).toContain('不是图片')
+    expect((error as Error).message).toContain(KEY)
+  })
 })

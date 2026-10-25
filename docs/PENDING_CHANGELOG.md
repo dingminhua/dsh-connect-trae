@@ -44,6 +44,14 @@
 - **失败语义**：图已生成、积分已扣、但字节取不回来（`url_map` 里没有这个 key / CDN 非
   2xx / 0 字节 / 落盘失败）→ `IMAGE_UNAVAILABLE`，进 30 秒冷却，文案明说「积分已经扣了」
   并给出对象 key 供排障，要求模型**不要重试**。
+- **取图那一跳的 HTTP 错误不再谎报成因**：此前它复用生图那套状态码映射，取图接口回
+  403 会报 `AUTH`（「上游拒绝了凭据」）、回 429 会报 `RATE_LIMIT`——可这时图早已生成、
+  积分早已扣掉，用户照这句话去重新登录，钱花了图还是拿不到。现在取图阶段（解析地址、
+  下载字节）的 HTTP 失败一律归 `IMAGE_UNAVAILABLE`，文案保留状态码与上游原文、附上对象
+  key。冷却判据只看 code，`IMAGE_UNAVAILABLE` 仍在冷却集合里，不会因此变成可重试。
+- **下载回来的东西必须是图片**：签名地址过期时 CDN 常拿 `200` 回一页 HTML，而
+  `content-type` 可能仍写着 `image/jpeg`。现在按字节魔数判定（JPEG/PNG/GIF/WebP/BMP），
+  认不出就如实报 `IMAGE_UNAVAILABLE`（带前 4 字节），不再落一个打不开的 `.jpg`。
 
 ### 变更
 
@@ -54,10 +62,16 @@
 
 ### 测试
 
-- `tests/image-tool-download.spec.ts` 3 例：stub fetch 断言**三跳**（POST 生图 →
+- `tests/image-tool-download.spec.ts` 5 例：stub fetch 断言**三跳**（POST 生图 →
   POST `get_resource_url` → GET 签名地址），且**没有任何**带 `image_size=` 的请求；
   `uri_list` 请求体；CDN 请求不带 `Authorization`、只带 `Accept: image/*`；
-  空 `url_map` → `IMAGE_UNAVAILABLE`。
+  空 `url_map` → `IMAGE_UNAVAILABLE`；取图跳回 401/403/429/500/502 一律
+  `IMAGE_UNAVAILABLE`（断言文案含状态码与对象 key，且**不含**「拒绝了凭据」「限流」）；
+  取图跳回 `200` 但字节不是图片（HTML 错误页）→ `IMAGE_UNAVAILABLE`。
+- `tests/image-gen-trae.spec.ts` 21 例：新增 `buildTraeResourceUrlBody`（只产出
+  `uri_list`、去空白、空 uri → `INVALID_ARGS`）、`parseTraeResourceUrlMap`（去空白、
+  坏形状回空表、丢弃非字符串/空串）、`signedTraeResourceUrl`（取到地址、缺 key 即
+  `IMAGE_UNAVAILABLE` 并带 key）三组纯函数单测。
 - `tests/image-tool-render.spec.ts` 12 例：字节真落盘、文件名与后缀、markdown 用相对路径
   且不含 key、credit 回显、写盘失败即 `IMAGE_UNAVAILABLE`、`IMAGE_UNAVAILABLE` 进冷却而
   `INVALID_ARGS` 不进；以及会话目录阶梯三条——只有 `agent.session.header.cwd` 时写进它、
@@ -69,4 +83,5 @@
 ### 文档
 
 - `README.md` / `README.en.md` 的「文生图」条目与协议表改成「两步取图 + 落盘 + 相对
-  路径显示」，并保留「那条 GET 是又一次生成」的实测记录作为反面证据。
+  路径显示」，并保留「那条 GET 是又一次生成」的实测记录作为反面证据；示例文件名改回
+  与 `imageFileName()` 实际输出一致的 `trae-YYYYMMDD-HHMMSS-<hex>`。

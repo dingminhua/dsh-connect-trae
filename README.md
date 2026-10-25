@@ -138,7 +138,7 @@ TraeWork / SOLO 侧那套文生图服务带出来了：在会话里让模型**�
 | 取图 | **两步、零额外计费**：`POST /api/ide/v1/get_resource_url`，body 只能是 `{"uri_list":["<key>"]}`（`{uri}`/`{path}`/`{resource_uri}`/`{uris:[…]}`、GET `?uri=` 都只回 200 + 空 `url_map`），应答 `{"url_map":{"<key>":"<byteimg 签名 URL>"}}`；再直接 GET 那个签名地址（**不带任何 Trae 头**，签名在 query 里）拿字节——实测 `image/jpeg`、1,155,578 字节、头 `ffd8ffe0` |
 | 那条 GET 的真实身份 | 决定性探针：POST 拿到 `…/1792954795741_44f94116_jpeg_1920x1920` 后，用同一 `(prompt, size)` 打 GET，回来的是**另一个** uri（`…/1792954810505_b107ac11_jpeg_1920x1920`），耗时 27 秒、一个像素都没有——等于又画一张、再扣一次（两次共约 17.6）。非法尺寸探针（`100x100`）也印证：报错直接来自 Ark 的 `[callArkImageGeneration]` |
 
-**图是真的取回来了。** 工具成功时返回 `url`（Trae 对象 key，留作排障）、`path`（相对会话目录的本地文件，如 `trae-images/trae-20261026-0420-ab12cd.jpg`）、`model`、`prompt`、`size` 和一句 `hint`；渲染层输出 `![Trae 文生图](trae-images/…)`——DSH 的聊天按 session cwd 解析这个相对路径，再过宿主的 `api/file` 鉴权路由取字节，所以图直接显示出来。只有字节真的没拿到时（`IMAGE_UNAVAILABLE`：图已生成、积分已扣）才退化成「只有对象 key」的行内代码；那种失败照样进 30 秒冷却——生图按张计费，重试等于再买一张。
+**图是真的取回来了。** 工具成功时返回 `url`（Trae 对象 key，留作排障）、`path`（相对会话目录的本地文件，如 `trae-images/trae-20261026-042015-ab12cd.jpg`）、`model`、`prompt`、`size` 和一句 `hint`；渲染层输出 `![Trae 文生图](trae-images/…)`——DSH 的聊天按 session cwd 解析这个相对路径，再过宿主的 `api/file` 鉴权路由取字节，所以图直接显示出来。只有字节真的没拿到时（`IMAGE_UNAVAILABLE`：图已生成、积分已扣）才退化成「只有对象 key」的行内代码；那种失败照样进 30 秒冷却——生图按张计费，重试等于再买一张。
 
 **改图与文生视频没有放开。** 改图要先走 TOS 上传预签名（本插件没有这条链路）；视频要轮询素材结果，是另一条异步管线。两者都不做，也不留半截入口。
 

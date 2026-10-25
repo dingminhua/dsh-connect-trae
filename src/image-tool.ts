@@ -85,6 +85,25 @@ function mapHttpToImageError(status: number, detail: string): TraeImageError {
 }
 
 /**
+ * 取图阶段（解析签名地址 / 下载字节）的 HTTP 失败。
+ *
+ * 这里**不能**复用 mapHttpToImageError：那套映射是给「生图那一跳」用的，401/403 报
+ * AUTH、429 报 RATE_LIMIT 都还有意义。到了取图这一跳，图早已生成、积分早已扣掉，
+ * 再把 403 说成「上游拒绝了凭据」就是谎报——用户会去重新登录，而钱已经花了、图还是
+ * 拿不到。所以一律归成 IMAGE_UNAVAILABLE，文案保留状态码与原文便于排障，并附上对象
+ * key。冷却判据只看 code，IMAGE_UNAVAILABLE 同样在冷却集合里，不会因为换了 code 就
+ * 变成可重试（重试等于再买一张）。
+ */
+function mapRetrievalHttpError(status: number, detail: string, uri: string): TraeImageError {
+  const tail = detail === '' ? '' : '：' + detail.slice(0, 200)
+  return new TraeImageError(
+    'trae image: 图片已经生成、积分已经扣了，但取图接口回了 HTTP ' + status + tail
+    + '\n图片对象 key：' + uri,
+    'IMAGE_UNAVAILABLE',
+  )
+}
+
+/**
  * 发一次真机文生图请求，并把图片字节一起取回来。所有可预期的失败都归一成
  * TraeImageError，让上层的冷却判据只看 code（见 createTraeDrawImageTool 的注释）。
  */
@@ -151,7 +170,7 @@ export class TraeImageClient {
     // 注意**不是**同路径那条 ?prompt=&image_size= 的 GET——那才是又一次生成
     // （回新 uri、27 秒、零像素、多扣一张），已彻底停用。
     const signed = await this.resolveSignedUrl(account, outcome.url, requestSignal)
-    const image = await this.download(signed, requestSignal)
+    const image = await this.download(signed, requestSignal, outcome.url)
 
     const result: { url: string, credit?: number, bytes: Uint8Array, mimeType: string } = {
       url: outcome.url,
@@ -202,7 +221,7 @@ export class TraeImageClient {
         'IMAGE_UNAVAILABLE',
       )
     }
-    if (!response.ok) throw mapHttpToImageError(response.status, payload)
+    if (!response.ok) throw mapRetrievalHttpError(response.status, payload, uri)
 
     let json: unknown
     try {
@@ -226,6 +245,7 @@ export class TraeImageClient {
   async download(
     signed: string,
     signal?: AbortSignal,
+    uri?: string,
   ): Promise<{ bytes: Uint8Array, mimeType: string }> {
     const fetchImpl = this.options.fetchImpl ?? globalThis.fetch
     const requestSignal = signal ?? AbortSignal.timeout(IMAGE_TOOL_TIMEOUT_MS)
@@ -244,8 +264,9 @@ export class TraeImageClient {
       )
     }
     if (!response.ok) {
+      const key = uri === undefined || uri === '' ? '' : '\n图片对象 key：' + uri
       throw new TraeImageError(
-        'trae image: 图片已经生成、积分已经扣了，但下载地址回了 HTTP ' + response.status + '。',
+        'trae image: 图片已经生成、积分已经扣了，但下载地址回了 HTTP ' + response.status + '。' + key,
         'IMAGE_UNAVAILABLE',
       )
     }
@@ -267,12 +288,49 @@ export class TraeImageClient {
     }
     const contentType = response.headers.get('content-type') ?? ''
     const mimeType = contentType.split(';')[0]?.trim() ?? ''
-    return { bytes: new Uint8Array(buffer), mimeType: mimeType === '' ? 'image/jpeg' : mimeType }
+    // content-type 是 CDN 自己说的，不足为凭：签名地址过期/被改写时，CDN 会拿
+    // 200 回一页 HTML（错误页），照着写就会落一个打不开的 .jpg。以魔数为准，
+    // 认不出就如实失败——图已经付过钱了，宁可说清楚也别给个坏文件。
+    const sniffed = imageMimeTypeOf(new Uint8Array(buffer))
+    if (sniffed === undefined) {
+      throw new TraeImageError(
+        'trae image: 图片已经生成、积分已经扣了，但下载回来的不是图片（content-type '
+        + (mimeType === '' ? '缺失' : mimeType) + '，前 4 字节 '
+        + hexPrefix(new Uint8Array(buffer)) + '）。'
+        + (uri === undefined || uri === '' ? '' : '\n图片对象 key：' + uri),
+        'IMAGE_UNAVAILABLE',
+      )
+    }
+    return { bytes: new Uint8Array(buffer), mimeType: sniffed }
   }
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null ? value as Record<string, unknown> : {}
+}
+
+/**
+ * 从字节魔数判断图片类型（JPEG / PNG / GIF / WebP / BMP）。
+ *
+ * 为什么不信 content-type：签名地址过期或被劫持时，CDN 常拿 200 回一页 HTML。
+ * 那样写下去的文件扩展名是 .jpg 却打不开，用户只看到碎图标，而积分已经扣了。
+ * 认不出就返回 undefined，由调用方如实报 IMAGE_UNAVAILABLE。
+ */
+function imageMimeTypeOf(bytes: Uint8Array): string | undefined {
+  const at = (index: number): number => bytes[index] ?? -1
+  if (at(0) === 0xff && at(1) === 0xd8 && at(2) === 0xff) return 'image/jpeg'
+  if (at(0) === 0x89 && at(1) === 0x50 && at(2) === 0x4e && at(3) === 0x47) return 'image/png'
+  if (at(0) === 0x47 && at(1) === 0x49 && at(2) === 0x46) return 'image/gif'
+  // RIFF....WEBP
+  if (at(0) === 0x52 && at(1) === 0x49 && at(2) === 0x46 && at(3) === 0x46
+    && at(8) === 0x57 && at(9) === 0x45 && at(10) === 0x42 && at(11) === 0x50) return 'image/webp'
+  if (at(0) === 0x42 && at(1) === 0x4d) return 'image/bmp'
+  return undefined
+}
+
+/** 前若干字节的十六进制，只用于排障文案。 */
+function hexPrefix(bytes: Uint8Array): string {
+  return [...bytes.slice(0, 4)].map(value => value.toString(16).padStart(2, '0')).join('')
 }
 
 function asNonEmptyString(value: unknown): string | undefined {
@@ -327,10 +385,6 @@ export interface TraeImageToolDeps {
 }
 
 /**
- * 宿主 ToolDefinition 的结构子集（同 workbuddy 的 ImageToolDefinition；
- * 刻意不 import 宿主类型，只描述宿主会读哪些字段）。
- */
-/**
  * execute 收到的执行上下文（宿主原样传进工具的那个对象）。
  *
  * 会话目录有三个候选，可信度从高到低：
@@ -354,6 +408,10 @@ export interface TraeToolExec {
   }
 }
 
+/**
+ * 宿主 ToolDefinition 的结构子集（同 workbuddy 的 ImageToolDefinition；
+ * 刻意不 import 宿主类型，只描述宿主会读哪些字段）。
+ */
 export interface TraeToolDefinition {
   readonly name: string
   readonly description: string
