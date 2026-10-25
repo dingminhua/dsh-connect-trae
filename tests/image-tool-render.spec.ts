@@ -82,6 +82,45 @@ describe('trae_draw_image render', () => {
     expect(value['url']).toBe(TOS_KEY)
   })
 
+  it('writes under the session header cwd when the host fills nothing else', async () => {
+    // 宿主真实形状：exec 上只有 agent.session.header.cwd（创建时目录）。
+    const cwd = await workDir()
+    const tool = toolReturning(generated())
+    const value = await tool.execute({ prompt: '猫' }, { agent: { session: { header: { cwd } } } })
+    expect([...await readFile(join(cwd, String(value['path'])))]).toEqual([...JPEG])
+  })
+
+  it('prefers the live workingDirectory over the creation-time header', async () => {
+    const created = await workDir()
+    const live = await workDir()
+    const tool = toolReturning(generated())
+    const value = await tool.execute(
+      { prompt: '猫' },
+      { agent: { session: { workingDirectory: live, header: { cwd: created } } } },
+    )
+    const path = String(value['path'])
+    expect([...await readFile(join(live, path))]).toEqual([...JPEG])
+    // 创建时目录里什么都没写。
+    await expect(readFile(join(created, path))).rejects.toThrow()
+  })
+
+  it('lets the plugin supply the live directory from the session projection', async () => {
+    // index.ts 就是这样接的：宿主 workingDirectory.ensure() 给的实时目录优先，
+    // exec 里的字段只是兜底。
+    const live = await workDir()
+    const created = await workDir()
+    const tool = createTraeDrawImageTool({
+      resolveAccount: async () => ACCOUNT,
+      generate: async () => generated(),
+      directoryOf: exec => (exec.agent?.session === undefined ? undefined : live),
+      logger: { warn() {} },
+    })
+    const value = await tool.execute({ prompt: '猫' }, { agent: { session: { header: { cwd: created } } } })
+    const path = String(value['path'])
+    expect([...await readFile(join(live, path))]).toEqual([...JPEG])
+    await expect(readFile(join(created, path))).rejects.toThrow()
+  })
+
   it('keeps the png suffix when the download says png', async () => {
     const cwd = await workDir()
     const { value } = await run(toolReturning(generated('image/png')), cwd)

@@ -311,6 +311,19 @@ export interface TraeImageToolDeps {
     signal?: AbortSignal,
   ) => Promise<TraeImageGenerated>
   readonly logger: { warn(message: string): void }
+  /**
+   * 会话**实时**工作目录（宿主 session projection 的 `workingDirectory`）。
+   *
+   * 为什么不是读 exec 上的字段：宿主的 ToolExecution 只带 `signal` 和 `agent`，
+   * `cwd` 是「Reserved by the Host」，4.15.x 起仍然不填；`agent.session.cwd`
+   * 这个字段也不存在。agent.session.header.cwd 只是**创建时**目录，
+   * /cd 之后就不对了。实时目录是宿主维护的 projection（key `workingDirectory`，
+   * 每次 working-directory/change 都提交一次），宿主自己也把它写进模型系统提示里。
+   * src/index.ts 通过 ctx.inject(['workingDirectory']) 调宿主的
+   * `workingDirectory.ensure(agent, signal)` 后接到这里（宿主自己的工具都这么取 cwd）；
+   * 宿主没有这个服务时保持 undefined，下面的阶梯照旧回退。
+   */
+  readonly directoryOf?: (exec: TraeToolExec) => string | undefined | Promise<string | undefined>
 }
 
 /**
@@ -319,12 +332,26 @@ export interface TraeImageToolDeps {
  */
 /**
  * execute 收到的执行上下文（宿主原样传进工具的那个对象）。
- * agent.session.cwd 是会话工作目录——ChatView 解析 markdown 相对路径用的也是它，
- * 所以图片写在这里，渲染层就能按同样的基准显示。
+ *
+ * 会话目录有三个候选，可信度从高到低：
+ * 1. `agent.session.workingDirectory` —— 测试/命令层塞进来的 session 形状对象
+ *    （真实宿主不会在 session 上挂这个字段，它是 projection 的状态）；
+ * 2. `agent.session.header.cwd` —— 宿主保证绝对路径的**创建时**目录；
+ * 3. `cwd` —— 宿主预留字段，4.15.x 仍不填。
+ * 真实宿主里最可靠的来源是 projection（`deps.directoryOf`），这里只做兜底：
+ * 拿不到就别猜，交给调用方回退到 process.cwd()。
  */
 export interface TraeToolExec {
   readonly signal?: AbortSignal
-  readonly agent?: { readonly session?: { readonly cwd?: string } }
+  /** 宿主预留；4.15.x 不会填会话目录。 */
+  readonly cwd?: string
+  readonly agent?: {
+    readonly session?: {
+      readonly cwd?: string
+      readonly workingDirectory?: string | null
+      readonly header?: { readonly cwd?: string }
+    }
+  }
 }
 
 export interface TraeToolDefinition {
@@ -447,7 +474,7 @@ export function createTraeDrawImageTool(deps: TraeImageToolDeps): TraeToolDefini
 
       try {
         const outcome = await deps.generate(account, { prompt, size }, signal)
-        const cwd = sessionCwdOf(exec) ?? process.cwd()
+        const cwd = (await deps.directoryOf?.(exec)) ?? sessionCwdOf(exec) ?? process.cwd()
         const saved = await saveTraeImage(cwd, outcome)
         const value: Record<string, unknown> = {
           url: outcome.url,
@@ -474,8 +501,19 @@ export function createTraeDrawImageTool(deps: TraeImageToolDeps): TraeToolDefini
 
 /** 从 exec 里读会话工作目录（宿主没给就返回 undefined）。 */
 function sessionCwdOf(exec: TraeToolExec): string | undefined {
-  const cwd = exec.agent?.session?.cwd
-  return typeof cwd === 'string' && cwd.trim() !== '' ? cwd : undefined
+  const session = exec.agent?.session
+  return (
+    nonEmptyPath(session?.workingDirectory)
+    ?? nonEmptyPath(session?.header?.cwd)
+    ?? nonEmptyPath(session?.cwd)
+    ?? nonEmptyPath(exec.cwd)
+  )
+}
+
+/** 只在真拿到非空字符串时返回它（空串/空白/null 一律当「不知道」）。 */
+function nonEmptyPath(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  return value.trim() === '' ? undefined : value
 }
 
 /** mime → 文件后缀（上游目前只回 image/jpeg）。 */

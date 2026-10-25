@@ -183,6 +183,7 @@ import {
   TraeImageClient,
   registerTraeDrawImageTool,
   type TraeImageAccount,
+  type TraeToolExec,
   type ToolsServiceLike,
 } from './image-tool.ts'
 
@@ -2118,9 +2119,47 @@ export function apply(ctx: Context, config: Config): void {
         return undefined
       },
       generate: (account, request, signal) => drawImageClient.generate(account, request, signal),
+      // 优先读宿主 projection（实时目录），拿不到就让 image-tool 走 header.cwd。
+      directoryOf: (exec: TraeToolExec) =>
+        ensureSessionDirectory === undefined ? undefined : ensureSessionDirectory(exec),
       logger: ctx.logger,
     })
   }
+  // 会话**实时**目录：用宿主自己的 service，不猜字段。
+  //
+  // 图必须写进「用户正在看的那个目录」：render 输出的是相对路径，ChatView 按
+  // 会话 cwd 解析它。宿主的 ToolExecution 不填 `cwd`（4.15.x 仍标 Reserved），
+  // `agent.session.cwd` 这个字段不存在，`agent.session.header.cwd` 又只是创建时
+  // 目录（/cd 之后就不对）。宿主的 dsh-tool-* 一律走
+  // `ctx.workingDirectory.ensure(exec.agent, exec.signal)`——它读 session
+  // projection `workingDirectory`（实时目录），并顺手确认目录还在——这里照抄。
+  //
+  // 用 ctx.inject 等这个服务出现（它可能晚于本行），而不是采样一次：采不到就
+  // 等于没有，图又会落到宿主进程 cwd 里。宿主不给这个服务时保持 undefined，
+  // image-tool 的阶梯照旧回退到 header.cwd，行为不比以前差。
+  let ensureSessionDirectory: ((exec: TraeToolExec) => Promise<string | undefined>) | undefined
+  ctx.inject(['workingDirectory'], directoryCtx => {
+    const service = (directoryCtx as unknown as {
+      workingDirectory?: { ensure?(agent: unknown, signal?: AbortSignal): Promise<string> }
+    }).workingDirectory
+    if (service === undefined || typeof service.ensure !== 'function') return
+    const ensure = service.ensure.bind(service)
+    ensureSessionDirectory = async (exec: TraeToolExec): Promise<string | undefined> => {
+      const agent = (exec as { agent?: unknown }).agent
+      if (agent === undefined) return undefined
+      try {
+        const directory = await ensure(agent, exec.signal)
+        return typeof directory === 'string' && directory.trim() !== '' ? directory : undefined
+      } catch {
+        // 目录没了且原项目也找不到时宿主会抛；当作「不知道」，让阶梯回退。
+        return undefined
+      }
+    }
+    directoryCtx.effect(() => () => {
+      ensureSessionDirectory = undefined
+    })
+  })
+
   ctx.inject(['tools'], (toolsCtx) => {
     drawImageTools = (toolsCtx as unknown as { tools?: ToolsServiceLike }).tools
     if (drawImageTools === undefined) return

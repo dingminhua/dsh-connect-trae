@@ -32,6 +32,15 @@
   （扩展名跟 mime 走），`output.schema` 恢复 `path` 并进 `required`，`render` 输出
   `![Trae 文生图](trae-images/…)`。DSH 的聊天按 session cwd 解析相对路径、再过宿主的
   `api/file` 鉴权路由取字节，所以图真的显示出来，不需要用户去 Trae 客户端翻历史。
+- **图片现在落在会话目录，不再落到宿主进程的 cwd**：宿主的 `ToolExecution` 不填 `cwd`
+  （4.15.x 仍标 `Reserved`），`agent.session.cwd` 这个字段不存在，所以之前只能回退到
+  `process.cwd()`（= 启动 DSH 的那个目录），`render` 输出的相对路径在聊天里按**会话**
+  cwd 解析就成了「图片无法预览」（实测图落进 `ysm-model-manager/trae-images/`，会话却开在
+  另一个目录）。现在按可信度取：宿主的 `ctx.workingDirectory.ensure(agent, signal)`
+  （`ctx.inject(['workingDirectory'])`，读 session projection `workingDirectory`、每次 `/cd`
+  都会更新，宿主自己的 `dsh-tool-*` 也一律这么取 cwd）→ `agent.session.header.cwd`
+  （创建时目录，宿主保证绝对路径）→ `process.cwd()`。`TraeImageToolDeps` 新增可选
+  `directoryOf`，宿主 service 的读取由 `src/index.ts` 注入，`image-tool` 本身保持可单测。
 - **失败语义**：图已生成、积分已扣、但字节取不回来（`url_map` 里没有这个 key / CDN 非
   2xx / 0 字节 / 落盘失败）→ `IMAGE_UNAVAILABLE`，进 30 秒冷却，文案明说「积分已经扣了」
   并给出对象 key 供排障，要求模型**不要重试**。
@@ -49,9 +58,11 @@
   POST `get_resource_url` → GET 签名地址），且**没有任何**带 `image_size=` 的请求；
   `uri_list` 请求体；CDN 请求不带 `Authorization`、只带 `Accept: image/*`；
   空 `url_map` → `IMAGE_UNAVAILABLE`。
-- `tests/image-tool-render.spec.ts` 9 例：字节真落盘、文件名与后缀、markdown 用相对路径
+- `tests/image-tool-render.spec.ts` 12 例：字节真落盘、文件名与后缀、markdown 用相对路径
   且不含 key、credit 回显、写盘失败即 `IMAGE_UNAVAILABLE`、`IMAGE_UNAVAILABLE` 进冷却而
-  `INVALID_ARGS` 不进。
+  `INVALID_ARGS` 不进；以及会话目录阶梯三条——只有 `agent.session.header.cwd` 时写进它、
+  实时 `workingDirectory` 优先于创建时目录、`directoryOf` 注入（`index.ts` 接 projection
+  的方式）优先于两者。
 - 真机（零成本，复用既有 key）：签名 → 1,155,578 字节 JPEG → 落盘同样字节 →
   render 输出 markdown 图片，整条链路跑通。
 
