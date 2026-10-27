@@ -1,5 +1,77 @@
 # Changelog
 
+## 4.6.3 (2026-10-27)
+
+> **国际版美国区账号不会再被当成新加坡区。** 它的凭据明明写着
+> `host = https://grow-normal.traeapi.us`、`userRegion = "US"`，插件却因为
+> 「不认识 US」回落到 edition 标签（`sg → ai`），把 US token 发去 `*.trae.ai`
+> ——那边只会回 401；刷新模型拿到的 401 又被路由包成 500。用户看到的是
+> 「拉模型失败，请重新登录」，而重登拿到的还是同一份 US 凭据，于是无限循环。
+
+### 修复
+
+- **美国区成为显式区域，不再静默回退成新加坡区**（#66）。
+  - **现象**：`pay_status` 401；「刷新模型」500
+    `{"error":"SOLO remote models returned HTTP 401"}`；宿主日志
+    `live ai model directory unavailable; serving the configured catalog`。
+  - **根因**：`regionOfUserRegion` 只认 CN/SG、`regionOfHost` 只认
+    `.trae.ai`/`.trae.cn`，两级都落空后由 `regionOfEdition("sg")` 决定——
+    US 被判定为 `ai`。而 `REGION_GATEWAYS` 只有 cn/ai 两个键，于是「查不到」
+    变成了「拿另一个区的网关」。
+  - **修法**：新增 `TraeServiceRegion = 'cn' | 'ai' | 'us'`；`TraeRegion`
+    （存储/路由桶）仍是 `cn | ai`。`assertSupportedRegion()` 是唯一从区域
+    身份进到路由桶的入口，US 在**选择网关之前**抛
+    `TraeUnsupportedRegionError`。所有读网关的客户端（用量、SOLO wire、远程
+    目录、Raw Chat、IDE 名册）都走这一道，注入 `baseUrl` 的测试/诊断路径也
+    不例外。
+  - **为什么不是一行 `us → ai` 映射**：`ai` 的网关/目录/chat 契约都是按新加坡
+    实测出来的，而报告里的 US 实测恰好相反（远程目录 404、`llm_utils_chat`
+    403 `40006`、`create_agent_task` 的 config 绑定未知）。映射过去只是换一种
+    方式发错请求。**美国区本身仍未接入**，本版只保证它不再被误路由。
+
+- **上游 401/403 不再被包成 500**（#66）。
+  - 新增 `src/failure.ts`：`TraeHttpError` 携带上游状态，`httpFailureOf()` 把
+    401/403 映射为原状态 + `code: authentication`，本地「区域不支持」映射为
+    501 + `code: unsupported-region`，真正没有状态可言的失败仍 500。状态、
+    额度、账号表、模型刷新、模型测速、签到与账号池签到/测速这些路由全部改用
+    它。
+  - 卡片改为显示**服务端原文**（账号刷新、模型刷新、状态读取），不再只打印
+    `HTTP 401`——「网关拒绝了你」和「插件坏了」从此可以分辨。
+
+- **US 凭据不可选中、不计费，但会被点名**（#66）。
+  - `readAll()` 过滤掉本版本不服务的区域（作用域与无作用域 store 都过滤），
+    因此它不会被 refresh、不会进账号表、不会发出任何请求；
+    `unsupportedCredentials()` 单独把它读出来给卡片点名。
+  - 未登录态显示「美国区（US）暂不支持」并列出账号名，写明请求不会发往新加坡
+    网关、重新登录没有变化；诊断面板多一行「未支持的区域」。
+  - `resolve()` 在「只有 US 凭据」时抛明确错误，而不是笼统的
+    `no signed-in account found`；导入的区域门控同步把 `us` 当外区跳过。
+
+### 测试
+
+- `tests/issue66-us-region.spec.ts`（23 例）：US 的三条解析路径（claim / host /
+  完整凭据）都得到 `us` 而不是 `ai`；`payStatus` / 远程目录 / wire 名册 /
+  Raw Chat / chat 面对 US 凭据**零 `fetch` 调用**（含注入 `baseUrl` 的两例）；
+  作用域与无作用域 store 都不解析它、但都能点名；401/403/404/US/普通异常的
+  状态映射；模型刷新路由逐条断言 401、501、500；状态文档携带通告且不重复英文
+  异常文本。
+- `tests/issue66-card-us-notice.spec.tsx`（2 例）：未登录文档带
+  `unsupportedRegion` 时卡片点名账号；失败请求显示服务端 `error` 原文而非
+  `HTTP 401`。
+- **变异验证**：去掉 `regionOfUserRegion` 的 US 分支 → 2 例转红；刷新路由的
+  `failJson()` 改回 500 → 2 例转红；删掉 `readAll()` 的区域守卫 → 1 例转红。
+- 全量 **95 files / 1211 tests** 通过（原 93 / 1186 + 新增 2 files / 25 例）。
+
+### 说明
+
+- **没有对 US 网关发过真机请求**：开发机没有美国区凭据。结论来自报告人给出的
+  实测对照（同一 token 打 US 200、打 SG 401）与代码路径；测试断言的是「不会
+  发出请求」，不是模拟 US 响应。
+- 美国区的目录与 chat 仍待接入：目录需要 `get_detail_param` 的 `function`
+  单数 + `agent_type: null` 形态，chat 需要一次 IDE 侧的 `/api/agent/*`
+  实抓。拿到报文后即可按现有 `REGION_GATEWAYS` 的形状补齐。
+- 诊断与取舍全文见仓库内 `docs/ISSUE66_DIAGNOSIS.md`（该文档不随包发布）。
+
 ## 4.6.2 (2026-10-27)
 
 > **从插件市场装完，重启后插件不会再消失。** 安装其实失败了，但失败发生在
