@@ -92,6 +92,13 @@ npm pack --dry-run
 > ⚠️ **2FA 报错不一定代表「没发出去」。** 见第 7 步——发布是否成功，**只能以 registry 的实际状态为准**，
 > 不能以 `npm publish` 的退出信息为准。
 
+> ⚠️ **缺一次性口令时，npm 会把它报成 `E404 Not Found`（"could not be found or you do not have
+> permission"），而不是 EOTP。** 4.6.2 实录：`E404` 让人去查包名/权限/registry 配置，全都不对；真相是
+> 缺 OTP。**判别式：看日志里有没有 web-auth 那一串**——正常是 `PUT 401 → web-auth → PUT 202`，
+> 缺 OTP 则**只有一条 `PUT 404` 就结束**。
+> 另注意 `_authToken` **只够读、不够发**：`npm whoami` / `npm view` / `curl` 全部 200，**不能证明能发布**。
+> 详见 `docs/RELEASE_EXPERIENCE.md` 6.10。
+
 ### 7. 验证发布成功
 
 ```bash

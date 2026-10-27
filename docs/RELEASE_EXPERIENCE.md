@@ -279,6 +279,62 @@ npm view dsh-connect-trae versions | tr ',' '\n' | grep -F "X.Y.Z"
 **教训**：判别发布状态时，**日志里的 `PUT` 行比 registry 轮询更快也更可靠**——轮询只能看到
 「现在还没有」，区分不了「正在处理」与「根本没发」。两个都查，先查日志。
 
+### 6.10 第四类假象：缺少 2FA 一次性口令，被 npm 报成 **E404 Not Found**（2026-10-27 发布 4.6.2 实录）
+
+前三条假象分别来自**传播延迟**（6.1）、**上传后报凭据错**（6.7）与**完全没有 PUT**（6.9）。
+4.6.2 遇到第四种，而且它的**错误码最具误导性**：
+
+```
+npm error code E404
+npm error 404 Not Found - PUT https://registry.npmjs.org/dsh-connect-trae - Not found
+npm error 404  The requested resource 'dsh-connect-trae@4.6.2' could not be found
+               or you do not have permission to access it.
+```
+
+看到 `E404` + "could not be found or you do not have permission"，第一反应几乎必然是
+**「包名写错了？」「token 没权限了？」「registry 配错了？」**——全都不对。那天这三种猜测我都试过：
+包名没问题（前一天刚发过 4.6.1）、`npm whoami` 返回 `dmh2002`、`curl` 直连与走代理都是 200。
+
+**真相在一次最小 PUT 探针里**：
+
+```bash
+curl -s -o /tmp/pubtest.json -w "%{http_code}\n" -X PUT \
+  -H "authorization: Bearer $(grep -oE '_authToken\s*=\s*\S+' ~/.npmrc | sed 's/.*=\s*//')" \
+  -H "content-type: application/json" \
+  -d '{"name":"dsh-connect-trae","versions":{}}' \
+  https://registry.npmjs.org/dsh-connect-trae
+# → 401
+# body: {"error":"You must provide a one-time pass. Upgrade your client to npm@latest in order to use 2FA."}
+```
+
+**同一次故障，一句话里三种读法**：
+
+| 观察面 | 看到的东西 | 指向 |
+| --- | --- | --- |
+| `npm publish` 报错 | `E404 Not Found` / "no permission" | ❌ 误读成包名或权限问题 |
+| publish 日志 | 只有 `PUT 404`，**没有任何 web-auth 步骤** | 关键线索（对比正常流程见下） |
+| 最小 PUT 探针 | `401` + "one-time pass" | ✅ 真实原因 |
+
+**判别式**：关键不是状态码本身，而是**日志里有没有 web-auth 那一串**。正常发布的轨迹是
+
+```
+PUT 401  →  verbose web auth opening url pair
+         →  GET /-/v1/done?authId=… （202, 202, 202, 200）
+         →  verbose web auth done-check finished
+         →  PUT 202
+```
+
+缺少 OTP 时则**只有一条 `PUT 404` 就结束**，中间什么都没有。**「404 且无 web-auth」= 缺 OTP**，
+不是权限也不是包名。npm 用一个 404 掩盖了 401，这一点比 6.7 的「凭据错在上传之后」更难识破——
+因为 6.7 至少报的还是凭据类错误。
+
+**处置**：交回用户在交互终端执行 `npm publish`（见 6.8），在浏览器里确认 2FA 即可；
+4.6.2 交回后当日发布成功，日志正是上面那条完整的 `401 → web-auth → 202` 轨迹。
+
+> **顺带一条**：`~/.npmrc` 里的 `_authToken` **只够读、不够发**。用它可以 `npm whoami`、可以
+> `npm view`、可以 `curl` 拉 packument，全部 200——所以**「whoami 正常」不能证明「能发布」**。
+> 判断写权限只有两条路：真的 PUT 一次（探针或发布本身），或看 publish 日志里的 PUT 行。
+
 ---
 
 *本文档为经验备忘，来源：`dsh-subagent-default-model`（本机 `../dsh-subagent-default-model`，GitHub `dingminhua/dsh-subagent-default-model`）。新增经验请继续追加，保持与根目录 `RELEASING.md` 的权威流程一致。*
