@@ -53,6 +53,11 @@ export const en = {
   'row.settingsWriteFailed': 'The setting was not saved: {message}',
   'row.signedOut': 'Not signed in',
   'row.signedOutHint': 'Sign in once in the Trae desktop app; this plugin follows that sign-in automatically.',
+  // A region this build recognizes but cannot serve (issue #66). Shown on the
+  // signed-out screen, where a US exclusion leaves the user.
+  'row.unsupportedRegionTitle': 'US region is not supported yet',
+  'row.unsupportedRegionHint': 'A Trae account on this machine belongs to the United States region (userRegion "US" / host *.traeapi.us). This build does not serve that region, so the account is NOT used and no request is sent to the Singapore gateway — signing in again changes nothing. Use a CN or Singapore account (or the Trae CN build) in this panel.',
+  'row.diagUnsupportedRegion': 'Unsupported region',
   'row.searchedTitle': 'Paths checked',
   'row.searchedHint': 'No sign-in was found. These locations were probed; if your Trae stores its login elsewhere, please report the path.',
   'row.searchedMore': 'Show {count} more',
@@ -505,6 +510,10 @@ export const zh: Record<TraeSettingsKey, string> = {
   'row.settingsWriteFailed': '设置未能保存：{message}',
   'row.signedOut': '未登录',
   'row.signedOutHint': '在 Trae 桌面 App 里登录一次即可，插件会自动跟随当前登录的账号。',
+  // 本版本识别但不支持的区域（#66）。放在未登录态，因为被排除的账号正是落在这里。
+  'row.unsupportedRegionTitle': '美国区（US）暂不支持',
+  'row.unsupportedRegionHint': '本机有一个 Trae 账号属于美国区（userRegion "US" / 主机 *.traeapi.us）。本版本尚未支持该区，因此不会使用这个账号，也不会把请求发往新加坡网关——重新登录不会有任何变化。请在该面板改用国内版或新加坡区账号（或使用 Trae 国内版客户端）。',
+  'row.diagUnsupportedRegion': '未支持的区域',
   'row.searchedTitle': '已检查的路径',
   'row.searchedHint': '未找到登录信息。以下是插件探测过的位置；如果你的 Trae 把登录信息存在别处，请把该路径反馈给我们。',
   'row.searchedMore': '展开其余 {count} 条',

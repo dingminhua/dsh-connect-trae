@@ -44,6 +44,23 @@ import { dotStyle, formatDateTime, formatNumber, refreshTokenWarning } from './d
 import { planVerdict as payVerdict } from './plan-text.ts'
 import type { TraeSettingsKey } from './locales.ts'
 
+/**
+ * Failure text of a route: the server's own message when it sent one, else the
+ * bare status.
+ *
+ * Issue #66: the card used to throw `HTTP ${status}` and drop the body, so the
+ * Host's explanation ("SOLO remote models returned HTTP 401", or the US-region
+ * verdict) never reached the user. A 401 from the wrong gateway and a plugin
+ * crash therefore read identically.
+ */
+function routeErrorText(body: unknown, status: number): string {
+  if (typeof body === 'object' && body !== null) {
+    const error = (body as { error?: unknown }).error
+    if (typeof error === 'string' && error.trim() !== '') return error
+  }
+  return `HTTP ${status}`
+}
+
 /** Localized copy injected by the browser-plugin registration. */
 export interface TraeUsageCardInjected {
   t: (key: TraeSettingsKey, params?: Record<string, unknown>) => string
@@ -642,7 +659,7 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
         ...signal === undefined ? {} : { signal },
       })
       const value: unknown = await response.json().catch(() => undefined)
-      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      if (!response.ok) throw new Error(routeErrorText(value, response.status))
       const usage = value as TraeWebUsage
       if (mounted.current && signal?.aborted !== true) {
         setStatusByRegion(prev => ({ ...prev, [region]: usage }))
@@ -772,8 +789,10 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
       const response = await fetch(withTraeRegion(TRAE_ACCOUNTS_REFRESH_PATH, activeRegion), {
         method: 'POST', headers: { accept: 'application/json' }, credentials: 'same-origin',
       })
-      const body = await response.json() as { accounts?: { id: string; selected: boolean; accountName?: string }[] }
-      if (!response.ok || !Array.isArray(body.accounts)) throw new Error(`HTTP ${response.status}`)
+      const body = await response.json().catch(() => undefined) as { accounts?: { id: string, selected: boolean, accountName?: string }[] } | undefined
+      if (!response.ok || body === undefined || !Array.isArray(body.accounts)) {
+        throw new Error(routeErrorText(body, response.status))
+      }
       /**
        * What this press must persist, and why it is NOT `accounts.find(selected)`.
        *
@@ -1102,8 +1121,10 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
         headers: { accept: 'application/json' },
         credentials: 'same-origin',
       })
-      const body = await response.json() as { models?: TraeWebModel[] }
-      if (!response.ok || !Array.isArray(body.models)) throw new Error(`HTTP ${response.status}`)
+      const body = await response.json().catch(() => undefined) as { models?: TraeWebModel[] } | undefined
+      if (!response.ok || body === undefined || !Array.isArray(body.models)) {
+        throw new Error(routeErrorText(body, response.status))
+      }
       const fresh = body.models
       const freshIds = new Set(fresh.map(model => model.id))
       // Re-map the user's CURRENT selections (draft first, then saved) onto the
@@ -2233,6 +2254,16 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
                             {activeRegion === 'cn' ? t('row.tabCn') : activeRegion === 'enterprise' ? t('row.tabEnterprise') : t('row.tabAi')}
                           </span>
                         </div>
+                        {status.unsupportedRegion === undefined
+                          ? null
+                          : <div className="dsm-trae-diag-row">
+                              <span className="dsm-trae-diag-label">{t('row.diagUnsupportedRegion')}</span>
+                              <span className="dsm-trae-diag-value dsm-trae-diag-bad">
+                                {status.unsupportedRegion.region.toUpperCase()}
+                                {' · '}
+                                {status.unsupportedRegion.accounts.join(', ')}
+                              </span>
+                            </div>}
                         <div className="dsm-trae-diag-row">
                           <span className="dsm-trae-diag-label">{t('row.diagProvider')}</span>
                           <span className="dsm-trae-diag-value dsm-trae-diag-mono">{providerOfPanel(activeRegion)}</span>
@@ -2342,6 +2373,23 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
               {status.status === 'signed-out' && !loading
                 ? <>
                   <p className="dsm-trae-usage-text">{status.message ?? t('row.signedOutHint')}</p>
+                  {/* A recognized-but-unserved region (issue #66). Placed on the
+                      signed-out screen for the same reason the quarantine notice
+                      is: that is where the exclusion leaves the user. Without it
+                      the panel says "not signed in" while a real US login sits on
+                      disk — the exact state that made the reporter sign in again
+                      and again. */}
+                  {status.unsupportedRegion === undefined
+                    ? null
+                    : <details className="dsm-trae-quarantine" open>
+                      <summary>{t('row.unsupportedRegionTitle')}</summary>
+                      <p className="dsm-trae-quarantine-hint">{t('row.unsupportedRegionHint')}</p>
+                      <ul className="dsm-trae-quarantine-list">
+                        {status.unsupportedRegion.accounts.map(name => (
+                          <li key={name}><code>{name}</code></li>
+                        ))}
+                      </ul>
+                    </details>}
                   {/* A quarantined copy is the ONE explanation that fits the
                       state a user lands in after an account went missing: the
                       signed-out screen is exactly where issue #56's reporter

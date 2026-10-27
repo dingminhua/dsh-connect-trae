@@ -12,7 +12,7 @@ import {
   TRAE_AUTH_STORAGE_KEY,
 } from './decrypt.ts'
 import { traeStorageCandidates, type TraeCredentialSource, type TraeEdition, type TraeStorageCandidate } from './paths.ts'
-import { regionOfCredential, regionOfEdition, type TraeRegion } from './region.ts'
+import { assertSupportedRegion, isSupportedRegion, regionOfCredential, regionOfEdition, TraeUnsupportedRegionError, type TraeRegion, type TraeServiceRegion } from './region.ts'
 import { probeRunningTraeApps, type RunningProbe } from './trae-process.ts'
 
 export interface TraeCredential {
@@ -123,6 +123,20 @@ export interface TraeAccountChoice {
    */
   refreshExpiresAtMs?: number
   selected: boolean
+}
+
+/**
+ * A credential on this machine that names a region this build cannot serve yet
+ * (issue #66: the US cluster).
+ *
+ * Reported so the card can explain a signed-out panel that a user knows is
+ * signed in. It is never selectable and never billed: `readAll()` skips these,
+ * so they cannot reach a gateway at all.
+ */
+export interface TraeUnsupportedCredential {
+  region: Exclude<TraeServiceRegion, TraeRegion>
+  /** Display identity of the credential — never token material. */
+  accountName: string
 }
 
 /**
@@ -837,7 +851,9 @@ export class TraeCredentialStore {
       accountName: credential.accountName ?? (credential.userId || `${credential.edition} account`),
       edition: credential.edition,
       enterprise: isEnterpriseAccount(credential),
-      region: regionOfCredential(credential),
+      // Safe by construction: `readAll()` drops any credential whose claim is
+      // a region this build does not serve.
+      region: assertSupportedRegion(regionOfCredential(credential)),
       // Every listed row is backed by a plugin copy (that is what `visible`
       // filters on), so the card names it as one: this store bills, refreshes,
       // and deletes its copy, never the app's live login.
@@ -1067,7 +1083,18 @@ export class TraeCredentialStore {
 
   async resolve(): Promise<TraeCredential> {
     const credential = await this.current()
-    if (credential === undefined) throw new Error(`trae: no signed-in account found (${this.candidates().map(item => item.path).join(' or ')})`)
+    if (credential === undefined) {
+      // Distinguish "nothing is signed in" from "the only login names a region
+      // this build does not serve" (issue #66). Everything that bills reads a
+      // credential through here — catalog, chat, usage — so this is the one
+      // place that turns the exclusion into an explicit, pre-network verdict
+      // instead of a generic "not found" or, worse, a request to the wrong
+      // gateway.
+      const unsupported = await this.unsupportedCredentials().catch(() => [])
+      const first = unsupported[0]
+      if (first !== undefined) throw new TraeUnsupportedRegionError(first.region)
+      throw new Error(`trae: no signed-in account found (${this.candidates().map(item => item.path).join(' or ')})`)
+    }
     if (credential.expiresAtMs > Date.now() + this.refreshMarginMs) return credential
     this.inflight ??= this.refreshNow(credential).finally(() => { this.inflight = undefined })
     return this.inflight
@@ -1078,6 +1105,43 @@ export class TraeCredentialStore {
       const value = await this.current()
       return value === undefined ? { state: 'signed-out' } : { state: 'signed-in', edition: value.edition, expiresAtMs: value.expiresAtMs, source: value.source }
     } catch { return { state: 'signed-out' } }
+  }
+
+  /**
+   * Credentials this machine holds for a region this build cannot serve yet.
+   *
+   * Issue #66: a US credential used to resolve to `ai`, so the panel billed it
+   * against the SG gateway and every read answered 401. Now it is excluded from
+   * resolution (see `readAll`), which would leave the panel saying "not signed
+   * in" on a machine the user knows IS signed in — so the exclusion has to be
+   * explainable. This reads exactly the credentials `readAll` refuses to
+   * RESOLVE and reports their display identity; nothing here is selectable,
+   * billable, or sent anywhere.
+   *
+   * Scoped to the international bucket: a US install is an international
+   * install, so only the `ai` panel (and an unscoped diagnostic store) can be
+   * the one missing an account because of it.
+   */
+  async unsupportedCredentials(): Promise<TraeUnsupportedCredential[]> {
+    if (this.region !== undefined && this.region !== 'ai') return []
+    const found = new Map<string, TraeUnsupportedCredential>()
+    const consider = (credential: TraeCredential): void => {
+      const region = regionOfCredential(credential)
+      if (isSupportedRegion(region)) return
+      const id = traeAccountId(credential)
+      if (found.has(id)) return
+      found.set(id, {
+        region,
+        accountName: credential.accountName ?? (credential.userId || `${credential.edition} account`),
+      })
+    }
+    try {
+      for (const credential of (await this.readDesktopAll()).credentials) consider(credential)
+    } catch { /* a read failure must not hide the copies below */ }
+    try {
+      for (const credential of await this.readOwns()) consider(credential)
+    } catch { /* best effort: this is a notice, not a source of truth */ }
+    return [...found.values()]
   }
 
   async desktopFilePresent(): Promise<boolean> {
@@ -1288,6 +1352,12 @@ export class TraeCredentialStore {
     // be replaced, and only by a copy that lives longer.
     const byAccount = new Map<string, TraeCredential>()
     const consider = (credential: TraeCredential): void => {
+      // A region this build does not serve is never RESOLVABLE — not by a
+      // scoped store (whose region it would never equal) and not by an
+      // unscoped one either (issue #66: a US credential used to arrive here as
+      // `ai` and every read then answered 401). It is still DISCOVERED, by
+      // `unsupportedCredentials()`, so the card can say why it is unusable.
+      if (!isSupportedRegion(regionOfCredential(credential))) return
       if (!this.matchesRegion(credential)) return
       const id = traeAccountId(credential)
       const incumbent = byAccount.get(id)

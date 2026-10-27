@@ -1,5 +1,6 @@
 import type { TraeCredential } from './auth.ts'
-import { REGION_GATEWAYS, regionOfCredential } from './region.ts'
+import { TraeHttpError } from './failure.ts'
+import { assertSupportedRegion, REGION_GATEWAYS, regionOfCredential, type TraeRegion } from './region.ts'
 
 /**
  * Read-only Trae usage/credits client.
@@ -236,10 +237,16 @@ export class TraeUsageClient {
     this.timeoutMs = options.timeoutMs ?? 30_000
   }
 
-  /** Region of the current credential; `cn` when unresolvable. */
-  private async currentRegion(): Promise<'cn' | 'ai'> {
+  /**
+   * Region of the current credential; `cn` when unresolvable.
+   *
+   * A US credential throws {@link TraeUnsupportedRegionError} instead of being
+   * rounded to the international bucket — issue #66: the rounding is what sent
+   * a US token to the SG pay gateway, where the answer is 401.
+   */
+  private async currentRegion(): Promise<TraeRegion> {
     const credential = await this.options.credential()
-    return credential === undefined ? 'cn' : regionOfCredential(credential)
+    return credential === undefined ? 'cn' : assertSupportedRegion(regionOfCredential(credential))
   }
 
   /**
@@ -294,7 +301,9 @@ export class TraeUsageClient {
       body: JSON.stringify(data),
       signal: signal ?? AbortSignal.timeout(this.timeoutMs),
     })
-    if (!response.ok) throw new Error(`Trae usage endpoint ${path} returned HTTP ${response.status}`)
+    if (!response.ok) {
+      throw new TraeHttpError(response.status, `Trae usage endpoint ${path} returned HTTP ${response.status}`)
+    }
     return await response.json() as T
   }
 

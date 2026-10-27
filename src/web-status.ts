@@ -16,8 +16,9 @@ import { isTraeAccountId, type TraeCredentialStore } from './auth.ts'
 import type { TraeModelInfo } from './catalog.ts'
 import type { TraeUsageClient } from './usage.ts'
 import type { TraeRawDiagnostic } from './raw-diagnostic.ts'
-import type { TraeWebQuarantine } from './status-paths.ts'
-import { regionOfPanel, type TraePanel, type TraeRegion } from './region.ts'
+import type { TraeWebQuarantine, TraeWebUnsupportedRegion } from './status-paths.ts'
+import { httpFailureOf } from './failure.ts'
+import { regionOfPanel, TraeUnsupportedRegionError, type TraePanel, type TraeRegion } from './region.ts'
 import { effectiveMembersOf, outcomeOfVerdict, resolveTargetModel, rankPool, type TraePoolAccount, type TraePoolMember } from './account-pool.ts'
 import type { TraePoolCheckinRow, TraePoolTestRow } from './account-pool-run.ts'
 import {
@@ -258,6 +259,26 @@ function json(res: ServerResponse, status: number, body: unknown): void {
   const payload = JSON.stringify(body)
   res.writeHead(status, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) })
   res.end(payload)
+}
+
+/**
+ * Answer a failed route with the meaning the failure actually has (issue #66).
+ *
+ * The old rule was `json(res, 500, { error })` everywhere, so a US credential
+ * sent to the Singapore gateway surfaced as `HTTP 500
+ * {"error":"SOLO remote models returned HTTP 401"}`: the status said "the
+ * plugin is broken" while the text said "the gateway refused you". The client
+ * could not tell "sign in again" from "this region is unsupported", which is
+ * exactly the loop the issue reports. `httpFailureOf` keeps an upstream 401/403
+ * as 401/403 and turns the local "not served" verdict into 501 +
+ * `unsupported-region`; everything else stays 500.
+ */
+function failJson(res: ServerResponse, error: unknown): void {
+  const failure = httpFailureOf(error)
+  json(res, failure.status, {
+    error: safeMessage(error),
+    ...failure.code === undefined ? {} : { code: failure.code },
+  })
 }
 
 /**
@@ -568,6 +589,22 @@ export async function traeWebUsage(
   const quarantined = await Promise.resolve()
     .then(() => store.quarantinedCopies())
     .catch(() => [] as readonly TraeWebQuarantine[])
+  /**
+   * A region this build recognizes but does not serve (issue #66).
+   *
+   * Read ONCE per document and never allowed to fail it: this is a notice about
+   * the user's disk, and the panel it explains is usually the one that has just
+   * been excluded from billing. It is also why the panel can say "a US account
+   * is here, and it is not being used" instead of an undiagnosable "not signed
+   * in" on a machine the user knows is signed in.
+   */
+  const unsupported = await Promise.resolve()
+    .then(() => store.unsupportedCredentials())
+    .catch(() => [])
+  const firstUnsupported = unsupported[0]
+  const unsupportedRegion: TraeWebUnsupportedRegion | undefined = firstUnsupported === undefined
+    ? undefined
+    : { region: firstUnsupported.region, accounts: unsupported.map(item => item.accountName) }
   const authStatus = await store.status()
   if (authStatus.state !== 'signed-in') {
     // A bare "signed out" is undiagnosable on a machine whose layout differs
@@ -580,6 +617,7 @@ export async function traeWebUsage(
       accounts,
       enabled,
       quarantined,
+      ...unsupportedRegion === undefined ? {} : { unsupportedRegion },
       searched: failures.map(failure => ({
         path: failure.path,
         edition: failure.edition,
@@ -606,7 +644,19 @@ export async function traeWebUsage(
     // Account selection must remain available even when the selected token is
     // expired or its refresh request fails. Report that as account-level status
     // instead of converting the entire route into HTTP 500.
-    return { status: 'signed-out', accounts, enabled, quarantined, message: safeMessage(error) }
+    //
+    // A US credential is the exception to "always carry the message": the
+    // notice below already says, in the user's language, everything the English
+    // exception text says — printing both would just repeat the same fact twice.
+    const explained = error instanceof TraeUnsupportedRegionError && unsupportedRegion !== undefined
+    return {
+      status: 'signed-out',
+      accounts,
+      enabled,
+      quarantined,
+      ...unsupportedRegion === undefined ? {} : { unsupportedRegion },
+      ...explained ? {} : { message: safeMessage(error) },
+    }
   }
   // Only user-facing identity and expiry cross to the browser. Token material
   // and stable user IDs stay on the Host. The requested panel drives which
@@ -623,6 +673,7 @@ export async function traeWebUsage(
     ...credential.refreshExpiresAtMs === undefined ? {} : { refreshExpiresAtMs: credential.refreshExpiresAtMs },
     region: regionOfPanel(panel),
     enabled,
+    ...unsupportedRegion === undefined ? {} : { unsupportedRegion },
     accounts,
     models: deps.displayModels(panel).map(model => ({ ...model, ...model.input === undefined ? {} : { input: [...model.input] } })),
     enabledModelIds: [...deps.enabledModelIds(panel)],
@@ -1087,7 +1138,7 @@ export function registerTraeUsageRoute(ctx: Context, deps: TraeUsageRouteOptions
         try {
           json(res, 200, await traeWebUsage(deps, panel, { detail }))
         } catch (error: unknown) {
-          json(res, 500, { error: safeMessage(error) })
+          failJson(res, error)
         }
       },
     })
@@ -1108,7 +1159,7 @@ export function registerTraeUsageRoute(ctx: Context, deps: TraeUsageRouteOptions
         try {
           json(res, 200, { accounts: await traeAccountCredits(deps, panel) })
         } catch (error: unknown) {
-          json(res, 500, { error: safeMessage(error) })
+          failJson(res, error)
         }
       },
     })
@@ -1135,7 +1186,7 @@ export function registerTraeUsageRoute(ctx: Context, deps: TraeUsageRouteOptions
           if (state === undefined) return json(res, 404, { error: 'unknown account' })
           json(res, 200, state)
         } catch (error: unknown) {
-          json(res, 500, { error: safeMessage(error) })
+          failJson(res, error)
         }
       },
     })
@@ -1240,7 +1291,7 @@ export function registerTraeUsageRoute(ctx: Context, deps: TraeUsageRouteOptions
           const models = await deps.discoverModels(panel)
           json(res, 200, { models })
         } catch (error: unknown) {
-          json(res, 500, { error: safeMessage(error) })
+          failJson(res, error)
         }
       },
     })
@@ -1276,7 +1327,7 @@ export function registerTraeUsageRoute(ctx: Context, deps: TraeUsageRouteOptions
         try {
           json(res, 200, await deps.probeModels(panel, ids))
         } catch (error: unknown) {
-          json(res, 500, { error: safeMessage(error) })
+          failJson(res, error)
         }
       },
     })
@@ -1389,7 +1440,7 @@ export function registerTraeUsageRoute(ctx: Context, deps: TraeUsageRouteOptions
             checkin: toCheckin(checkin),
           })
         } catch (error: unknown) {
-          json(res, 500, { error: safeMessage(error) })
+          failJson(res, error)
         }
       },
     })
@@ -1495,7 +1546,7 @@ export function registerTraeUsageRoute(ctx: Context, deps: TraeUsageRouteOptions
             const rows = await pool.checkin(panel)
             json(res, 200, { rows: rows.map(row => poolCheckinRowViewOf(row)) })
           } catch (error: unknown) {
-            json(res, 500, { error: safeMessage(error) })
+            failJson(res, error)
           }
           return
         }
@@ -1530,7 +1581,7 @@ export function registerTraeUsageRoute(ctx: Context, deps: TraeUsageRouteOptions
             if (row === undefined) return json(res, 404, { error: 'unknown account' })
             return json(res, 200, { rows: [poolTestRowViewOf(row)] })
           } catch (error: unknown) {
-            return json(res, 500, { error: safeMessage(error) })
+            return failJson(res, error)
           }
         }
         res.writeHead(200, { 'Content-Type': 'application/x-ndjson', 'Cache-Control': 'no-store' })

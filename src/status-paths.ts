@@ -1378,6 +1378,21 @@ export function traePlanIsPaid(payIdentityStr: string | undefined): boolean {
   return tier !== undefined && tier !== '' && !/^free$/i.test(tier)
 }
 
+/**
+ * A credential on this machine that names a region this build cannot serve yet
+ * (issue #66: the US cluster).
+ *
+ * Carried on BOTH shapes: the panel that shows it is normally signed OUT —
+ * the credential is deliberately excluded from billing — so the signed-out
+ * document is the only place the user can learn that a real sign-in is sitting
+ * on disk and why it is not being used.
+ */
+export interface TraeWebUnsupportedRegion {
+  region: 'us'
+  /** Display names of the credentials carrying that claim; never token material. */
+  accounts: readonly string[]
+}
+
 /** The JSON document the plugin card renders. */
 export type TraeWebUsage =
   | {
@@ -1391,6 +1406,8 @@ export type TraeWebUsage =
      * after a lost copy, so that is where the notice has to be.
      */
     quarantined?: readonly TraeWebQuarantine[]
+    /** A recognized-but-unserved region on this machine (issue #66). */
+    unsupportedRegion?: TraeWebUnsupportedRegion
     enabled?: boolean
   }
   | {
@@ -1452,6 +1469,12 @@ export type TraeWebUsage =
     /** Subscription status of an international account (region ai only). */
     payStatus?: TraeWebPayStatus
     payStatusError?: string
+    /**
+     * A recognized-but-unserved region on this machine (issue #66). Present
+     * alongside a working account when the machine also holds e.g. a US
+     * login — that account is not billed, but the panel still says so.
+     */
+    unsupportedRegion?: TraeWebUnsupportedRegion
     /**
      * This panel's account-pool state, when the Host build supports it.
      *

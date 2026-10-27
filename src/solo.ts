@@ -5,7 +5,7 @@ import { TRAE_CHANNEL_PRIORITY, TRAE_SOLO_FUNCTION } from './model-order.ts'
 import { buildTraeCnHeaders, traeEndpoint } from './protocol.ts'
 import { normalizeTraeToolSchema } from './raw-chat.ts'
 import { parseTraeActivityDiscount, type TraeActivityDiscount } from './promo.ts'
-import { REGION_GATEWAYS, TRAE_ENTERPRISE_HOST, regionOfCredential, type TraeRegion } from './region.ts'
+import { assertSupportedRegion, REGION_GATEWAYS, TRAE_ENTERPRISE_HOST, regionOfCredential, type TraeRegion } from './region.ts'
 import { parseReasoningCapability, type TraeReasoningCapability } from './reasoning.ts'
 import type { TraeChatResult, TraeUpstreamErrorKind } from './upstream.ts'
 
@@ -308,7 +308,9 @@ export class TraeSoloUpstreamClient {
    */
   async fetchModels(signal?: AbortSignal): Promise<TraeSoloModel[]> {
     const [credential, identity] = await Promise.all([this.options.credential(), this.options.identity()])
-    const region = regionOfCredential(credential)
+    // Refuse a region this build cannot serve BEFORE asking any gateway: the
+    // SG gateway answers a US token with 401 (issue #66).
+    const region = assertSupportedRegion(regionOfCredential(credential))
     // Same gateway as this client's chat route: the two pools publish DIFFERENT
     // rosters (`DeepSeek-V4.1-Flash` is enterprise-only), so a consumer-pinned
     // client that read the consumer roster would never discover it.
@@ -450,7 +452,20 @@ export class TraeSoloUpstreamClient {
     catch { return { ok: false, status: 400, kind: 'client', message: 'invalid JSON request' } }
     const [credential, identity] = await Promise.all([this.options.credential(), this.options.identity()])
     const headers = buildTraeCnHeaders(credential, identity)
-    const base = this.options.baseUrl ?? this.chatBaseOf(credential)
+    let base: string
+    try {
+      // Same guard as discovery, and it also covers an injected `baseUrl`: an
+      // unsupported region must fail locally rather than reach ANY host.
+      assertSupportedRegion(regionOfCredential(credential))
+      base = this.options.baseUrl ?? this.chatBaseOf(credential)
+    } catch (error) {
+      return {
+        ok: false,
+        status: 503,
+        kind: 'unconfigured',
+        message: error instanceof Error ? error.message : String(error),
+      }
+    }
     if (this.options.route === 'enterprise') {
       // The tenant gateway requires a per-call correlation id; the consumer
       // gateway rejects a body that carries one (`4001`), so this stays inside
@@ -504,7 +519,7 @@ export class TraeSoloUpstreamClient {
   /** Chat gateway for this client's pinned route. */
   private chatBaseOf(credential: TraeCredential): string {
     if (this.options.route === 'enterprise') return TRAE_ENTERPRISE_HOST
-    return REGION_GATEWAYS[regionOfCredential(credential)].chat
+    return REGION_GATEWAYS[assertSupportedRegion(regionOfCredential(credential))].chat
   }
 }
 

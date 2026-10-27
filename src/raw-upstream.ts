@@ -1,7 +1,7 @@
 import type { TraeCredential } from './auth.ts'
 import type { TraeIdentity } from './identity.ts'
 import { buildTraeCnHeaders, traeEndpoint } from './protocol.ts'
-import { REGION_GATEWAYS, regionOfCredential } from './region.ts'
+import { assertSupportedRegion, REGION_GATEWAYS, regionOfCredential } from './region.ts'
 import { buildTraeRawChatDraft, TRAE_RAW_CHAT_V2_PATH, type RawChatMessage, type RawChatTool } from './raw-chat.ts'
 import { traeRawChatExtraInfo, type TraeRawChatRuntimeConfig } from './raw-runtime-config.ts'
 import type { TraeChatResult, TraeUpstreamErrorKind } from './upstream.ts'
@@ -85,9 +85,17 @@ export class TraeRawChatUpstreamClient {
       ...this.options.config.abVersion === undefined ? {} : { ab_version: this.options.config.abVersion },
       pass_back_reasoning: runtime?.passBackReasoning ?? this.options.config.passBackReasoning,
     }
+    let base: string
+    try {
+      // A region this build does not serve must fail locally (issue #66); the
+      // check also covers an injected `baseUrl`, so no host is ever asked.
+      base = this.options.baseUrl ?? REGION_GATEWAYS[assertSupportedRegion(regionOfCredential(credential))].chat
+    } catch (error: unknown) {
+      return { ok: false, status: 503, kind: 'unconfigured', message: error instanceof Error ? error.message : String(error) }
+    }
     let response: Response
     try {
-      response = await this.fetchImpl(traeEndpoint(this.options.baseUrl ?? REGION_GATEWAYS[regionOfCredential(credential)].chat, TRAE_RAW_CHAT_V2_PATH), {
+      response = await this.fetchImpl(traeEndpoint(base, TRAE_RAW_CHAT_V2_PATH), {
         method: 'POST', headers, body: JSON.stringify(body), signal: signal ?? AbortSignal.timeout(30_000),
       })
     } catch (error: unknown) {

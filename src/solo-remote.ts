@@ -1,6 +1,7 @@
 import { isEnterpriseAccount, type TraeCredential } from './auth.ts'
 import { parseTraeRemoteModel, type TraeDiscoveredModel } from './model-metadata.ts'
-import { REGION_GATEWAYS, regionOfCredential, type TraeRegion } from './region.ts'
+import { TraeHttpError } from './failure.ts'
+import { assertSupportedRegion, REGION_GATEWAYS, regionOfCredential, type TraeRegion } from './region.ts'
 import { TRAE_DIRECTORY_FUNCTIONS } from './solo.ts'
 
 export const TRAE_SOLO_REMOTE_BASE = 'https://solo.trae.cn/api/remote/v1'
@@ -366,7 +367,10 @@ export class TraeSoloRemoteCatalogClient {
     // The directory gateway follows the credential's own region; an explicit
     // baseUrl (tests, diagnostics) still pins the endpoint.
     const credential = await this.options.credential()
-    const region = regionOfCredential(credential)
+    // A US credential is refused HERE, before a base is chosen: rounding it to
+    // the international bucket is what pointed the directory read at the SG
+    // gateway, whose answer is 401 (issue #66).
+    const region = assertSupportedRegion(regionOfCredential(credential))
     const officialBase = this.baseUrl ?? REGION_GATEWAYS[region].remote
     const headers = await this.headers(region)
     const functions = TRAE_REMOTE_DIRECTORY_FUNCTIONS[region].join(',')
@@ -403,7 +407,7 @@ export class TraeSoloRemoteCatalogClient {
         continue
       }
       if (!response.ok) {
-        if (response.status < 500) throw new Error(`SOLO remote models returned HTTP ${response.status}`)
+        if (response.status < 500) throw new TraeHttpError(response.status, `SOLO remote models returned HTTP ${response.status}`)
         if (base === officialBase) this.officialRetryAtMs = Date.now() + TraeSoloRemoteCatalogClient.OFFICIAL_RETRY_MS
         lastError = new Error(`SOLO remote models returned HTTP ${response.status}`)
         continue

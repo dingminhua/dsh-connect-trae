@@ -21,7 +21,7 @@
  */
 
 import { traeAccountId, type TraeCredential } from './auth.ts'
-import { regionOfHost, regionOfUserRegion, type TraeRegion } from './region.ts'
+import { regionOfHost, regionOfUserRegion, type TraeRegion, type TraeServiceRegion } from './region.ts'
 import type { TraeEdition } from './paths.ts'
 
 /** The shared transfer-file record shape (snake_case top-level fields). */
@@ -127,12 +127,14 @@ export function previewTransferFile(text: string): TraeTransferPreview {
  * stack with a credential that belongs to no real CN account. So this helper
  * reuses `regionOfUserRegion` / `regionOfHost` — both of which already return
  * `undefined` on unrecognised input — and deliberately does NOT consult the
- * edition fallback.
+ * edition fallback. A US claim (`userRegion: "US"` or a `*.traeapi.us` host)
+ * therefore resolves to `us` and matches neither importable region, so that
+ * record is skipped like any other foreign one (issue #66).
  */
 export function knownRegionOfCredential(credential: {
   host?: string
   userRegion?: string
-}): TraeRegion | undefined {
+}): TraeServiceRegion | undefined {
   return regionOfUserRegion(credential.userRegion) ?? regionOfHost(credential.host)
 }
 
@@ -277,7 +279,7 @@ export function credentialOfTransferRecord(record: TraeTransferRecord): Omit<Tra
 }
 
 /** The judge parameter of {@link mergeTransferRecords}: a positive-match region function. */
-type RegionJudge = (credential: Pick<TraeCredential, 'edition' | 'host' | 'userRegion'>) => TraeRegion | undefined
+type RegionJudge = (credential: Pick<TraeCredential, 'edition' | 'host' | 'userRegion'>) => TraeServiceRegion | undefined
 
 /** Default gate so the merge is secure even when the caller omits the judge. */
 const defaultRegionJudge: RegionJudge = knownRegionOfCredential as RegionJudge

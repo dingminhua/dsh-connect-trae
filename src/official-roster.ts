@@ -2,7 +2,7 @@ import type { TraeCredential } from './auth.ts'
 import type { TraeIdentity } from './identity.ts'
 import { TRAE_MODEL_DETAIL_FUNCTIONS, TRAE_MODEL_DETAIL_PATH, buildTraeModelDetailRequest } from './model-detail.ts'
 import { buildTraeCnHeaders, traeEndpoint } from './protocol.ts'
-import { REGION_GATEWAYS, TRAE_ENTERPRISE_HOST, regionOfCredential, type TraeRegion } from './region.ts'
+import { assertSupportedRegion, REGION_GATEWAYS, TRAE_ENTERPRISE_HOST, regionOfCredential, type TraeRegion } from './region.ts'
 
 /**
  * The IDE's own roster: what the Trae picker is WILLING TO SHOW, per function.
@@ -294,7 +294,10 @@ export class TraeOfficialRosterClient {
     if (this.failedAt !== undefined && now - this.failedAt < ROSTER_CACHE_MS) return undefined
     try {
       const [credential, identity] = await Promise.all([this.options.credential(), this.options.identity()])
-      const region = regionOfCredential(credential)
+      // The roster is optional, so an unsupported region simply yields no
+      // roster (the catalog keeps every row) — but it must not be asked for
+      // one on a gateway that would answer 401 (issue #66).
+      const region = assertSupportedRegion(regionOfCredential(credential))
       const base = this.options.baseUrl ?? (this.options.route === 'enterprise' ? TRAE_ENTERPRISE_HOST : REGION_GATEWAYS[region].chat)
       const response = await this.fetchImpl(traeEndpoint(base, TRAE_MODEL_DETAIL_PATH), {
         method: 'POST',
