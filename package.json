@@ -93,6 +93,11 @@
     "@earendil-works/pi-ai": ">=0.85.1 <2.0.0",
     "react": "^18.2.0"
   },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-ai": {
+      "optional": true
+    }
+  },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.5",
     "@deepseek-ai/dsh-atomic-write": "0.2.1-rc.3",
