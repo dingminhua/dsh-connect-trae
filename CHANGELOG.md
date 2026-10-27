@@ -1,5 +1,53 @@
 # Changelog
 
+## 4.6.2 (2026-10-27)
+
+> **从插件市场装完，重启后插件不会再消失。** 安装其实失败了，但失败发生在
+> 「已提升到 live」之后的一行——用户看到的是「装好了」，下一次启动才发现插件没了。
+
+### 修复
+
+- **`@earendil-works/pi-ai` 改标为可选 peer，安装不再被 generation 校验拦下**（#65）。
+  - **现象**：从 DSH 插件市场安装后，日志先报
+    `generation-install: promoted to dsh-connect-trae+4.6.1+…`，紧接着报
+    `generation-install: generation peer validation failed: @earendil-works/pi-ai
+    does not resolve from the generation or installation closure`。这次安装因此
+    `exit=1`、**不登记进持久化清单**（`.generations/desired.json`、
+    `desktop-workbenches/market-installs.json`）；DSH 下次启动按清单重建
+    `.generations/live`，未登记的 generation 被清掉（`logs/harness.log`:
+    `swept 3 unreferenced plugin generation(s)`）——表现为「装完没问题，重启后消失」，
+    重装必然复现。
+  - **根因不是 pi-ai 特殊，而是宿主核心包的判定方式是包名前缀。** 插件市场
+    （`dshmarket` 的 `corePackageNames()`）从 DSH 安装目录的 `node_modules` 反推核心包集合，
+    规则是 `/^(?:dsh|cordis)/` 匹配于 `@deepseek-ai/` 之下；命中者的 peer 允许从**宿主锚点**
+    解析，未命中者必须出现在插件自己的安装闭包里。`@earendil-works/pi-ai` 两个前缀都不匹配，
+    而 DSH 只在运行时注入它，闭包里从来没有——于是必然失败。
+  - **修法**：进 `peerDependenciesMeta` 标 `optional`（同作者的 `dsh-connect-workbuddy`
+    早就是这个写法，本仓库是漏了，不是设计如此）。**peer 范围保留不动**
+    （`>=0.85.1 <2.0.0`）：它编码的是适配器能吃哪几代 pi-ai（见 `src/pi-ai-runtime.ts`
+    与 issue #27），与「装不装」是两件事，删范围会丢掉代际判据。
+  - **为什么这次专门加测试**：修复是纯声明式的，构建期没有任何东西会察觉——`tsc` 只看到
+    字符串；`devDependencies` 里有实体 pi-ai，本地每次测试都能解析成功；CI 照常绿。
+    故障只在用户机器上、重启之后才出现。故新增 `tests/peer-optional.spec.ts`（6 例）
+    直接读随包 manifest 断言该标记，并把规则推广为「任何不在 `@deepseek-ai/{dsh,cordis}`
+    前缀下、却由宿主提供的 peer 都必须 optional」，避免下一个宿主依赖重开同一个洞。
+  - 贡献者：[@674830790](https://github.com/674830790)（issue #65，附完整日志与因果链）。
+
+### 测试
+
+- `tests/peer-optional.spec.ts` 6 例：pi-ai 必须 `optional: true`；非核心前缀的宿主提供 peer
+  一律 optional；`optional` 必须是字面量 `true`（`"yes"`/`1` 之类 npm 不认，改了看着像修好
+  其实没修）；`peerDependenciesMeta` 不得出现未声明的 peer；pi-ai 仍须被 `devDependencies`
+  钉住。**变异验证**：删掉 `peerDependenciesMeta` 后该文件 2 例转红，确认守卫不是恰好绿。
+- 全量 **93 files / 1186 tests** 通过（原 1180 + 新增 6）。
+
+### 说明
+
+- 本次修复的判据来自插件市场的源码规则与同类插件的既有写法，**未在真机上复现那条
+  generation 校验**（开发机为 0.2.1-rc.3、报告人用 rc.2，该校验器的报错串不在本机应用包内）。
+  若 4.6.2 在报告人机器上仍复现，则说明该校验器不认 `optional` 标记而要求闭包里存在实体
+  文件，届时应改走「把 pi-ai 移出 peer 名单、改为运行时软探测」。
+
 ## 4.6.1 (2026-10-26)
 
 > **4.6.0 说「图片字节插件拿不到」，这一版把这句话纠正过来。** 那条按
