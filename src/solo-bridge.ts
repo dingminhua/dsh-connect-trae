@@ -173,7 +173,11 @@ export function bridgeTraeSoloStream(response: Response, model: string): Respons
 }
 
 /** {@link bridgeTraeSoloStream} over an already-opened byte stream. */
-function bridgeTraeSource(source: ReadableStream<Uint8Array>, model: string): Response {
+function bridgeTraeSource(
+  source: ReadableStream<Uint8Array>,
+  model: string,
+  log?: (message: string, detail?: unknown) => void,
+): Response {
   const id = `chatcmpl-${randomUUID().replaceAll('-', '').slice(0, 24)}`
   const created = Math.floor(Date.now() / 1000)
   const decoder = new TextDecoder()
@@ -213,6 +217,21 @@ function bridgeTraeSource(source: ReadableStream<Uint8Array>, model: string): Re
             // actually uses; this arm only covers a failure that interrupts an
             // already-streaming answer.
             upstreamError = new Error(describeTraeFailure(failure))
+          }
+          return
+        }
+        if (decoded.type === 'diagnostic') {
+          // Issue #67: record what the upstream said about prompt caching.
+          // `prompt_cache_pool_record: null` is the upstream telling us it
+          // attached NO cache pool to this request — which is exactly the
+          // condition that makes a 0% cache rate correct rather than a bug.
+          if (decoded.promptCachePoolRecord !== undefined || decoded.pipeline !== undefined) {
+            log?.('dsh-connect-trae: upstream request diagnostics', {
+              model,
+              promptCachePoolRecord: decoded.promptCachePoolRecord,
+              pipeline: decoded.pipeline,
+              providerModelName: decoded.providerModelName,
+            })
           }
           return
         }
@@ -371,8 +390,11 @@ async function openTraeSource(response: Response): Promise<
         }
         // Anything Trae itself recognises (`delta`, `usage`, `queue`,
         // `progress`, `done`) means it accepted the request; stop peeking and
-        // stream from here.
-        if (decoded.type !== 'unknown') answered = true
+        // stream from here. `diagnostic` (`metadata` / `timing_cost`) is
+        // deliberately excluded: those arrive BEFORE the answer and a refusal
+        // can still follow them, so treating them as "answered" would let a
+        // refusal escape as a mid-stream error instead of a real HTTP error.
+        if (decoded.type !== 'unknown' && decoded.type !== 'diagnostic') answered = true
       }
       if (answered) break
     }
@@ -389,10 +411,14 @@ async function openTraeSource(response: Response): Promise<
  * The sibling {@link bridgeTraeSoloStream} stays synchronous and always answers
  * 200; it is the primitive, and this is the policy the bridge class uses.
  */
-export async function bridgeTraeSoloStreamOrFail(response: Response, model: string): Promise<TraeChatResult> {
+export async function bridgeTraeSoloStreamOrFail(
+  response: Response,
+  model: string,
+  log?: (message: string, detail?: unknown) => void,
+): Promise<TraeChatResult> {
   const opened = await openTraeSource(response)
   if (!opened.ok) return opened
-  return { ok: true, response: bridgeTraeSource(opened.source, model) }
+  return { ok: true, response: bridgeTraeSource(opened.source, model, log) }
 }
 
 /**
@@ -449,6 +475,13 @@ export class TraeSoloBridge implements TraeUpstreamClient {
     private readonly upstream: TraeUpstreamClient,
     private readonly catalog?: Pick<TraeCatalog, 'current'>,
     private readonly wireResolver?: TraeWireResolver,
+    /**
+     * Optional sink for the upstream's own diagnostics (`metadata` /
+     * `timing_cost`). Issue #67: without it, `prompt_cache_pool_record: null`
+     * was invisible, so "the upstream attached no cache pool" and "the plugin
+     * lost the numbers" looked identical to a user reading a 0% cache rate.
+     */
+    private readonly log?: (message: string, detail?: unknown) => void,
   ) {}
 
   async chatStream(bodyJson: string, signal?: AbortSignal): Promise<TraeChatResult> {
@@ -583,6 +616,6 @@ export class TraeSoloBridge implements TraeUpstreamClient {
     }
     const result = await this.upstream.chatStream(prepared, signal)
     if (!result.ok) return result
-    return await bridgeTraeSoloStreamOrFail(result.response, model)
+    return await bridgeTraeSoloStreamOrFail(result.response, model, this.log)
   }
 }

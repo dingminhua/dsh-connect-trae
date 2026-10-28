@@ -94,6 +94,30 @@ export type TraeStreamEvent =
     cacheReadTokens?: number
     cacheWriteTokens?: number
   }
+  | {
+    /**
+     * The upstream's own account of how the request was served: `metadata`
+     * (acceptance, plus `prompt_cache_pool_record`) and `timing_cost` (the
+     * pipeline and the backing provider model).
+     *
+     * These events were previously folded into `unknown` and dropped. That
+     * mattered for issue #67: `prompt_cache_pool_record` is the ONLY upstream
+     * signal that says whether a prompt-cache pool was even attached to the
+     * request, so with it dropped a "0% cache" report could not be told apart
+     * from a plugin that lost the numbers. See docs/ISSUE67_DIAGNOSIS.md.
+     */
+    type: 'diagnostic'
+    /**
+     * `metadata.prompt_cache_pool_record`. `null` is a real, observed value
+     * (100% of measured requests on 2026-10-28) and means the upstream attached
+     * no cache pool; it is kept distinct from "the field was absent".
+     */
+    promptCachePoolRecord?: unknown
+    /** `timing_cost.name`, e.g. `llm_raw_chat_v2`. */
+    pipeline?: string
+    /** `timing_cost.provider_model_name` — the model that actually answered. */
+    providerModelName?: string
+  }
   | { type: 'done'; finishReason: string }
   | { type: 'unknown'; event?: string; data: unknown }
 
@@ -115,6 +139,17 @@ export function decodeTraeEvent(event: SseEvent): TraeStreamEvent {
       ...typeof record['reasoning_tokens'] === 'number' ? { reasoningTokens: record['reasoning_tokens'] } : {},
       ...typeof record['cache_read_input_tokens'] === 'number' ? { cacheReadTokens: record['cache_read_input_tokens'] } : {},
       ...typeof record['cache_creation_input_tokens'] === 'number' ? { cacheWriteTokens: record['cache_creation_input_tokens'] } : {},
+    }
+  }
+  if (event.event === 'metadata' || event.event === 'timing_cost') {
+    // Both are pure diagnostics: they carry no answer text and no usage, so
+    // they must not become `delta`/`usage`. Keeping them a distinct type lets
+    // the bridge record the cache-pool fact without changing the wire shape.
+    return {
+      type: 'diagnostic',
+      ...record['prompt_cache_pool_record'] === undefined ? {} : { promptCachePoolRecord: record['prompt_cache_pool_record'] },
+      ...typeof record['name'] === 'string' ? { pipeline: record['name'] } : {},
+      ...typeof record['provider_model_name'] === 'string' ? { providerModelName: record['provider_model_name'] } : {},
     }
   }
   if (event.event === 'done' || typeof record['finish_reason'] === 'string' && record['response'] === undefined) {

@@ -1,5 +1,51 @@
 # Changelog
 
+## 4.6.4 (2026-10-28)
+
+> **缓存命中恒为 0% 不是插件丢了数字，是上游没有分配缓存池。** Trae 的
+> `metadata` 事件里 `prompt_cache_pool_record` 非空才代表这次请求挂了前缀
+> 缓存池；实测 CN/AI 双区、4 个账号、7 个模型、4 种 function，该字段
+> **100% 为 `null`**。没有池，`cache_read_input_tokens` 只能是 0 —— 0% 是
+> 正确读数。本版把这个事实变成可观测的，用户不必再怀疑插件吞了数据。
+
+### 修复
+
+- **上游的缓存池事实与管线名不再被丢弃**（#67）。
+  - **现象**：无论简单还是复杂提问，缓存命中恒为 0%，十个会话一致；
+    同时 tps 在 60–80 之间浮动。
+  - **根因**：不是插件。issue #10 的转发修复仍在（`lib/index.js` 含
+    `cached_tokens`，同版本下 `workbuddy`/`dsh-opencode-go` 命中显示正常），
+    是上游 `llm_utils_chat` 改由 `llm_raw_chat_v2` 管线、火山方舟 `ep-…`
+    端点承载后，不再为这些请求分配前缀缓存池。当初产出 5248/9216 的
+    `scripts/probe-cache-convention.mjs` 原样重跑，现在三轮全是 0。
+  - **修法**：`sse.ts` 新增 `diagnostic` 事件类型，解码 `metadata`
+    （`prompt_cache_pool_record`）与 `timing_cost`（`name` 管线名、
+    `provider_model_name`）；`solo-bridge.ts` 通过可选 `log` 上报
+    `promptCachePoolRecord` / `pipeline` / `providerModelName`；
+    `index.ts` 四个 `TraeSoloBridge` 构造点接入 `ctx.logger.warn`。
+    诊断事件不进答案文本、不改 usage 映射，**对外行为不变**。
+  - **为什么区分 `null` 与「字段不存在」**：`null` 是上游明确表示「没挂池」，
+    字段缺失只是没这条信息；两者混为一谈就又回到「看不出是谁的问题」。
+
+### 修复（顺带守住一个回归）
+
+- **`metadata` 不能被 peek 当成「上游已应答」**。它现在是被认识的事件类型，
+  若据此停止 peek，紧跟其后的拒绝（如 `1005` 未订阅）会退化成截断的 200 流
+  —— 正是 issue #19 的故障形态。`openTraeSource` 显式把 `diagnostic` 排除在
+  「已应答」之外。
+
+### 测试
+
+- `tests/sse.spec.ts`：`metadata` / `timing_cost` 解码为 `diagnostic`，
+  保留 `prompt_cache_pool_record: null`，且区分字段缺失。
+- `tests/solo-bridge.spec.ts`：诊断事实上报（含 `null` 原样保留、事件不泄漏进
+  答案）；`metadata` 之后紧跟的 `1005` 仍转成 402 `hard_credit`。
+
+### 说明
+
+- 诊断细节与完整证据链见 `docs/ISSUE67_DIAGNOSIS.md`（不随 npm 包发布）。
+- 上游若开始分配缓存池，`cached_tokens` 会自动恢复显示，插件侧无需再改。
+
 ## 4.6.3 (2026-10-27)
 
 > **国际版美国区账号不会再被当成新加坡区。** 它的凭据明明写着

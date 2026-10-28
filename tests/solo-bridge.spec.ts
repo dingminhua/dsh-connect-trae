@@ -522,3 +522,50 @@ describe('TraeSoloBridge against the issue #19 refusal', () => {
     })
   })
 })
+
+describe('upstream cache-pool diagnostics (issue #67)', () => {
+  it('reports prompt_cache_pool_record:null and the serving pipeline', async () => {
+    // Real captured head of a 2026-10-28 answer: metadata says NO cache pool was
+    // attached, and timing_cost names the pipeline that served the request.
+    const upstream: TraeUpstreamClient = {
+      async chatStream() {
+        return { ok: true, response: traeStream([
+          'event: metadata\ndata: {"model":"","session_id":"5a0f6c1e","prompt_completion_id":0,"ab_versions":null,"app_version":"","ide_version":null,"prompt_cache_pool_record":null}\n\n',
+          'event: timing_cost\ndata: {"name":"llm_raw_chat_v2","first_sse_event_time":2826,"provider_model_name":"ep-20261020221437-cfj9b"}\n\n',
+          'event: output\ndata: {"response":"hello"}\n\n',
+          'event: token_usage\ndata: {"prompt_tokens":26137,"completion_tokens":35,"total_tokens":26172,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"reasoning_tokens":33}\n\n',
+          'event: done\ndata: {"finish_reason":"stop"}\n\n',
+        ]) }
+      },
+    }
+    const seen: { message: string; detail?: unknown }[] = []
+    const bridge = new TraeSoloBridge(upstream, undefined, undefined, (message, detail) => seen.push({ message, detail }))
+    const result = await bridge.chatStream(JSON.stringify({ model: 'deepseek-v4.1-flash', messages: [{ role: 'user', content: 'hi' }] }))
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const text = await result.response.text()
+    // The diagnostic events must not leak into the answer.
+    expect(text).not.toContain('prompt_cache_pool_record')
+    expect(text).toContain('"content":"hello"')
+    // Both diagnostics are surfaced, in arrival order, with the null preserved.
+    expect(seen).toEqual([
+      { message: 'dsh-connect-trae: upstream request diagnostics', detail: { model: 'deepseek-v4.1-flash', promptCachePoolRecord: null, pipeline: undefined, providerModelName: undefined } },
+      { message: 'dsh-connect-trae: upstream request diagnostics', detail: { model: 'deepseek-v4.1-flash', promptCachePoolRecord: undefined, pipeline: 'llm_raw_chat_v2', providerModelName: 'ep-20261020221437-cfj9b' } },
+    ])
+  })
+
+  it('does not treat metadata as an answer, so a refusal after it still becomes an HTTP error', async () => {
+    // The peek used to stop at the first non-`unknown` event. `metadata` now
+    // decodes to a recognised type, so without the explicit `diagnostic`
+    // exclusion a refusal arriving right after it would escape as a truncated
+    // 200 stream instead of a real 402 (the issue #19 failure mode).
+    const result = await bridgeTraeSoloStreamOrFail(traeStream([
+      'event: metadata\ndata: {"prompt_cache_pool_record":null}\n\n',
+      'event: error\ndata: {"code":1005,"message":"","extra":"{\\"plan\\":4}"}\n\n',
+    ]), 'gpt-6-sol')
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.status).toBe(402)
+    expect(result.kind).toBe('hard_credit')
+  })
+})

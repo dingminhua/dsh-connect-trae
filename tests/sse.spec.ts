@@ -49,4 +49,23 @@ describe('SseDecoder', () => {
     expect(decodeTraeEvent({ event: 'token_usage', data: '{"prompt_tokens":2,"completion_tokens":3}' }))
       .toEqual({ type: 'usage', inputTokens: 2, outputTokens: 3 })
   })
+
+  it('keeps the upstream cache-pool fact from metadata and timing_cost (issue #67)', () => {
+    // Real captured events (docs/ISSUE67_DIAGNOSIS.md). `metadata` carries the
+    // ONLY upstream signal for whether a prompt-cache pool was attached; it
+    // used to fall through to `unknown` and was dropped, which made "upstream
+    // attached no pool" indistinguishable from "the plugin lost the numbers".
+    expect(decodeTraeEvent({
+      event: 'metadata',
+      data: '{"model":"","session_id":"5a0f6c1e-0f2a-4a1c-9f3e-2b7d8c4a1e60","prompt_completion_id":0,"ab_versions":null,"app_version":"","ide_version":null,"prompt_cache_pool_record":null}',
+    })).toEqual({ type: 'diagnostic', promptCachePoolRecord: null })
+    expect(decodeTraeEvent({
+      event: 'timing_cost',
+      data: '{"name":"llm_raw_chat_v2","preprocess_timing":84,"queue_timing":15,"platform_first_token_timing":2638,"first_sse_event_time":2826,"provider_model_name":"ep-20261020221437-cfj9b"}',
+    })).toEqual({ type: 'diagnostic', pipeline: 'llm_raw_chat_v2', providerModelName: 'ep-20261020221437-cfj9b' })
+    // Absent is NOT the same as null: only an explicit field is reported.
+    expect(decodeTraeEvent({ event: 'metadata', data: '{"model":""}' })).toEqual({ type: 'diagnostic' })
+    // Diagnostics must never masquerade as answer text or usage.
+    expect(decodeTraeEvent({ event: 'timing_cost', data: '{"name":"x"}' }).type).toBe('diagnostic')
+  })
 })

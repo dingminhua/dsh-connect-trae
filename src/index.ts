@@ -1070,7 +1070,7 @@ export function apply(ctx: Context, config: Config): void {
         route,
         log: (message, detail) => ctx.logger.warn(message, detail),
       })
-      const bridge = new TraeSoloBridge(client, catalog, wireResolver)
+      const bridge = new TraeSoloBridge(client, catalog, wireResolver, (message, detail) => ctx.logger.warn(message, detail))
       // The shim always sees a stable client; the Raw gateway may replace the
       // delegate asynchronously, but it stays disabled until a probe succeeds.
       const delegating = new TraeDelegatingUpstreamClient(bridge)
@@ -1104,7 +1104,7 @@ export function apply(ctx: Context, config: Config): void {
           })
           const gateway = createTraeRawGateway({
             raw: rawClient,
-            solo: new TraeSoloBridge(primary.client, catalog, wireResolver),
+            solo: new TraeSoloBridge(primary.client, catalog, wireResolver, (message, detail) => ctx.logger.warn(message, detail)),
             endpoint: `${REGION_GATEWAYS.cn.chat}/api/ide/v2/llm_raw_chat`,
             edition: resolved.identity.edition,
             identity: { appVersion: resolved.identity.appVersion ?? '', buildVersion: resolved.identity.buildVersion ?? '' },
@@ -1634,7 +1634,7 @@ export function apply(ctx: Context, config: Config): void {
       route: stack.routeOf(providerOfPanel(panel)),
       log: (message, detail) => ctx.logger.warn(message, detail),
     })
-    return { accountId, client: new TraeSoloBridge(client, stack.catalog, stack.wireResolver) }
+    return { accountId, client: new TraeSoloBridge(client, stack.catalog, stack.wireResolver, (message, detail) => ctx.logger.warn(message, detail)) }
   }
 
   /**
@@ -1731,7 +1731,7 @@ export function apply(ctx: Context, config: Config): void {
       })
       // The wire resolver is the stack's live one, so a display id resolves to the
       // same config_name a real chat would use.
-      const bridge = new TraeSoloBridge(client, stack.catalog, stack.wireResolver)
+      const bridge = new TraeSoloBridge(client, stack.catalog, stack.wireResolver, (message, detail) => ctx.logger.warn(message, detail))
       const chat = (body: string, signal?: AbortSignal): Promise<TraeChatResult> => bridge.chatStream(body, signal)
       bridges.set(accountId, chat)
       return chat
