@@ -3,8 +3,10 @@
 > 用途：回复 <https://github.com/dingminhua/dsh-connect-trae/issues/67>
 > （huaizhuanghub：无论简单或复杂提问，缓存命中均为 0%，10 个会话复现，tps 浮动 60–80）
 >
-> **状态：已诊断，非插件缺陷；本版把「上游没有分配缓存池」变成可观测事实。**
-> `pnpm run check` 全绿（typecheck + 1211 测试 + build）。
+> **状态：4.6.4 已发布**（registry `dist-tags.latest` = `4.6.4`，GitHub Release
+> [v4.6.4](https://github.com/dingminhua/dsh-connect-trae/releases/tag/v4.6.4)）。
+> `pnpm run check` 全绿（typecheck + 1214 测试 + build），发布后 20 项逐文件核验与 tag 一致。
+> 已回复：<https://github.com/dingminhua/dsh-connect-trae/issues/67#issuecomment-6463534270>
 > 可直接复制横线以内的内容。
 
 ---
@@ -67,7 +69,7 @@
 功能上没什么可修的（数字本来就没被丢），但有一个**可观测性缺口**值得补：`metadata` 和 `timing_cost`
 这两个事件以前被当成未知事件直接丢掉了，所以你只能看到「0%」，没法知道是「上游没给池」还是「插件丢了数」。
 
-本版把这两个事件解码出来并写进日志：
+**4.6.4 已发布**，把这两个事件解码出来并写进日志：
 
 ```
 dsh-connect-trae: upstream request diagnostics
