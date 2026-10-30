@@ -366,11 +366,17 @@ export const TRAE_CARD_CSS = `
 .dsm-trae-usage-switch-button:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.14))}
 .dsm-trae-usage-switch-button:disabled{opacity:.5;cursor:not-allowed}
 .dsm-trae-usage-note{margin:8px 0 0;color:var(--dsw-alias-label-tertiary,#999);font-size:11px;line-height:16px}
-/* Credit-expiry notice, card copy. Three tones by urgency, so the 24-hour case
-   cannot be mistaken for the 7-day one at a glance. Reads as an advisory, not
-   an error: the account works fine, the credit is simply about to lapse. */
+/* Credit-expiry notice, card copy. Four tones by urgency, so the 24-hour case
+   cannot be mistaken for the 3-day one, nor either for the 7-day one, at a
+   glance. Reads as an advisory, not an error: the account works fine, the
+   credit is simply about to lapse.
+   The 3-day tone sits BETWEEN the other two on purpose: it carries the
+   warning border (the reader must not scroll past a 3-day expiry without
+   noticing) but not the warning fill (a 3-day pack is not the emergency a
+   24-hour pack is). */
 .dsm-trae-expiry{display:flex;flex-direction:column;gap:2px;margin-top:10px;padding:10px 12px;border:1px solid;border-radius:10px;font-size:12px;line-height:18px}
 .dsm-trae-expiry-soon{border-color:var(--dsw-alias-state-warn-secondary,#fbbf24);background:var(--dsw-alias-state-warn-tertiary,#fef3c7);color:var(--dsw-alias-label-primary,#e6e6e6)}
+.dsm-trae-expiry-days{border-color:var(--dsw-alias-state-warn-secondary,#fbbf24);background:transparent;color:var(--dsw-alias-label-primary,#e6e6e6)}
 .dsm-trae-expiry-week{border-color:var(--dsw-alias-border-l2,#3a3d45);background:var(--dsw-alias-bg-layer-3,#2c2f36);color:var(--dsw-alias-label-primary,#e6e6e6)}
 .dsm-trae-expiry-lapsed{border-color:var(--dsw-alias-border-l2,#3a3d45);background:var(--dsw-alias-bg-layer-3,#2c2f36);color:var(--dsw-alias-label-tertiary,#999)}
 .dsm-trae-expiry-detail{font-size:11px;line-height:16px;opacity:.8}
@@ -834,6 +840,11 @@ export const COMPOSER_POINTS_CSS = `
 .dsm-trae-expiry-soon{
   border-color:var(--dsw-alias-state-warn-secondary,#fbbf24);
   background:var(--dsw-alias-state-warn-tertiary,#fef3c7);
+  color:var(--dsw-alias-label-primary,#1f2329);
+}
+.dsm-trae-expiry-days{
+  border-color:var(--dsw-alias-state-warn-secondary,#fbbf24);
+  background:transparent;
   color:var(--dsw-alias-label-primary,#1f2329);
 }
 .dsm-trae-expiry-week{

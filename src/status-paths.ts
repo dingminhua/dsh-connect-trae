@@ -634,6 +634,13 @@ export interface TraeWebExpiringCredits {
  * Only present when at least one pack carried a usable `expiresAtMs` — a card
  * must never read "we were not told when anything expires" as "nothing is
  * about to lapse".
+ *
+ * The three forward buckets are NESTED and CUMULATIVE: `within24h` ⊆
+ * `within3d` ⊆ `within7d`, each counting every pack inside its own horizon.
+ * So each bucket answers "how much lapses within N" and the copy states that
+ * bucket's own figure — which is why ONE bucket's number is always true on
+ * its own terms, and why the reader never has to add two figures together (the
+ * notice shows exactly one tier at a time).
  */
 export interface TraeWebCreditExpiry {
   within24h: TraeWebExpiringCredits

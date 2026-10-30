@@ -42,6 +42,7 @@ import {
 } from '../status-paths.ts'
 import { COMPOSER_POINTS_CSS } from './styles.ts'
 import { formatDateTime } from './display.ts'
+import { expiryHeadlineKey, expiryNotice, expiryToneClass } from './expiry-ladder.ts'
 import { planText } from './plan-text.ts'
 import type { TraeWebAccountCredit, TraeWebAccountState, TraeWebCreditExpiry, TraeWebPayStatus, TraeWebUsage } from '../status-paths.ts'
 import type { TraeRegion } from '../region.ts'
@@ -135,42 +136,29 @@ function formatCredits(value: number): string {
   return value.toLocaleString('en-US', { maximumFractionDigits: 0 })
 }
 
-/** The soonest expiry any bucket names, or undefined when none carries one. */
+/**
+ * The soonest expiry the chosen tier names, or undefined when none carries one.
+ *
+ * Read from the tier the shared ladder picked, so the time shown always belongs
+ * to the horizon the headline claims — the two cannot disagree.
+ */
 function soonestExpiryOf(expiry: TraeWebCreditExpiry): number | undefined {
-  return expiry.within24h.earliestExpiresAtMs
-    ?? expiry.within7d.earliestExpiresAtMs
-    ?? undefined
+  return expiryNotice(expiry)?.soonestExpiresAtMs
 }
 
 /**
- * Which urgency tone the notice takes.
+ * The notice's headline sentence, naming the amount and the pack count.
  *
- * Escalation order matters: a live expiry the user can still act on outranks a
- * lapsed one they cannot, even when the lapsed amount is larger.
+ * The TIER is chosen by the shared ladder (see `./expiry-ladder.ts`), which the
+ * card's account panel uses too — the two surfaces render the same locale
+ * keys, so the choice must not be made twice.
  */
-function expiryToneOf(expiry: TraeWebCreditExpiry): string {
-  if (expiry.within24h.packs > 0) return 'dsm-trae-expiry-soon'
-  if (expiry.within7d.packs > 0) return 'dsm-trae-expiry-week'
-  return 'dsm-trae-expiry-lapsed'
-}
-
-/** The notice's headline sentence, naming the amount and the pack count. */
 function expiryMessageOf(expiry: TraeWebCreditExpiry, t: NonNullable<ComposerPointsProps['t']>): string {
-  if (expiry.within24h.packs > 0) {
-    return t('row.expiryWarningSoon', {
-      total: formatCredits(expiry.within24h.total),
-      packs: String(expiry.within24h.packs),
-    })
-  }
-  if (expiry.within7d.packs > 0) {
-    return t('row.expiryWarningWeek', {
-      total: formatCredits(expiry.within7d.total),
-      packs: String(expiry.within7d.packs),
-    })
-  }
-  return t('row.expiryWarningLapsed', {
-    total: formatCredits(expiry.expired.total),
-    packs: String(expiry.expired.packs),
+  const notice = expiryNotice(expiry)
+  if (notice === undefined) return ''
+  return t(expiryHeadlineKey(notice.tier), {
+    total: formatCredits(notice.total),
+    packs: String(notice.packs),
   })
 }
 
@@ -548,7 +536,7 @@ export function ComposerPoints(props: ComposerPointsProps) {
               belongs — but only for the CN shape: the international document
               carries a plan, not packs, so it has no per-pack expiry at all. */}
           {activeRegion === 'cn' && signedIn?.credits?.expiry !== undefined
-            ? <div className={`dsm-trae-expiry ${expiryToneOf(signedIn.credits.expiry)}`} role="status">
+            ? <div className={`dsm-trae-expiry ${expiryToneClass(expiryNotice(signedIn.credits.expiry)?.tier ?? 'lapsed')}`} role="status">
                 <span>{expiryMessageOf(signedIn.credits.expiry, t)}</span>
                 {soonestExpiryOf(signedIn.credits.expiry) === undefined
                   ? null

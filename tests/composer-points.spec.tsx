@@ -4,15 +4,22 @@
  * connector plugins do not fight over one shared row. These cases pin the
  * scoping decision, which is the whole reason the component exists.
  */
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { ComposerPoints, TRAE_COMPOSER_PROVIDERS } from '../src/client/ComposerPoints.tsx'
 import { ComposerPointsGate, selectedProviderOf } from '../src/client/ComposerPointsGate.tsx'
 import { TRAE_USAGE_PATH, withTraeRegion } from '../src/status-paths.ts'
 import { en, zh } from '../src/client/locales.ts'
+import { TRAE_CARD_CSS } from '../src/client/styles.ts'
 import type { TraeSettingsKey } from '../src/client/locales.ts'
 
 const t = ((key: TraeSettingsKey) => key) as (key: TraeSettingsKey, params?: Record<string, unknown>) => string
+
+/** The repository root, for the source-reading guards below. */
+const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 
 /**
  * The REAL Chinese copy, with `{placeholders}` filled in.
@@ -34,6 +41,30 @@ afterEach(() => {
 })
 
 /**
+ * The three forward expiry buckets, as the notice reads them.
+ *
+ * Each is CUMULATIVE and NESTED (`within24h` ⊆ `within3d` ⊆ `within7d`), so a
+ * bucket's figure is "everything lapsing within that horizon" — which is why
+ * each tier's sentence stands on its own.
+ */
+interface ExpiryShape {
+  within24h: { total: number; packs: number; earliestExpiresAtMs?: number }
+  within3d: { total: number; packs: number; earliestExpiresAtMs?: number }
+  within7d: { total: number; packs: number; earliestExpiresAtMs?: number }
+  expired?: { total: number; packs: number }
+}
+
+/** One bucket shape: the reported pack expires `earliest` ms from now. */
+function expiryShape(expiry: { earliest: number }): ExpiryShape {
+  return {
+    within24h: { total: 0, packs: 0 },
+    within3d: { total: 164, packs: 1, earliestExpiresAtMs: expiry.earliest },
+    within7d: { total: 164, packs: 1, earliestExpiresAtMs: expiry.earliest },
+    expired: { total: 0, packs: 0 },
+  }
+}
+
+/**
  * A CN usage document.
  *
  * `expiry` is injected only by the expiry cases: the component renders the
@@ -41,7 +72,7 @@ afterEach(() => {
  * document deliberately has none, so the other 20+ cases in this file keep a
  * panel with no expiry row at all.
  */
-function usageDocument(general: number, expiry?: { earliest: number }): Record<string, unknown> {
+function usageDocument(general: number, expiry?: ExpiryShape): Record<string, unknown> {
   return {
     status: 'signed-in',
     accountId: 'account-1',
@@ -59,14 +90,7 @@ function usageDocument(general: number, expiry?: { earliest: number }): Record<s
       // The 7-day bucket is the one the issue reported: a pack expiring TOMORROW
       // still lands here, and `soonestExpiryOf` reads `within24h` first, so an
       // empty 24h bucket with a populated 7d bucket is the exact reported shape.
-      ...expiry === undefined ? {} : {
-        expiry: {
-          within24h: { total: 0, packs: 0 },
-          within3d: { total: 164, packs: 1, earliestExpiresAtMs: expiry.earliest },
-          within7d: { total: 164.0184, packs: 1, earliestExpiresAtMs: expiry.earliest },
-          expired: { total: 0, packs: 0 },
-        },
-      },
+      ...expiry === undefined ? {} : { expiry },
     },
   }
 }
@@ -79,7 +103,7 @@ function usageDocument(general: number, expiry?: { earliest: number }): Record<s
  * the table `accounts: []` and leave it empty, so a test that asserts table
  * rows would fail for the wrong reason.
  */
-function stubRoute(options: { expiryAt?: number } = {}): { calls: string[] } {
+function stubRoute(options: { expiryAt?: number; expiry?: ExpiryShape } = {}): { calls: string[] } {
   const calls: string[] = []
   vi.stubGlobal('fetch', async (input: string | URL | Request) => {
     const url = String(input)
@@ -91,7 +115,9 @@ function stubRoute(options: { expiryAt?: number } = {}): { calls: string[] } {
             { id: 'account-2', accountName: 'Backup', selected: false, generalAvailable: 1777 },
           ],
         }
-      : usageDocument(3392, options.expiryAt === undefined ? undefined : { earliest: options.expiryAt })
+      : usageDocument(3392, options.expiry !== undefined
+        ? options.expiry
+        : options.expiryAt === undefined ? undefined : expiryShape({ earliest: options.expiryAt }))
     return new Response(JSON.stringify(body), { status: 200 })
   })
   return { calls }
@@ -591,5 +617,168 @@ describe('the account table and account switching', () => {
     if (current === undefined) throw new Error('expected the current account row')
     fireEvent.click(current)
     expect(holder.writes).toHaveLength(0)
+  })
+})
+
+describe('the expiry ladder picks the tightest bucket that has credit', () => {
+  /**
+   * Open the composer panel and read the expiry notice's headline sentence.
+   *
+   * The notice renders EXACTLY ONE tier, so the headline is the whole story:
+   * which bucket was chosen, and how much credit it claims.
+   */
+  async function headlineOf(expiry: ExpiryShape): Promise<string> {
+    stubRoute({ expiry })
+    const { container } = render(<ComposerPoints t={realT} provider="trae" region="cn" />)
+    await waitFor(() => { expect(screen.getByText(/3,392/)).toBeTruthy() })
+    fireEvent.click(screen.getByRole('button', { name: /Trae CN/ }))
+    await waitFor(() => { expect(document.querySelector('[role="dialog"]')).not.toBeNull() })
+    const notice = document.querySelector('.dsm-trae-expiry')
+    expect(notice).not.toBeNull()
+    return notice?.textContent ?? ''
+  }
+
+  const at = (days: number): number => Date.now() + days * 86_400_000
+
+  it('reports the 24-hour tier when credit lapses inside a day', async () => {
+    // The urgent tier outranks everything else, even when a wider bucket also
+    // has credit in it.
+    const text = await headlineOf({
+      within24h: { total: 100, packs: 1, earliestExpiresAtMs: at(0.5) },
+      within3d: { total: 300, packs: 2, earliestExpiresAtMs: at(0.5) },
+      within7d: { total: 700, packs: 3, earliestExpiresAtMs: at(0.5) },
+    })
+    expect(text).toContain('24 小时内过期')
+    // The 24-hour bucket's own figure — not the wider bucket's.
+    expect(text).toContain('100')
+    expect(text).not.toContain('700')
+  })
+
+  it('reports the 3-DAY tier when credit lapses in one to three days', async () => {
+    // THE CASE THIS TIER EXISTS FOR: before it, a pack expiring in two days
+    // was reported as "within 7 days" — true, but three times too coarse to
+    // plan around, in the one sentence whose job is "how long do I have left".
+    const text = await headlineOf({
+      within24h: { total: 0, packs: 0 },
+      within3d: { total: 200, packs: 1, earliestExpiresAtMs: at(2) },
+      within7d: { total: 600, packs: 2, earliestExpiresAtMs: at(2) },
+    })
+    expect(text).toContain('3 天内过期')
+    expect(text).toContain('200')
+    expect(text).not.toContain('600')
+  })
+
+  it('reports the 7-day tier only when nothing lapses sooner', async () => {
+    const text = await headlineOf({
+      within24h: { total: 0, packs: 0 },
+      within3d: { total: 0, packs: 0 },
+      within7d: { total: 600, packs: 2, earliestExpiresAtMs: at(5) },
+    })
+    expect(text).toContain('7 天内过期')
+    expect(text).toContain('600')
+  })
+
+  it('names the soonest expiry of the tier it chose', async () => {
+    // The 3-day tier has its own soonest time, and it is the one to show: a
+    // pack inside that band is what the reader is planning around.
+    //
+    // The buckets are NESTED, so their soonest times are nested too — the
+    // fixture keeps them consistent (the 3-day bucket's soonest is also the
+    // 7-day bucket's), exactly as the upstream summary produces them.
+    const soonest = at(1.5)
+    const text = await headlineOf({
+      within24h: { total: 0, packs: 0 },
+      within3d: { total: 200, packs: 1, earliestExpiresAtMs: soonest },
+      within7d: { total: 600, packs: 2, earliestExpiresAtMs: soonest },
+    })
+    const expected = new Intl.DateTimeFormat(undefined, {
+      year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+    }).format(new Date(soonest))
+    expect(text).toContain(expected)
+  })
+
+  it('the 3-day tier reports its OWN bucket, so the figure stands alone', async () => {
+    // Cumulative buckets, one tier shown at a time: "200 credit lapses within 3
+    // days" is TRUE of that bucket on its own terms, and the reader is never
+    // asked to add two figures together. This is why the tier reports
+    // `within3d.total` rather than a remainder the 24-hour tier subtracted.
+    const text = await headlineOf({
+      within24h: { total: 0, packs: 0 },
+      within3d: { total: 200, packs: 1, earliestExpiresAtMs: at(2) },
+      within7d: { total: 600, packs: 2, earliestExpiresAtMs: at(2) },
+    })
+    // The tier's own pack count, not the widest bucket's.
+    expect(text).toContain('（1 个套餐）')
+    expect(text).not.toContain('（2 个套餐）')
+  })
+})
+
+describe('the card and the composer panel share ONE expiry ladder', () => {
+  /**
+   * The guard for the CLASS of defect 4.6.7 shipped.
+   *
+   * The card's account panel and this composer panel render the SAME locale
+   * keys (`row.expiryWarning*`, `row.expiryEarliest`) from the SAME upstream
+   * buckets. When each carried its own ladder, they drifted: the card said
+   * `2026/10/31 23:59` and the panel said `23:59`, from one key — a full day
+   * apart, with no test failing.
+   *
+   * Both now call `./expiry-ladder.ts`, so the tier cannot be chosen twice.
+   * This case pins that STRUCTURAL fact: the two surfaces must not name a
+   * tier bucket themselves. A tier added to one surface only would show up
+   * here, because that surface would read a bucket the ladder does not read.
+   */
+  it('neither surface reads a tier bucket on its own', () => {
+    // Reading the sources, not the DOM: the rule is about WHICH buckets each
+    // surface looks at, and only the source says that.
+    const read = (relative: string): string => readFileSync(join(root, 'src', 'client', relative), 'utf8')
+    const panel = read('ComposerPoints.tsx')
+    const card = read('TraeAccountPanel.tsx')
+
+    for (const [name, source] of [['ComposerPoints.tsx', panel], ['TraeAccountPanel.tsx', card]] as const) {
+      // No surface may read a tier's buckets directly: the ladder owns that.
+      for (const bucket of ['within24h', 'within3d', 'within7d', 'expired']) {
+        expect(
+          source.includes(`expiry.${bucket}`),
+          `${name} reads expiry.${bucket} directly — the tier must be chosen by expiry-ladder.ts, so the card and the panel cannot drift`,
+        ).toBe(false)
+      }
+      // Both must go through the shared ladder.
+      expect(source, `${name} must import the shared expiry ladder`).toContain("from './expiry-ladder.ts'")
+    }
+  })
+})
+
+describe('the card stylesheet covers every expiry tone the ladder can produce', () => {
+  /**
+   * The CARD's own stylesheet had no guard for the expiry tones.
+   *
+   * The composer panel's guard (in `composer-styles.spec.tsx`) checks the
+   * classes the PANEL renders against `COMPOSER_POINTS_CSS`. The card renders
+   * the same four tone classes from the same ladder, but against
+   * `TRAE_CARD_CSS` — a different constant, with no equivalent check. So a
+   * card-side rule could go missing and nothing would notice: the panel would
+   * still be styled, and the card would quietly lose its tone.
+   *
+   * This checks the four tones exist as RULES, which is what "the card can show
+   * this tier" requires. The card's notice is not rendered in a test, so this
+   * is deliberately a stylesheet-level check rather than a DOM one.
+   */
+  it('defines all four expiry tones', () => {
+    for (const tone of ['dsm-trae-expiry-soon', 'dsm-trae-expiry-days', 'dsm-trae-expiry-week', 'dsm-trae-expiry-lapsed']) {
+      expect(
+        TRAE_CARD_CSS.includes(`.${tone}{`) || TRAE_CARD_CSS.includes(`.${tone}:`),
+        `the card stylesheet has no rule for ${tone}`,
+      ).toBe(true)
+    }
+  })
+
+  it('defines the shared expiry notice and detail rules too', () => {
+    for (const name of ['dsm-trae-expiry', 'dsm-trae-expiry-detail']) {
+      expect(
+        TRAE_CARD_CSS.includes(`.${name}{`) || TRAE_CARD_CSS.includes(`.${name}:`),
+        `the card stylesheet has no rule for ${name}`,
+      ).toBe(true)
+    }
   })
 })

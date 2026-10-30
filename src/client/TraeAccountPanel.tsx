@@ -30,6 +30,7 @@ import { AccountPool } from './AccountPool.tsx'
 import type { TraePoolRowClaim, TraePoolRowDetail } from './AccountPool.tsx'
 import { AccountTransfer } from './AccountTransfer.tsx'
 import { dotStyle, formatDateTime, formatNumber, refreshTokenWarning } from './display.ts'
+import { expiryHeadlineKey, expiryNotice, expiryToneClass } from './expiry-ladder.ts'
 import type { TraeSettingsKey } from './locales.ts'
 
 /** One row of the account roster, with everything the row cannot derive itself. */
@@ -139,32 +140,24 @@ function ExpiryNotice({ expiry, t }: {
   expiry: TraeWebCreditExpiry
   t: TraeAccountPanelProps['t']
 }): ReactNode {
-  const { expired, within24h, within7d } = expiry
-  let message: string | undefined
-  let soonest: number | undefined
-  let tone: string
-  // Escalation order: a live expiry the user can still act on outranks a lapsed
-  // one they cannot, even when the lapsed amount is larger.
-  if (within24h.packs > 0) {
-    message = t('row.expiryWarningSoon', { total: formatNumber(within24h.total), packs: String(within24h.packs) })
-    soonest = within24h.earliestExpiresAtMs
-    tone = 'dsm-trae-expiry-soon'
-  } else if (within7d.packs > 0) {
-    message = t('row.expiryWarningWeek', { total: formatNumber(within7d.total), packs: String(within7d.packs) })
-    soonest = within7d.earliestExpiresAtMs
-    tone = 'dsm-trae-expiry-week'
-  } else if (expired.packs > 0) {
-    message = t('row.expiryWarningLapsed', { total: formatNumber(expired.total), packs: String(expired.packs) })
-    tone = 'dsm-trae-expiry-lapsed'
-  } else {
-    return null
-  }
+  // The TIER comes from the shared ladder (`./expiry-ladder.ts`), which the
+  // composer panel uses too. The two surfaces render the same locale keys, so
+  // choosing the tier twice is how they drifted apart in the first place —
+  // 4.6.7 shipped a card that said `2026/10/31 23:59` beside a panel that
+  // said `23:59`, from ONE key.
+  const notice = expiryNotice(expiry)
+  if (notice === undefined) return null
+  const message = t(expiryHeadlineKey(notice.tier), {
+    total: formatNumber(notice.total),
+    packs: String(notice.packs),
+  })
+  const tone = expiryToneClass(notice.tier)
   return (
     <div className={`dsm-trae-expiry ${tone}`} role="status">
       <span>{message}</span>
-      {soonest === undefined
+      {notice.soonestExpiresAtMs === undefined
         ? null
-        : <span className="dsm-trae-expiry-detail">{t('row.expiryEarliest', { time: formatDateTime(soonest) })}</span>}
+        : <span className="dsm-trae-expiry-detail">{t('row.expiryEarliest', { time: formatDateTime(notice.soonestExpiresAtMs) })}</span>}
     </div>
   )
 }

@@ -49,7 +49,12 @@ function stubRoute(): void {
       generalAvailable: 3392,
       accounts: [],
       expiry: {
-        within24h: { total: 250, packs: 2, earliestExpiresAtMs: Date.now() + 3_600_000 },
+        // The 24-hour tier is EMPTY on purpose, so the notice mounts the
+        // 3-DAY tier — the one added in 4.6.10 — and the class guard below
+        // covers its tone class too. With a populated 24-hour bucket the panel
+        // would render the "soon" tone and the 3-day class would never mount,
+        // leaving a missing rule unnoticed.
+        within24h: { total: 0, packs: 0 },
         within3d: { total: 250, packs: 2, earliestExpiresAtMs: Date.now() + 3_600_000 },
         within7d: { total: 250, packs: 2, earliestExpiresAtMs: Date.now() + 3_600_000 },
         expired: { total: 0, packs: 0 },
