@@ -252,7 +252,7 @@ export interface TraeRegionState {
    *
    * Two seats, because the first one is not always available:
    *
-   *   - `composer` — the composer tool row (`conversation.input.left`), shared
+   *   - `composer` — the composer row (`conversation.input.right`), shared
    *     with the shell's own controls. It is the closer, more glanceable seat,
    *     and it is the default so nothing moves for anyone who does not choose.
    *   - `stats` — the ambient dock below the composer card

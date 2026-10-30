@@ -1,5 +1,6 @@
 /**
- * Credit readout for the composer tool row (`conversation.input.left`).
+ * Credit readout for the composer row (`conversation.input.right`, rendered
+ * immediately before the model picker).
  *
  * Shows the bound CN account's general credit balance, but ONLY while the
  * session's selected model belongs to this plugin. That condition is the whole

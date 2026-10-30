@@ -105,7 +105,7 @@ describe('client entry activation on 0.1.7', () => {
     // declared fallback `trae`).
     // A third and fourth slot join the two config ones: the credit readout,
     // registered in BOTH of its seats (learned from workbuddy #62) —
-    // `conversation.input.left` (the default composer toolbar) and
+    // `conversation.input.right` (immediately before the model picker) and
     // `conversation.composer.dock` (the ambient row below the input box, beside
     // the shell's own round/step/token pills). Both are registered
     // unconditionally because the CHOICE between them lives in the gate's
@@ -132,8 +132,8 @@ describe('client entry activation on 0.1.7', () => {
     expect(slots.registrations.map(entry => entry.name).sort())
       .toEqual([
         'conversation.composer.dock',
-        'conversation.input.left',
         'conversation.input.model.label',
+        'conversation.input.right',
         'plugins.bundle.config',
         'plugins.row.config',
       ])
@@ -145,7 +145,7 @@ describe('client entry activation on 0.1.7', () => {
     // registry takes it as. Scoped to the two credit seats on purpose: the
     // model-label slot is a third `conversation.*` registration with no id.
     const pointSlots = slots.registrations.filter(entry =>
-      entry.name === 'conversation.input.left' || entry.name === 'conversation.composer.dock')
+      entry.name === 'conversation.input.right' || entry.name === 'conversation.composer.dock')
     expect(pointSlots.map(entry => entry.key)).toEqual(['dsh-connect-trae-composer-points', 'dsh-connect-trae-stats-points'])
     expect(forms.requested).toEqual(['dsh-connect-trae'])
     expect(errors).toHaveLength(0)

@@ -1122,7 +1122,8 @@ export function nextRegionEnabled(
 /**
  * The two seats this region's credit readout can occupy.
  *
- * `composer` is the composer tool row (`conversation.input.left`); `stats` is
+ * `composer` is the composer row (`conversation.input.right`, rendered just before
+ * the model picker); `stats` is
  * the ambient dock below the composer card (`conversation.composer.dock`),
  * beside the shell's own round/step/token pills.
  *

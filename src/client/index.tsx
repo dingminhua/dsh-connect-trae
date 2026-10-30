@@ -178,8 +178,8 @@ export function apply(ctx: ClientContext): void {
     registerCard('plugins.row.config', 'dsh-connect-trae#dsh-connect-trae')
 
     /**
-     * Credit readout in the composer tool row (`conversation.input.left`, a
-     * session-scope list slot).
+     * Credit readout in the composer row (`conversation.input.right`, a
+     * session-scope list slot rendered immediately before the model picker).
      *
      * Provider-scoped on purpose: it renders only while the session's selected
      * model belongs to this plugin. That is what keeps two connector plugins
@@ -232,9 +232,23 @@ export function apply(ctx: ClientContext): void {
       }
     }
 
-    // The composer tool row: the default seat, and the closer, more glanceable
-    // one. `order: 4` is this readout's long-standing place in that row.
-    registerPointsSlot('conversation.input.left', 'dsh-connect-trae-composer-points', 4, 'composer')
+    // The composer row: the default seat, and the closer, more glanceable one.
+    // `order: 4` is this readout's long-standing place in that row.
+    //
+    // `conversation.input.right` rather than `input.left` (issue #71): the host
+    // renders `input.right` inside `div.trailing`'s `standardControls`, i.e.
+    // IMMEDIATELY BEFORE the model picker, while `input.left` sits at the very
+    // end of `div.tools` — butted against the permission selector, 8px away.
+    // Both are clickable, so reaching for "完全权限" landed on the readout and
+    // opened the credit popover (issue #71's second suggestion). The readout is
+    // a readout, not an action; next to the model picker it stops competing
+    // with a control the user is actually aiming at.
+    //
+    // The SETTING does not change: `creditPosition`'s `composer` value still
+    // means "the row that carries the model picker", which is exactly where
+    // `input.right` renders — so a saved profile keeps working with no
+    // migration, and the `stats` seat is untouched.
+    registerPointsSlot('conversation.input.right', 'dsh-connect-trae-composer-points', 4, 'composer')
     // The ambient dock below the composer card, where the shell renders its own
     // round/step/token pills. `order: 10` places this readout AFTER those pills
     // (the shell's own statistics register at 0), so the shipped figures stay

@@ -1,5 +1,58 @@
 # Changelog
 
+## 4.6.8 (2026-10-30)
+
+> **积分读数从「权限切换器旁边」挪到「模型选择器左边」。** 两者原本相隔 8px 且都是
+> 可点元素——想去点「完全权限」，结果点到读数、弹出积分浮层。读数不是操作按钮，
+> 紧贴操作按钮只会制造误触。宿主的 `conversation.input.right` 正是渲染在模型选择器
+> 之前的座位，迁过去即可，宿主无需改动。
+
+### 变更
+
+- **积分读数改挂 `conversation.input.right`**（#71 第二条建议）。
+  - **动机**：`conversation.input.left` 渲染在 `div.tools` 的**最末尾**，紧挨
+    `div.modes` 里的权限选择器，间距只有 8px。两个都是可点元素，误触后弹出的是
+    积分浮层——一个纯读数被当成了操作目标。
+  - **新位置**：宿主把 `conversation.input.right` 渲染在 `div.trailing` 的
+    `standardControls` 内、`conversation.input.model`（模型选择器）**之前**，
+    引用 `dsh-client-ui-conversation` 的 `InputBar` 结构：
+    `standardControls: [ renderSlot("conversation.input.right"), renderSlot("conversation.input.model") ]`。
+    迁过去后与权限选择器之间隔开整段空白。
+  - **宿主不需要改**：`conversation.input.right` 早已是 `kind: list` / `scope: session`
+    的现成座位。
+  - **老 profile 无需迁移**：`creditPosition` 的两个取值（`composer` / `stats`）、
+    设置名、`order: 4` 全部不变。`composer` 的含义是「带模型选择器的那一行」，
+    而 `input.right` 渲染的正是那一行——所以已保存的设置照旧生效。
+  - **「输入框下方」那一档不受影响**：`stats` 仍挂 `conversation.composer.dock`，
+    未改动。
+  - **文案不改（重要，且与 issue 的建议相反）**：设置里的 `row.creditPositionComposer`
+    值是「输入框工具栏」，hint 写的是「与模型选择同一行」——描述的是**整行**，
+    不是行内某个位置。迁移后读数仍在「与模型选择同一行」，文案依然准确。
+    这一条是核对原文后确认的，不是想当然。
+
+### 说明：本版只改 trae 一家
+
+`dsh-connect-workbuddy` 与 `dsh-connect-qoder` 目前仍注册在
+`conversation.input.left`。三家同步是 issue #71 的第三条建议，但本版刻意只做
+trae 一家，原因：
+
+- 先在单仓验证视觉效果与挤占情况，回退成本最低（一家的包 vs 三家的包）；
+- 那两个仓库当时工作树不干净（workbuddy 有未提交改动、qoder 有 `.tmp-restore/`），
+  在其上改位置会让问题归因变难。
+
+**因此本版发布后，同一台机器上三个插件的读数位置是分叉的**——trae 在右侧，
+另两家仍在左侧。这是已知且有意的中间状态；同步改动待单独发布。
+
+### 测试
+
+- `tests/client-activation.spec.tsx` 的座位名单断言与座位过滤条件同步改为
+  `conversation.input.right`。
+- **变异验证**：把注册改回 `conversation.input.left`，该用例立刻转红
+  （完整名单 `toEqual` 不等），证明守卫真的锁住了座位。
+- 全仓 **1224** 例通过（96 文件），双 tsconfig 类型检查通过。
+- 实测：构建后宿主进程存活（无 `DEVELOPMENT.md` 记录的渲染进程崩溃），
+  `lib/client.js` 中只剩一处座位注册且指向 `conversation.input.right`。
+
 ## 4.6.7 (2026-10-30)
 
 > **「最早到期：23:59」是明天晚上，不是今晚。** 输入框积分面板用一个只输出时分的
