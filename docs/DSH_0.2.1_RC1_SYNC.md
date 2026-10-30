@@ -386,3 +386,125 @@ pi-ai 仍钉在 1.1.0：3.4.2 起的双向适配结论原样成立，**适配层
 - `tests/dsh-peer-range.spec.ts` 的 `MUST_ADMIT` 补入 `0.2.1-rc.3`
 - **代码零改动**：13 个宿主包里唯一有代码变化的 `dsh-client-ui-primitives` 对本插件只是类型层引用
 - 双 tsconfig 类型检查通过，**1080** 例测试全绿，构建通过
+
+## 十一、0.2.1-rc.5 复核（2026-10-30）
+
+宿主随包版本从 `0.2.1-rc.3` 推进到 **`0.2.1-rc.5`**（中间经停 `rc.4`）。本节把两版一起核对，
+因为它们之间只隔 13 个提交、且 rc.4 的实质内容全部属于同一批 UI 细化。
+
+### 11.1 宿主版本取证
+
+| 取证点 | 值 |
+| --- | --- |
+| `DeepSeek Harness.app` → `CFBundleShortVersionString` | `0.2.1-rc.5` |
+| `app.asar/dsh/desktop-runtime.json` → `release.version` / `hostProtocolVersion` | `0.2.1-rc.5` / `4`（未变） |
+| `app.asar/dsh/node_modules/@earendil-works/pi-ai` | **`1.1.0`**（rc.3 起未变） |
+| `app.asar/dsh/package.json` → `cordis` / `schemastery` | `4.0.5` / `3.18.5`（均未变） |
+| 随包 Node / pnpm | `24.21.0` / `11.28.5` |
+
+### 11.2 上游这一版改了什么
+
+`deepseek-harness` 仓 `dsh-v0.2.1-rc.3...dsh-v0.2.1-rc.5` 共 13 个提交、300 个文件，
+其中 **约 240 个是各包 `package.json` 的版本号行**。有实质代码的只有四处：
+
+| 提交 | 性质 | 对本插件 |
+| --- | --- | --- |
+| `fix(mcp)` / `fix(acp)`：把目录加载的诊断从 stdout 改到 **stderr** | ACP 协议保留 stdout | **不击中**（见 11.5） |
+| `fix(ui)`：View 标签的 tooltip 仅在文字溢出时显示 | UI 细化 | 不击中 |
+| `fix(ui)`：More 菜单的 tooltip 去掉动态文案 | 回退了 rc.3 引入的 `session.moreViewsCurrent` | 不击中 |
+| `fix(web): customize thinking block rendering` | **行为变化**，见 11.4 | **不击中**（本插件不注册该槽位） |
+
+### 11.3 契约面：本插件消费的 13 个宿主包逐字节未变
+
+对 npm 上 `0.2.1-rc.3` 与 `0.2.1-rc.5` 两版的全量文件树做逐字节比对（`lib/**.js` 的
+`md5 -q | md5` 汇总，`package.json` 的版本号行除外）：
+
+```
+= dsh-llm / dsh-llm-pi-ai / dsh-settings / dsh-host-webserver
+= dsh-atomic-write / dsh-home-paths / dsh-attachment
+= dsh-client-ui-renderer / dsh-client-ui-settings
+= dsh-client-ui-settings-plugins / dsh-client-ui-slots / dsh-client-locale
+= dsh-client-ui-primitives        ← 与 rc.3 相比同样逐字节相同
+```
+
+`dsh-client-ui-primitives` 这一版**没有任何代码变化**（rc.3 时它有过一次纯新增的变更，
+本次停住了）。这一点对插件没有影响，但值得记下：它此前是本插件唯一需要「看一眼」的包。
+
+### 11.4 rc.4 唯一的行为变化：thinking 区块的 `rawText`
+
+`packages/client/ui-chat` 改了 `conversation.chat.reasoning.body` 槽位的入参契约：
+
+- 新增 `rawText`（模型的**原始**输出）
+- `text` 从「原始输出」改为「Chat 处理好用于显示的文本」（会剥掉 `<signature>…</signature>` 前缀）
+
+上游专门发了升级指南 `docs/upgrade-guide/v0.2.1-rc.4/reasoning-body-props/`。
+
+**对本插件的结论：不击中。** 本插件全仓不注册、不消费 `conversation.chat.*` 任何槽位
+（`grep -rn "conversation.chat" src tests` 零命中），也从不包装 reasoning 渲染。
+
+### 11.5 rc.4 的 stdout 修复为什么不击中本插件
+
+rc.4 的两个 `fix` 都是「把诊断日志从 stdout 赶到 stderr」，理由写在代码注释里：
+
+> ACP reserves stdout for protocol messages, including during successful catalog loads.
+
+本插件的宿主侧**根本不用 stdout**：
+
+- `grep -o "console\.\(log\|info\|debug\)" src` → **零命中**（只有 `console.error` 与注释里的域名）；
+- `grep -n "process\.stdout\|process\.stderr" src` → **零命中**；
+- 构建产物 `lib/index.js` 同样零命中。
+
+本插件把诊断交给卡片的诊断面板（`raw-diagnostic.ts` → `gateway.diagnostic()`），不经 console。
+因此这条修复**不是需要跟随的范式，而是已满足的前提**。
+
+### 11.6 槽位核对：本插件注册的 5 个槽位全部健在
+
+| 槽位 | rc.3 | rc.5 |
+| --- | --- | --- |
+| `plugins.bundle.config`（keyed / root） | 存在 | 存在（`slot-contract.d.ts:153`，契约未变） |
+| `plugins.row.config`（keyed / root） | 存在 | 存在（`slot-contract.d.ts:165`，契约未变） |
+| `conversation.input.left`（list / session） | 存在 | 存在（`slots.d.ts:317`，契约未变） |
+| `conversation.composer.dock`（list / session） | 存在 | 存在（`slots.d.ts:312`，契约未变） |
+| `conversation.input.model.label` | 存在 | 存在（`slots.d.ts:34`，契约未变） |
+
+宿主在 rc.4/rc.5 对槽位契约的**唯一**改动就是上面 11.4 的 `reasoning.body`，它与本插件无交集。
+
+### 11.7 浏览器外壳的共享模块表
+
+`dsh-web-frontend` 的 `index-*.js` 里 `staticModules` 是插件 bundle 能 `require` 的白名单。
+rc.5 实测该表为：
+
+```
+react / react/jsx-runtime / react-dom / react-dom/client / @deepseek-ai/cordis / zod /
+@tanstack/react-virtual / @deepseek-ai/dsh-client-store / @deepseek-ai/dsh-client-ui-slots /
+@deepseek-ai/dsh-client-ui-primitives / @deepseek-ai/dsh-client-ui-dockkit
+```
+
+本插件 bundle 实际 `require` 的只有 `react` / `react-dom` / `react/jsx-runtime`，全部在表内。
+`tests/client-runtime-imports.spec.ts` 的 `HOST_REGISTERED` 常量保持不变——它记录的是
+「插件打算用的那一小撮」，多出来的 `zod` / `@tanstack/react-virtual` 与本插件无关。
+
+注：`dsh-web-frontend` 的 `index-*.js` 在 rc.3 与 rc.5 之间**文件哈希相同**，即该外壳两版一致。
+
+### 11.8 peer 门禁
+
+```
+0.2.1-rc.3  -> true
+0.2.1-rc.4  -> true     ← 新增，已放行
+0.2.1-rc.5  -> true     ← 新增，已放行
+0.3.0-rc.1  -> false
+```
+
+范围 `>=0.1.7-rc.1 <0.3.0-0` **无需改动**。
+（`cordis` / `schemastery` / `pi-ai` 三个非 `@deepseek-ai/dsh*` 的 peer 由 app-boot 跳过，
+不参与门禁；其实际解析版本 `4.0.5` / `3.18.5` / `1.1.0` 均在本插件声明的范围内。）
+
+### 11.9 本次改动与验证
+
+- devDependency 13 项 → `0.2.1-rc.5`
+- `tests/dsh-peer-range.spec.ts` 的 `MUST_ADMIT` 补入 `0.2.1-rc.4` / `0.2.1-rc.5`
+- **插件代码零改动**：13 个宿主包的 JS 在 rc.3→rc.5 之间逐字节相同
+- `pnpm install --lockfile-only` + `pnpm install` 后，开发树解析到 rc.5
+- 双 tsconfig 类型检查通过，**1222** 例测试全绿（96 文件），`tsdown` 构建通过
+- 构建产物 `lib/client.js` 的 `require` 仍只有 react / react-dom / react/jsx-runtime；
+  重建后宿主进程存活（无渲染进程崩溃）

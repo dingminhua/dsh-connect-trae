@@ -192,7 +192,7 @@ Restart the DSH process after install/update/uninstall.
 ## DSH version compatibility
 
 **Requires DSH 0.1.7-rc.1 and up** (since 2.3.0 the plugin no longer targets hosts older than 0.1.7; the peer dependency ranges are narrowed accordingly).
-**The peer upper bound is `<0.3.0-0`, so both the 0.1.7 and the 0.2 line are supported (including 0.2.1-rc.3, verified).**
+**The peer upper bound is `<0.3.0-0`, so both the 0.1.7 and the 0.2 line are supported (including 0.2.1-rc.5, verified).**
 
 ### Both pi-ai context generations are supported (since 3.4.2)
 
@@ -217,13 +217,13 @@ The 0.2.0 line breaks **no** contract this plugin consumes — a symbol-by-symbo
 
 ### DSH 0.2.1 line (pi-ai 1.1.0) sync
 
-The `0.2.1-rc.1` host moved `@earendil-works/pi-ai` from `^0.85.1` to **`^1.1.0`** (unchanged through `0.2.1-rc.2` and `0.2.1-rc.3`) — the only change on the 0.2 line with real behavioural impact. Three conclusions:
+The `0.2.1-rc.1` host moved `@earendil-works/pi-ai` from `^0.85.1` to **`^1.1.0`** (unchanged from `0.2.1-rc.2` through `0.2.1-rc.5`) — the only change on the 0.2 line with real behavioural impact. Three conclusions:
 
 1. **The request body did not regress (measured, not inferred).** The 1.1.0 api reads the prompt **only** from a transcript system message and never touches top-level `systemPrompt` / `tools`, while `dsh-llm-pi-ai`'s `piContext()` still emits the legacy envelope. The bidirectional adapter this plugin has shipped since 3.4.2 covers exactly that: feeding the real host envelope through real `1.1.0` with a local SSE capture yields `roles: ["system","user"]`, an intact system text and `tools: 1`; **without the adapter it degenerates to `roles: ["user"]`, system `null`, `tools: 0`** — with no error. That contrast is pinned as a wire-level matrix in `tests/pi-ai-context.spec.ts`.
 2. **Types were fixed.** 1.1.0 changed `ProviderStreams`' second parameter to a **branded** `TranscriptContext` (a `unique symbol` only `normalizeContext()` can produce). The adapter casts once at that single boundary (`withContextAdaptation` in `src/adapter.ts`) and documents why the brand cannot be obtained honestly there.
-3. **The peer range needed no change.** DSH evaluates with `semver.satisfies(runtime, range, { includePrerelease: true })` and checks only the `@deepseek-ai/dsh*` namespace, so `>=0.1.7-rc.1 <0.3.0-0` already admits `0.2.1-rc.1`, `0.2.1-rc.2` and `0.2.1-rc.3` (verified). Note the prerelease cliff only exists under **default** options — it is not this plugin's situation.
+3. **The peer range needed no change.** DSH evaluates with `semver.satisfies(runtime, range, { includePrerelease: true })` and checks only the `@deepseek-ai/dsh*` namespace, so `>=0.1.7-rc.1 <0.3.0-0` already admits every release from `0.2.1-rc.1` through `0.2.1-rc.5` (verified). Note the prerelease cliff only exists under **default** options — it is not this plugin's situation.
 
-The dev tree pins `@earendil-works/pi-ai` at exactly **1.1.0** (the version the host actually bundles — still 1.1.0 on `0.2.1-rc.3`) rather than `^1.1.0`, so local typecheck and tests run against the same contract users do; the `schemastery` override moved to `3.18.5` (`dsh-llm-pi-ai@0.2.1-rc.3` declares `~3.18.5`).
+The dev tree pins `@earendil-works/pi-ai` at exactly **1.1.0** (the version the host actually bundles — still 1.1.0 on `0.2.1-rc.5`) rather than `^1.1.0`, so local typecheck and tests run against the same contract users do; the `schemastery` override moved to `3.18.5` (`dsh-llm-pi-ai@0.2.1-rc.5` declares `~3.18.5`).
 
 ### `0.2.1-rc.3` sync (since 4.4.6)
 
@@ -237,6 +237,20 @@ For **this plugin**:
 - The peer range **needs no change**: `0.2.1-rc.3` is admitted by `>=0.1.7-rc.1 <0.3.0-0` (verified).
 
 Details: [section 10 of `docs/DSH_0.2.1_RC1_SYNC.md`](https://github.com/dingminhua/dsh-connect-trae/blob/main/docs/DSH_0.2.1_RC1_SYNC.md).
+
+### `0.2.1-rc.5` sync (since 4.6.6)
+
+The host moved to `0.2.1-rc.5`, through `rc.4`. Of the 13 commits between the two releases, roughly 240 files are nothing but version-bump lines in each package's `package.json`; **only four carry real code**: ACP/MCP moving catalog-load diagnostics off stdout to stderr, View tab tooltips shown only when the label overflows, the More-menu tooltip losing its dynamic copy, and custom thinking-block rendering.
+
+For **this plugin**:
+
+- The 13 host packages it consumes are **byte-for-byte identical** between rc.3 and rc.5 — including `dsh-client-ui-primitives`, the one package that had changed on rc.3. **Zero adaptation.**
+- rc.4's only behavioural change is to the `conversation.chat.reasoning.body` slot: it gains `rawText`, and `text` becomes the **display-ready** text (with a leading `<signature>…</signature>` block stripped). This plugin registers and consumes **no** `conversation.chat.*` slot at all, so it is not affected.
+- rc.4's reason for moving diagnostics off stdout is that "ACP reserves stdout for protocol messages". This plugin's host half **never writes to stdout** (no `console.log/info/debug`, no `process.stdout.write`); diagnostics go to the card's own diagnostics panel. That fix is therefore **a precondition already satisfied**, not a pattern to follow.
+- All five slots this plugin registers **still exist with unchanged contracts** on rc.5.
+- The peer range **needs no change**: both `0.2.1-rc.4` and `0.2.1-rc.5` are admitted by `>=0.1.7-rc.1 <0.3.0-0`.
+
+Details: [section 11 of `docs/DSH_0.2.1_RC1_SYNC.md`](https://github.com/dingminhua/dsh-connect-trae/blob/main/docs/DSH_0.2.1_RC1_SYNC.md).
 
 
 ### Why the upper bound is not `<0.2.0`

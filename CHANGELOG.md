@@ -1,5 +1,60 @@
 # Changelog
 
+## 4.6.6 (2026-10-30)
+
+> **对齐宿主 DSH 0.2.1-rc.5（经停 rc.4）：纯版本推进，插件代码零改动。**
+> 两版之间 13 个提交里约 240 个文件只是各包 `package.json` 的版本号行，有实质代码的
+> 只有四处——而四处都不落在本插件消费的面上。插件消费的 13 个宿主包在
+> rc.3→rc.5 之间**逐字节相同**。
+
+### 变更
+
+- **对齐宿主 DSH 0.2.1-rc.5**：13 个 `@deepseek-ai/dsh-*` devDependency 从 `0.2.1-rc.3`
+  推进到 `0.2.1-rc.5`。`cordis`（`4.0.5`）/ `schemastery`（`3.18.5`）/ `pi-ai`（仍 `1.1.0`）
+  均未变——宿主 `app.asar` 实测随包的 pi-ai 仍是 `1.1.0`，3.4.2 起的双向适配结论原样成立。
+- **peer 范围无需改动**：`0.2.1-rc.4` / `0.2.1-rc.5` 对 `>=0.1.7-rc.1 <0.3.0-0` 已判通过。
+
+### 已核对确认无变化
+
+- 逐字节比对 npm 上 `0.2.1-rc.3` 与 `0.2.1-rc.5` 两版的全量文件树（`lib/**.js` 汇总哈希，
+  忽略 `package.json` 的版本号行）：插件消费的 13 个包——`dsh-llm`、`dsh-llm-pi-ai`、
+  `dsh-settings`、`dsh-host-webserver`、`dsh-atomic-write`、`dsh-home-paths`、`dsh-attachment`、
+  `dsh-client-ui-renderer`、`dsh-client-ui-settings`、`dsh-client-ui-settings-plugins`、
+  `dsh-client-ui-slots`、`dsh-client-locale`、`dsh-client-ui-primitives`——**全部逐字节相同**。
+  （rc.3 时唯一有代码变化的是 `dsh-client-ui-primitives`；本版它停住了。）
+- 本插件注册的 5 个槽位（`plugins.bundle.config`、`plugins.row.config`、
+  `conversation.input.left`、`conversation.composer.dock`、`conversation.input.model.label`）
+  在 rc.5 中**仍然存在且契约未变**。
+- 浏览器外壳的 `staticModules` 白名单（`dsh-web-frontend` 的 `index-*.js`）在 rc.3 与 rc.5
+  之间**文件哈希相同**；本插件 bundle 实际 `require` 的 `react` / `react-dom` /
+  `react/jsx-runtime` 全部在表内。
+
+### rc.4 的两处行为变化为什么不击中本插件
+
+- **`conversation.chat.reasoning.body` 新增 `rawText`，`text` 改为显示用文本**（会剥掉
+  `<signature>…</signature>` 前缀），上游专门发了升级指南。本插件全仓不注册、不消费任何
+  `conversation.chat.*` 槽位（`grep -rn "conversation.chat" src tests` 零命中），也不包装
+  reasoning 渲染。
+- **把目录加载的诊断从 stdout 改到 stderr**（理由是「ACP 保留 stdout」）。本插件宿主侧
+  从不用 stdout：`grep` `console.log|info|debug` 与 `process.stdout` 在 `src` 与
+  `lib/index.js` 中均零命中，诊断走卡片自己的诊断面板（`raw-diagnostic.ts`）。这条修复
+  对本插件是**已满足的前提**，不是需要跟随的范式。
+
+### 测试
+
+- `tests/dsh-peer-range.spec.ts` 的 `MUST_ADMIT` 补入 `0.2.1-rc.4` / `0.2.1-rc.5`——
+  保持「当前正在使用的宿主版本必须在放行清单里」这条不变量。
+- 双 tsconfig 类型检查通过，全仓 **1222** 例测试全绿（96 文件），`tsdown` 构建通过；
+  重建后 `lib/client.js` 的 `require` 仍只有 react / react-dom / react/jsx-runtime，
+  宿主进程存活（无渲染进程崩溃）。
+
+### 文档
+
+- 新增 `docs/DSH_0.2.1_RC1_SYNC.md` 第十一节：`0.2.1-rc.5` 复核记录（取证、上游改动、
+  契约面、槽位核对、外壳共享模块表、peer 门禁）。
+- `README.md` / `README.en.md` 的宿主版本结论推进到 `0.2.1-rc.5`，并新增
+  「`0.2.1-rc.5` 同步结论」小节。
+
 ## 4.6.5 (2026-10-30)
 
 > **一条没带上下文窗口的目录行，会让整个 `trae` 区域不可用。** 失效的不是

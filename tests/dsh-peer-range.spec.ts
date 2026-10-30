@@ -77,7 +77,9 @@ const MUST_ADMIT = [
   '0.2.0',         // the 0.2.0 release
   '0.2.1-rc.1',    // the 0.2.1-rc.1 desktop host the plugin was synced against
   '0.2.1-rc.2',    // the 0.2.1-rc.2 desktop host
-  '0.2.1-rc.3',    // the current 0.2.1-rc.3 desktop host
+  '0.2.1-rc.3',    // the 0.2.1-rc.3 desktop host
+  '0.2.1-rc.4',    // the 0.2.1-rc.4 desktop host
+  '0.2.1-rc.5',    // the current 0.2.1-rc.5 desktop host
   '0.2.1',
   '0.2.9',         // later in the 0.2 line
 ] as const

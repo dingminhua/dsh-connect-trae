@@ -211,7 +211,7 @@ npm install dsh-connect-trae
 ## DSH 版本兼容
 
 **要求 DSH 0.1.7-rc.1 及以上**（2.3.0 起不再支持 0.1.7 之前的宿主；peer 依赖范围已按此收窄）。
-**peer 上界为 `<0.3.0-0`：0.1.7 与 0.2 两条线均受支持（含 0.2.1-rc.3，已实测）。**
+**peer 上界为 `<0.3.0-0`：0.1.7 与 0.2 两条线均受支持（含 0.2.1-rc.5，已实测）。**
 
 ### 同时支持 pi-ai 的两代上下文（3.4.2 起）
 
@@ -245,7 +245,7 @@ peer 范围不满足的 bundle 会被**整体跳过**，只往 stderr 写一行�
 
 ### DSH 0.2.1 线（pi-ai 1.1.0）同步结论
 
-宿主 `0.2.1-rc.1` 把 `@earendil-works/pi-ai` 从 `^0.85.1` 抬到了 **`^1.1.0`**（`0.2.1-rc.2` / `0.2.1-rc.3` 均保持不变），这是 0.2 线里
+宿主 `0.2.1-rc.1` 把 `@earendil-works/pi-ai` 从 `^0.85.1` 抬到了 **`^1.1.0`**（`0.2.1-rc.2` 起至 `0.2.1-rc.5` 均保持不变），这是 0.2 线里
 唯一有实际行为影响的变化。三项结论：
 
 1. **请求体没有丢东西（已实测）**。1.1.0 的 api **只**读 transcript 里的 system 消息，
@@ -258,13 +258,13 @@ peer 范围不满足的 bundle 会被**整体跳过**，只往 stderr 写一行�
    `TranscriptContext`，只有 `normalizeContext()` 能产出。适配层在这条边界上做一次显式转型
    （`src/adapter.ts` 的 `withContextAdaptation`），并在两处调用点写明为何品牌在此处不可诚实获得。
 3. **peer 范围无需改动**。DSH 用 `semver.satisfies(runtime, range, { includePrerelease: true })`
-   求值，且只校验 `@deepseek-ai/dsh*` 命名空间，因此 `>=0.1.7-rc.1 <0.3.0-0` 对 `0.2.1-rc.1` / `0.2.1-rc.2` / `0.2.1-rc.3` 均已判通过
+   求值，且只校验 `@deepseek-ai/dsh*` 命名空间，因此 `>=0.1.7-rc.1 <0.3.0-0` 对 `0.2.1-rc.1` 至 `0.2.1-rc.5` 均已判通过
    （已实测）。**注意**：预发布悬崖只在**默认选项**下成立——那是 `dsh-connect-workbuddy` 侧
    调研文档所描述的困境，本插件不适用。
 
-开发树的 `@earendil-works/pi-ai` 钉在 **1.1.0**（宿主实际随包的版本，`0.2.1-rc.3` 实测仍是 1.1.0）而非 `^1.1.0`，
+开发树的 `@earendil-works/pi-ai` 钉在 **1.1.0**（宿主实际随包的版本，`0.2.1-rc.5` 实测仍是 1.1.0）而非 `^1.1.0`，
 使本地 typecheck 与测试跑在与用户完全一致的契约上；`schemastery` 的 override 同步抬到
-`3.18.5`（`dsh-llm-pi-ai@0.2.1-rc.3` 声明 `~3.18.5`）。
+`3.18.5`（`dsh-llm-pi-ai@0.2.1-rc.5` 声明 `~3.18.5`）。
 
 ### `0.2.1-rc.3` 同步结论（4.4.6 起）
 
@@ -288,6 +288,28 @@ More 菜单、埋点），1 个是 DeepSeek API-key 通道改走官方 `/models`
 - peer 范围**无需改动**：`0.2.1-rc.3` 对 `>=0.1.7-rc.1 <0.3.0-0` 已判通过（已实测）。
 
 细节见 [`docs/DSH_0.2.1_RC1_SYNC.md`](https://github.com/dingminhua/dsh-connect-trae/blob/main/docs/DSH_0.2.1_RC1_SYNC.md) 第十节。
+
+### `0.2.1-rc.5` 同步结论（4.6.6 起）
+
+宿主推进到 `0.2.1-rc.5`（经停 `rc.4`）。两版之间的 13 个提交里，约 240 个文件只是各包
+`package.json` 的版本号行，**有实质代码的只有四处**：ACP/MCP 把目录加载诊断从 stdout 改到
+stderr、View 标签的 tooltip 只在文字溢出时显示、More 菜单 tooltip 去掉动态文案、
+以及 thinking 区块的自定义渲染。
+
+对**本插件**而言：
+
+- 插件消费的 13 个宿主包在 rc.3→rc.5 之间**逐字节相同**（含 rc.3 时唯一有过变化的
+  `dsh-client-ui-primitives`，本版它没有变化），因此**零适配**。
+- rc.4 唯一的行为变化是 `conversation.chat.reasoning.body` 槽位新增 `rawText`、`text` 改为
+  「显示用文本」（会剥掉 `<signature>` 前缀）。本插件全仓不注册、不消费任何
+  `conversation.chat.*` 槽位，**不击中**。
+- rc.4 把诊断日志赶出 stdout 的理由是「ACP 保留 stdout」。本插件宿主侧**从不用 stdout**
+  （无 `console.log/info/debug`、无 `process.stdout.write`），诊断走卡片自己的诊断面板，
+  因此这条**已是满足的前提**，不是需要跟随的范式。
+- 插件注册的全部 5 个槽位在 rc.5 中**仍然存在且契约未变**。
+- peer 范围**无需改动**：`0.2.1-rc.4` / `0.2.1-rc.5` 对 `>=0.1.7-rc.1 <0.3.0-0` 均已判通过。
+
+细节见 [`docs/DSH_0.2.1_RC1_SYNC.md`](https://github.com/dingminhua/dsh-connect-trae/blob/main/docs/DSH_0.2.1_RC1_SYNC.md) 第十一节。
 
 
 ### peer 上界为什么不写 `<0.2.0`
