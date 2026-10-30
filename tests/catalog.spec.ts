@@ -741,13 +741,22 @@ describe('every served model is sized for DSH', () => {
     }
   })
 
-  it('sizes every discovered row that reaches the catalog', () => {
-    // Live rows carry their window from the directory; a row that somehow
-    // arrives unsized must still not be able to reach the adapter unsized.
+  it('lets a discovered row reach the catalog unsized, because the adapter sizes it', () => {
+    // The CATALOG is allowed to omit the window: `discoveredCatalog` reports
+    // what the directory published, and a live row that published no window
+    // says so by omission. The guarantee lives one layer down, in
+    // `toPiModel`/`servedContextWindow`, which applies the fallback to every
+    // served row — see tests/context-window-fallback.spec.ts.
+    //
+    // This used to say the adapter supplied `defaultContextWindow`, which was
+    // false: that profile field is only read by the kernel's catalog-resolution
+    // step, and this plugin builds its provider by hand (`createProvider({
+    // models })`), so nothing consulted it. A row that reached pi-ai unsized
+    // reached DSH unsized, and the whole route failed (#70).
     const rows = discoveredCatalog([{ id: 'x', name: 'X', multimodal: false, reasoningSupported: false }])
     expect(rows[0]?.contextWindow).toBeUndefined()
-    // The adapter supplies `defaultContextWindow` for exactly this case, so the
-    // catalog is allowed to omit it here — but never for the fallbacks above.
+    // The fallbacks above may never omit it: they are served when nothing else
+    // can be discovered, so an omission there is fatal rather than cosmetic.
   })
 })
 

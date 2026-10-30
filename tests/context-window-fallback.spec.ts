@@ -95,4 +95,27 @@ describe('an unsized catalog row is still sized for DSH', () => {
       expect(info.context?.contextWindow!, `${id} must resolve a positive window`).toBeGreaterThan(0)
     }
   })
+
+  /**
+   * Not every BAD row is a MISSING one. The directory parser admits anything
+   * `finitePositive` accepts, and `finitePositive` checks only `isFinite` and
+   * `> 0` — so a fractional `context_window_tokens.dev` (or a stale saved
+   * `lastCatalog` carrying one) reaches the adapter as a non-integer. DSH
+   * rejects a non-integer exactly like a missing one, and `toPiModel` replaces
+   * the key wholesale rather than omitting it, so each of these must fall back
+   * rather than pass through.
+   */
+  it.each([
+    ['fractional', 200_000.5],
+    ['zero', 0],
+    ['negative', -1],
+    ['not a number', Number.NaN],
+  ])('replaces a %s window with the fallback', async (_label, value) => {
+    const catalog = new TraeCatalog('cn')
+    catalog.set([{ id: 'malformed-model', name: 'Malformed', contextWindow: value }])
+    const built = createTraeAdapter({ shim, catalog })
+    const info = await built.adapter.resolveModel(TRAE_PROVIDER, 'malformed-model')
+    expect(Number.isInteger(info.context?.contextWindow)).toBe(true)
+    expect(info.context?.contextWindow!).toBeGreaterThan(0)
+  })
 })
