@@ -1,5 +1,41 @@
 # Changelog
 
+## 4.6.9 (2026-10-30)
+
+> **三家插件的积分读数现已统一在 `conversation.input.right`（模型选择器左边）。**
+> 4.6.8 只迁了 trae 一家，另两家当时仍在左侧——现在 workbuddy 5.15.1 与
+> qoder 1.16.2 已同步，**位置分叉的中间状态结束**。
+
+### 文档
+
+- **更正 4.6.8 里那句已过时的说明**：4.6.8 发布时写的是「本版只改 trae 一家……
+  另两家仍在左侧。这是已知且有意的中间状态；同步改动待单独发布」。现在同步
+  已完成，那句「分叉」不再成立。
+- **为什么不直接改 4.6.8 的 CHANGELOG**：`CHANGELOG.md` 是随包文件，已发布的
+  tag 是不可变的历史锚点；改它会让 `verify:release` 对 v4.6.8 正确地报「tag
+  之后改动了发布内容」。更正随新版本发布，这是本仓库既有的做法。
+
+### 同步结果
+
+| 插件 | 版本 | 座位 |
+| --- | --- | --- |
+| `dsh-connect-trae` | 4.6.8 | `conversation.input.right` |
+| `dsh-connect-workbuddy` | 5.15.1 | `conversation.input.right` |
+| `@dmh2002/dsh-connect-qoder` | 1.16.2 | `conversation.input.right` |
+
+- 三个发布包内的 `lib/client.js` 均已核对：`conversation.input.right` 出现，
+  `conversation.input.left` 零出现。
+- 两个姊妹仓库各自补了一条**真正的座位断言**（此前都没有）：
+  workbuddy 补的是「`inject()` 的座位名与 `register({ name })` 必须相等」
+  （只改后者时原守卫全绿，而 `name` 才是注册表实际索引的字段）；
+  qoder 补的是「`input.right#…` 在册，且 `input.left#` 前缀不存在」
+  （此前该文件完全没有座位断言）。
+
+### 测试
+
+- 本版仅更正文档，**插件代码零改动**。
+- 全仓 **1224** 例通过（96 文件），双 tsconfig 类型检查通过。
+
 ## 4.6.8 (2026-10-30)
 
 > **积分读数从「权限切换器旁边」挪到「模型选择器左边」。** 两者原本相隔 8px 且都是
