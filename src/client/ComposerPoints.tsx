@@ -40,6 +40,7 @@ import {
   withTraeRegion,
 } from '../status-paths.ts'
 import { COMPOSER_POINTS_CSS } from './styles.ts'
+import { formatDateTime } from './display.ts'
 import { planText } from './plan-text.ts'
 import type { TraeWebAccountCredit, TraeWebAccountState, TraeWebCreditExpiry, TraeWebPayStatus, TraeWebUsage } from '../status-paths.ts'
 import type { TraeRegion } from '../region.ts'
@@ -172,6 +173,18 @@ function expiryMessageOf(expiry: TraeWebCreditExpiry, t: NonNullable<ComposerPoi
   })
 }
 
+/**
+ * A clock time, for the ONE thing in this panel that is always the same day:
+ * `composer.lastRefresh`, which is "now" by construction.
+ *
+ * DO NOT reuse this for credit expiry. It was reused for that once (issue #71)
+ * and produced `最早到期：23:59` for a pack expiring TOMORROW at 23:59 — a full
+ * day earlier than the truth, in the one sentence whose entire job is "how long
+ * do I have left". The card already rendered the same locale key
+ * (`row.expiryEarliest`) through `formatDateTime`, so one key had two
+ * granularities in one plugin. Expiry goes through `formatDateTime`; only
+ * same-day instants may use this.
+ */
 function formatClock(value: number): string {
   return new Date(value).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
 }
@@ -539,7 +552,7 @@ export function ComposerPoints(props: ComposerPointsProps) {
                 {soonestExpiryOf(signedIn.credits.expiry) === undefined
                   ? null
                   : <span className="dsm-trae-expiry-detail">
-                      {t('row.expiryEarliest', { time: formatClock(soonestExpiryOf(signedIn.credits.expiry)!) })}
+                      {t('row.expiryEarliest', { time: formatDateTime(soonestExpiryOf(signedIn.credits.expiry)!) })}
                     </span>}
               </div>
             : null}

@@ -14,12 +14,34 @@ import type { TraeSettingsKey } from '../src/client/locales.ts'
 
 const t = ((key: TraeSettingsKey) => key) as (key: TraeSettingsKey, params?: Record<string, unknown>) => string
 
+/**
+ * The REAL Chinese copy, with `{placeholders}` filled in.
+ *
+ * Needed wherever a case asserts on rendered TEXT rather than on a locale KEY:
+ * with the key-returning `t` above, every label renders as its key and a
+ * formatting regression inside a substituted value would be invisible.
+ */
+const realT = ((key: TraeSettingsKey, params?: Record<string, unknown>) => {
+  const template = zh[key] ?? key
+  return params === undefined
+    ? template
+    : template.replace(/\{(\w+)\}/g, (_, name: string) => String(params[name] ?? ''))
+}) as (key: TraeSettingsKey, params?: Record<string, unknown>) => string
+
 afterEach(() => {
   cleanup()
   vi.unstubAllGlobals()
 })
 
-function usageDocument(general: number): Record<string, unknown> {
+/**
+ * A CN usage document.
+ *
+ * `expiry` is injected only by the expiry cases: the component renders the
+ * "earliest expiry" line ONLY when `credits.expiry` exists, and the default
+ * document deliberately has none, so the other 20+ cases in this file keep a
+ * panel with no expiry row at all.
+ */
+function usageDocument(general: number, expiry?: { earliest: number }): Record<string, unknown> {
   return {
     status: 'signed-in',
     accountId: 'account-1',
@@ -32,7 +54,20 @@ function usageDocument(general: number): Record<string, unknown> {
     ],
     models: [],
     enabledModelIds: [],
-    credits: { total: 7500, consumed: 0, available: general + 1111, workAvailable: 1777, generalAvailable: general, accounts: [] },
+    credits: {
+      total: 7500, consumed: 0, available: general + 1111, workAvailable: 1777, generalAvailable: general, accounts: [],
+      // The 7-day bucket is the one the issue reported: a pack expiring TOMORROW
+      // still lands here, and `soonestExpiryOf` reads `within24h` first, so an
+      // empty 24h bucket with a populated 7d bucket is the exact reported shape.
+      ...expiry === undefined ? {} : {
+        expiry: {
+          within24h: { total: 0, packs: 0 },
+          within3d: { total: 164, packs: 1, earliestExpiresAtMs: expiry.earliest },
+          within7d: { total: 164.0184, packs: 1, earliestExpiresAtMs: expiry.earliest },
+          expired: { total: 0, packs: 0 },
+        },
+      },
+    },
   }
 }
 
@@ -44,7 +79,7 @@ function usageDocument(general: number): Record<string, unknown> {
  * the table `accounts: []` and leave it empty, so a test that asserts table
  * rows would fail for the wrong reason.
  */
-function stubRoute(): { calls: string[] } {
+function stubRoute(options: { expiryAt?: number } = {}): { calls: string[] } {
   const calls: string[] = []
   vi.stubGlobal('fetch', async (input: string | URL | Request) => {
     const url = String(input)
@@ -56,7 +91,7 @@ function stubRoute(): { calls: string[] } {
             { id: 'account-2', accountName: 'Backup', selected: false, generalAvailable: 1777 },
           ],
         }
-      : usageDocument(3392)
+      : usageDocument(3392, options.expiryAt === undefined ? undefined : { earliest: options.expiryAt })
     return new Response(JSON.stringify(body), { status: 200 })
   })
   return { calls }
@@ -320,16 +355,64 @@ describe('ComposerPoints readout', () => {
   })
 
   it('renders the REAL Chinese copy as "Trae CN · 3,392"', async () => {
-    const realT = ((key: TraeSettingsKey, params?: Record<string, unknown>) => {
-      const template = zh[key] ?? key
-      return params === undefined
-        ? template
-        : template.replace(/\{(\w+)\}/g, (_, name: string) => String(params[name] ?? ''))
-    }) as (key: TraeSettingsKey, params?: Record<string, unknown>) => string
     stubRoute()
     render(<ComposerPoints t={realT} provider="trae" region="cn" />)
     await waitFor(() => { expect(screen.getByText(/3,392/)).toBeTruthy() })
     expect(screen.getByText(/3,392/).textContent).toBe('Trae CN · 3,392')
+  })
+
+  it('renders the earliest expiry with its DATE, not just a clock time', async () => {
+    // Issue #71. `formatClock` renders only hh:mm, so a pack expiring TOMORROW at
+    // 23:59 read as "Earliest: 23:59" — a full day earlier than the truth, in the
+    // one sentence whose entire job is "how long do I have left". The card already
+    // rendered the SAME locale key (`row.expiryEarliest`) through `formatDateTime`,
+    // so one key had two granularities in one plugin. Both now go through
+    // `formatDateTime`; this case is the guard the suite was missing entirely (no
+    // expiry assertion existed anywhere before it).
+    const expiryAt = Date.UTC(2026, 9, 31, 23, 59)
+    stubRoute({ expiryAt })
+    render(<ComposerPoints t={realT} provider="trae" region="cn" />)
+    await waitFor(() => { expect(screen.getByText(/3,392/)).toBeTruthy() })
+    // `realT` renders the shipped copy, so the trigger is named "Trae CN · 3,392"
+    // — not the locale key the key-returning `t` would produce.
+    fireEvent.click(screen.getByRole('button', { name: /Trae CN/ }))
+    await waitFor(() => { expect(document.querySelector('[role="dialog"]')).not.toBeNull() })
+
+    const detail = document.querySelector('.dsm-trae-expiry-detail')?.textContent ?? ''
+    // Still the same locale key, so the copy is unchanged — only the value's
+    // granularity moved.
+    expect(detail).toContain(zh['row.expiryEarliest'].split('{time}')[0]?.trim() ?? '')
+
+    // The presence of a DATE is the whole point. `formatDateTime` is the exact
+    // function the card already used for this same key, so asserting against it
+    // is asserting the two surfaces agree.
+    const expected = new Intl.DateTimeFormat(undefined, {
+      year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+    }).format(new Date(expiryAt))
+    expect(detail).toContain(expected)
+    // A date is rendered; a bare clock time is not (`23:59` alone was the bug).
+    expect(detail).toMatch(/\d{4}/)
+
+    // Negative control: the exact string the OLD code produced must be absent.
+    const oldRendering = zh['row.expiryEarliest'].replace('{time}',
+      new Date(expiryAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }))
+    expect(detail).not.toBe(oldRendering)
+  })
+
+  it('keeps the same-day refresh stamp as a bare clock time', async () => {
+    // The fix must not overreach: `composer.lastRefresh` is "now" by
+    // construction, always the same day, and widens the foot of a narrow panel
+    // if it gains a date. It legitimately uses `formatClock`; only expiry moved.
+    stubRoute({ expiryAt: Date.UTC(2026, 9, 31, 23, 59) })
+    render(<ComposerPoints t={realT} provider="trae" region="cn" />)
+    await waitFor(() => { expect(screen.getByText(/3,392/)).toBeTruthy() })
+    fireEvent.click(screen.getByRole('button', { name: /Trae CN/ }))
+    await waitFor(() => { expect(document.querySelector('[role="dialog"]')).not.toBeNull() })
+
+    const foot = document.querySelector('.dsm-trae-composer-panel-foot')?.textContent ?? ''
+    // A bare hh:mm carries no year and no slash-separated date.
+    expect(foot).toMatch(/\d{1,2}:\d{2}/)
+    expect(foot).not.toMatch(/\d{4}/)
   })
 
   it('closes the panel on Escape', async () => {
