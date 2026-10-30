@@ -117,8 +117,31 @@ const REQUEST_IMAGE_BUDGETS = {
  * window of its own. Every fallback row and every live Trae row is expected to
  * state its real window; this is the backstop that keeps one unsized row from
  * failing the entire provider route (`INVALID_MODEL_CONTEXT`).
+ *
+ * APPLIED IN {@link toPiModel}, NOT ONLY ON THE PROFILE. The profile's
+ * `defaultContextWindow` is read by the kernel's catalog-resolution step, which
+ * this plugin never runs: it builds its pi-ai provider BY HAND through
+ * `createProvider({ models })`, and `Models.getModel()` then returns the raw
+ * `toPiModel` row with no defaulting applied anywhere. Leaving the fallback on
+ * the profile alone is what produced
+ * `adapter returned invalid context metadata for provider "trae" model
+ * "doubao_1.8"` — a row the live directory published without a window reached
+ * DSH unsized and took the whole `trae` route down.
  */
 const FALLBACK_CONTEXT_WINDOW = 200_000
+
+/**
+ * The window a served row is actually advertised with.
+ *
+ * Positive integers pass through untouched — a row's own window is never
+ * second-guessed. Anything else (missing, `NaN`, `0`, a negative or a
+ * fractional count from a malformed directory entry) falls back, because DSH
+ * accepts ONLY a positive integer and rejects the entire provider otherwise.
+ */
+function servedContextWindow(info: Pick<TraeModelInfo, 'contextWindow'>): number {
+  const window = info.contextWindow
+  return Number.isInteger(window) && (window as number) > 0 ? window as number : FALLBACK_CONTEXT_WINDOW
+}
 
 function toPiModel(info: TraeModelInfo, baseUrl: string, providerId: string, withRate = true): Model<Api> {
   return {
@@ -154,7 +177,10 @@ function toPiModel(info: TraeModelInfo, baseUrl: string, providerId: string, wit
         max: info.reasoningEfforts.max ?? null,
       },
     }),
-    ...(info.contextWindow === undefined ? {} : { contextWindow: info.contextWindow }),
+    // Always present: the hand-built provider below has no defaulting step, so
+    // an omitted key reaches DSH as `context.contextWindow === undefined` and
+    // fails the whole route (see FALLBACK_CONTEXT_WINDOW).
+    contextWindow: servedContextWindow(info),
     ...(info.maxTokens === undefined ? {} : { maxTokens: info.maxTokens }),
     compat: { supportsReasoningEffort: info.reasoningEfforts !== undefined },
   } as unknown as Model<Api>
@@ -492,9 +518,13 @@ export function createTraeAdapter(options: TraeAdapterOptions): TraeAdapter {
     // its own `contextWindow`. DSH rejects a model whose resolved window is not
     // a positive integer, and that rejection fails the WHOLE provider route, so
     // one unsized row would take an entire region offline (docs/ISSUE8_DIAGNOSIS.md).
-    // Both fallback catalogs and live Trae rows now carry a real window, so this
-    // value should never be consulted; it exists so that a future unsized row
-    // degrades to one conservative model instead of a dead region.
+    //
+    // This field is kept for the kernel paths that read it, but it is NOT what
+    // protects the hand-built provider below: `createProvider({ models })` hands
+    // `Models.getModel()` the raw rows, so nothing here is consulted on the
+    // adapter's own resolution path. {@link toPiModel} therefore applies
+    // {@link FALLBACK_CONTEXT_WINDOW} itself — that is the guarantee, this is
+    // the belt.
     defaultContextWindow: FALLBACK_CONTEXT_WINDOW,
     ...REQUEST_IMAGE_BUDGETS,
     piProvider: provider,
