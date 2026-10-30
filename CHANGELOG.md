@@ -1,5 +1,38 @@
 # Changelog
 
+## 4.6.11 (2026-10-30)
+
+> **英文界面下的「最近刷新」不再显示成中文式的时间。** issue #71 里顺带提到的那点：
+> `formatClock` 把 locale 硬编码成 `'zh-CN'`，所以英文界面印的是 `23:59` 而不是
+> `11:59 PM`。
+
+### 变更
+
+- **`formatClock` 不再硬编码 locale**（issue #71 的第 1 节「顺带一提」）。
+  - **问题**：`formatClock` 写死 `'zh-CN'`，于是英文界面按中文习惯排 24 小时制，
+    显示 `23:59` 而不是 `11:59 PM`。同一文件里的 `formatDateTime` 用的是
+    `undefined`（跟随读者语言）——两个函数对「按谁的格式」各说各话。
+  - **改法**：`toLocaleTimeString('zh-CN', …)` → `toLocaleTimeString(undefined, …)`，
+    与 `formatDateTime` 对齐。
+  - **影响面**：`formatClock` 现在只剩一个调用点——`composer.lastRefresh`
+   （「最近刷新」）。到期时刻早已改用 `formatDateTime`（4.6.7），所以本次**不影响**
+    到期提示的渲染。
+  - **姊妹插件暂未同步**：`dsh-connect-workbuddy` 与 `@dmh2002/dsh-connect-qoder`
+    各自的 `formatClock` 里也有同样的硬编码（`ComposerCredits.tsx`），但它们不在
+    issue #71 的范围内，故本次**只改 trae**。三家的差异见下。
+
+### 测试
+
+- 新增 **2** 例（1234 总例，较 4.6.10 净增 2）：
+  - **源码级**：`formatClock` 不得再出现硬编码的 locale。这一条不依赖测试环境的
+    locale——行为级断言在 zh-CN 环境下会因两种写法结果相同而失效，源码级不会。
+  - **行为级**：渲染出的「最近刷新」戳必须等于**读者 locale** 对该时刻的写法。
+    `composer.lastRefresh` 是「最近一次刷新的时刻」（即当前时间），所以期望值取
+    渲染前后两个瞬间，容许跨过一分钟边界。
+- **变异验证**：把 locale 改回 `'zh-CN'`，两条用例**同时**转红（源码级点名
+  「still pins a locale」，行为级报出实际渲染值 `19:31` 与期望的 `07:31 PM`）。
+- 全仓 **1234** 例通过（96 文件），双 tsconfig 类型检查通过。
+
 ## 4.6.10 (2026-10-30)
 
 > **到期提示加了一档「3 天内」。** 一个两天后过期的套餐，之前显示的是「7 天内过期」

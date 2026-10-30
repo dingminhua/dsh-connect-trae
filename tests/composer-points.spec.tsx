@@ -782,3 +782,49 @@ describe('the card stylesheet covers every expiry tone the ladder can produce', 
     }
   })
 })
+
+describe('the same-day refresh stamp follows the READER\'s locale', () => {
+  /**
+   * Issue #71's aside: `formatClock` hardcoded `'zh-CN'`, so the English
+   * interface printed the Chinese convention's `23:59` instead of `11:59 PM`.
+   * `formatDateTime` — the sibling function used for expiry — already used
+   * `undefined` (the reader's locale), so the two disagreed inside one file.
+   */
+  it('does not pin a locale for the refresh stamp', () => {
+    // Source-level, so it holds whatever locale the test environment runs in:
+    // a behavioural assertion would be vacuous under a zh-CN environment.
+    const source = readFileSync(join(root, 'src', 'client', 'ComposerPoints.tsx'), 'utf8')
+    const clock = /function formatClock\(value: number\): string \{([\s\S]*?)\n\}/.exec(source)?.[1] ?? ''
+    expect(clock, 'formatClock was not found in ComposerPoints.tsx').not.toBe('')
+    expect(
+      clock,
+      "formatClock still pins a locale — it must use undefined so the stamp follows the reader",
+    ).not.toContain("'zh-CN'")
+    expect(clock).toContain('undefined')
+  })
+
+  it('renders the stamp the way the reader\'s locale writes it', async () => {
+    // The behavioural half: whatever the environment locale is, the rendered
+    // stamp is the one THAT locale produces.
+    //
+    // `composer.lastRefresh` is the moment of the last refresh — i.e. "now" —
+    // so the expected value is captured AROUND the render rather than fixed.
+    // Both the instant before and the one after are accepted, because a minute
+    // can tick over between the two.
+    const format = (ms: number): string =>
+      new Date(ms).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+    const before = Date.now()
+    stubRoute()
+    render(<ComposerPoints t={realT} provider="trae" region="cn" />)
+    await waitFor(() => { expect(screen.getByText(/3,392/)).toBeTruthy() })
+    fireEvent.click(screen.getByRole('button', { name: /Trae CN/ }))
+    await waitFor(() => { expect(document.querySelector('[role="dialog"]')).not.toBeNull() })
+    const after = Date.now()
+
+    const foot = document.querySelector('.dsm-trae-composer-panel-foot')?.textContent ?? ''
+    expect(
+      foot.includes(format(before)) || foot.includes(format(after)),
+      `the stamp ${JSON.stringify(foot)} is not the reader's locale rendering of ${format(before)}`,
+    ).toBe(true)
+  })
+})

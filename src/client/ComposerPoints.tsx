@@ -173,9 +173,15 @@ function expiryMessageOf(expiry: TraeWebCreditExpiry, t: NonNullable<ComposerPoi
  * (`row.expiryEarliest`) through `formatDateTime`, so one key had two
  * granularities in one plugin. Expiry goes through `formatDateTime`; only
  * same-day instants may use this.
+ *
+ * The locale is `undefined` — the READER's, not a fixed one — so an English UI
+ * shows `11:59 PM` rather than the Chinese convention's `23:59`. It used to
+ * hardcode `'zh-CN'`, which meant the English interface printed a Chinese-style
+ * time (issue #71's aside). `formatDateTime` already worked this way; this
+ * brings the two into agreement.
  */
 function formatClock(value: number): string {
-  return new Date(value).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+  return new Date(value).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
 }
 
 export function ComposerPoints(props: ComposerPointsProps) {
