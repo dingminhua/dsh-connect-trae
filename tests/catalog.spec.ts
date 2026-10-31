@@ -6,6 +6,7 @@ import {
   withChatCallableFunctions,
   deriveCatalog,
   discoveredCatalog,
+  FALLBACK_CONTEXT_WINDOW,
   FALLBACK_TRAE_MODELS,
   FALLBACK_TRAE_MODELS_AI,
   fallbackModelsFor,
@@ -757,6 +758,41 @@ describe('every served model is sized for DSH', () => {
     expect(rows[0]?.contextWindow).toBeUndefined()
     // The fallbacks above may never omit it: they are served when nothing else
     // can be discovered, so an omission there is fatal rather than cosmetic.
+  })
+
+  it('normalizes a PRESENT-but-illegal window at every catalog exit (issue #72)', () => {
+    // Omission stays legal (the case above); what may NOT survive is a value
+    // that is present and DSH cannot accept. `finitePositive` — the upstream
+    // parse gate both sources share — checks only `isFinite && > 0`, so a
+    // fractional `context_window_tokens.dev` / `prompt_max_tokens` arrives at
+    // the catalog intact. Left raw, such a value rides into a saved
+    // `lastCatalog`, where the settings schema (`step(1).min(1)`) rejects the
+    // WHOLE write, and into a discovery row a model-management surface adopts
+    // into a `models` entry with the same demand.
+    const illegal: [label: unknown, value: number][] = [
+      ['fractional', 200_000.5],
+      ['zero', 0],
+      ['negative', -1],
+      ['NaN', Number.NaN],
+    ]
+    for (const [label, value] of illegal) {
+      const remote: TraeDiscoveredModel = { id: 'frac-remote', name: 'Frac Remote', multimodal: false, reasoningSupported: false, contextWindow: value }
+      const merged = mergeTraeModelSources([remote], [{ id: 'frac-remote', name: 'Frac Remote' }])
+      expect(merged[0]?.contextWindow, `merge/remote branch (${label})`).toBe(FALLBACK_CONTEXT_WINDOW)
+
+      const wire: Parameters<typeof mergeTraeModelSources>[1] = [
+        { id: 'frac-wire', name: 'Frac Wire', contextWindow: value, usage: 'chat_completion', configSource: 1, function: 'solo_work_remote' },
+      ]
+      const promoted = mergeTraeModelSources([], wire)
+      expect(promoted.find(model => model.id === 'frac-wire')?.contextWindow, `merge/wire-promoted branch (${label})`).toBe(FALLBACK_CONTEXT_WINDOW)
+
+      const discovered = discoveredCatalog([remote])
+      expect(discovered[0]?.contextWindow, `discoveredCatalog (${label})`).toBe(FALLBACK_CONTEXT_WINDOW)
+    }
+    // And a SANE window is left exactly as published — a backstop, not a clamp.
+    const sane: TraeDiscoveredModel = { id: 'sane', name: 'Sane', multimodal: false, reasoningSupported: false, contextWindow: 168_000 }
+    expect(mergeTraeModelSources([sane], [{ id: 'sane', name: 'Sane' }])[0]?.contextWindow).toBe(168_000)
+    expect(discoveredCatalog([sane])[0]?.contextWindow).toBe(168_000)
   })
 })
 

@@ -42,7 +42,7 @@ import type { TraeAdapter } from './adapter.ts'
 import { isTraeAccountId, traeAccountId, TraeCredentialStore } from './auth.ts'
 import { piAiRuntimeInfo } from './pi-ai-runtime.ts'
 import type { TraeActivityDiscount } from './promo.ts'
-import { applyImageSelection, deriveCatalog, discoveredCatalog, FALLBACK_TRAE_MODELS, fallbackModelsFor, mergeTraeModelSources, sanitizeCatalog, TraeCatalog, traeInputModalities, traeModelDisplayName, withChatCallableFunctions, type TraeModelInfo } from './catalog.ts'
+import { applyImageSelection, deriveCatalog, discoveredCatalog, FALLBACK_CONTEXT_WINDOW, FALLBACK_TRAE_MODELS, fallbackModelsFor, mergeTraeModelSources, sanitizeCatalog, servedContextWindow, TraeCatalog, traeInputModalities, traeModelDisplayName, withChatCallableFunctions, type TraeModelInfo } from './catalog.ts'
 import { refreshTraeCredential, type TraeRefreshDevice } from './refresh.ts'
 import { readTraeIdentity, resolveTraeIdentity, type TraeIdentity } from './identity.ts'
 import { traeStorageCandidates, type TraeEdition } from './paths.ts'
@@ -116,7 +116,7 @@ export {
   type TraeRegion,
   type TraeRegionGateways,
 } from './region.ts'
-export { applyContextBudgets, applyImageSelection, deriveCatalog, discoveredCatalog, FALLBACK_TRAE_MODELS, FALLBACK_TRAE_MODELS_AI, fallbackModelsFor, isPromotableWireModel, mergeTraeModelSources, sanitizeCatalog, TraeCatalog, traeInputModalities, traeModelDisplayName, withChatCallableFunctions, type TraeContextBudget, type TraeInputModality, type TraeModelInfo, type TraeWireModel } from './catalog.ts'
+export { applyContextBudgets, applyImageSelection, deriveCatalog, discoveredCatalog, FALLBACK_CONTEXT_WINDOW, FALLBACK_TRAE_MODELS, FALLBACK_TRAE_MODELS_AI, fallbackModelsFor, isPromotableWireModel, mergeTraeModelSources, sanitizeCatalog, servedContextWindow, TraeCatalog, traeInputModalities, traeModelDisplayName, withChatCallableFunctions, type TraeContextBudget, type TraeInputModality, type TraeModelInfo, type TraeWireModel } from './catalog.ts'
 export { decryptTraeStorageValue, parseTraeAuthValue, parseTraeStorageDocument } from './decrypt.ts'
 export { identityHeaders, pickTraeStorageIdentity, readTraeCliIdentity, readTraeIdentity, resolveTraeIdentity, type TraeIdentity } from './identity.ts'
 export { parseObservedModelConfig, type TraeObservedModelConfig } from './model-config.ts'
@@ -2244,7 +2244,15 @@ export function apply(ctx: Context, config: Config): void {
         return next.map(model => ({
           id: model.id,
           name: traeModelDisplayName(model, withRate),
-          ...model.contextWindow === undefined ? {} : { contextWindow: model.contextWindow },
+          // ALWAYS present, and always a positive integer (#72). The host
+          // passes discovery rows through UNVALIDATED, and a model-management
+          // surface adopts one verbatim into a `models` entry — whose schema
+          // demands `step(1).min(1)` — so a raw passthrough here either ships
+          // the malformed value onward or (for a window the directory omitted)
+          // leaves the row unsized, which is exactly the #70 failure with the
+          // adapter bypassed. The adapter's own rows have carried the fallback
+          // since #70; discovery is the second exit toward DSH and had no guard.
+          contextWindow: servedContextWindow(model),
           ...model.maxTokens === undefined ? {} : { maxTokens: model.maxTokens },
           // Current dsh-llm discovery types do not yet declare this field, but
           // model-management consumers already understand it. Keep the value

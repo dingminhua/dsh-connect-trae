@@ -5,7 +5,7 @@ import { resolveRetryPolicy } from '@deepseek-ai/dsh-llm'
 import { PiAiAdapter } from '@deepseek-ai/dsh-llm-pi-ai'
 import type { ResolvedPiAiProviderProfile } from '@deepseek-ai/dsh-llm-pi-ai'
 import type { AttachmentStore } from '@deepseek-ai/dsh-attachment'
-import { traeInputModalities, traeModelDisplayName, type TraeCatalog, type TraeModelInfo } from './catalog.ts'
+import { FALLBACK_CONTEXT_WINDOW, servedContextWindow, traeInputModalities, traeModelDisplayName, type TraeCatalog, type TraeModelInfo } from './catalog.ts'
 import { piAiRuntimeInfo, type PiAiGeneration } from './pi-ai-runtime.ts'
 import type { TraeShim } from './shim.ts'
 import type { TraeRegion } from './region.ts'
@@ -111,37 +111,6 @@ const REQUEST_IMAGE_BUDGETS = {
   requestImagePixelBudget: 4_194_304,
   requestImageMaxBytes: 1_048_576,
 } as const
-
-/**
- * Conservative context capacity used only when a served model row carries no
- * window of its own. Every fallback row and every live Trae row is expected to
- * state its real window; this is the backstop that keeps one unsized row from
- * failing the entire provider route (`INVALID_MODEL_CONTEXT`).
- *
- * APPLIED IN {@link toPiModel}, NOT ONLY ON THE PROFILE. The profile's
- * `defaultContextWindow` is read by the kernel's catalog-resolution step, which
- * this plugin never runs: it builds its pi-ai provider BY HAND through
- * `createProvider({ models })`, and `Models.getModel()` then returns the raw
- * `toPiModel` row with no defaulting applied anywhere. Leaving the fallback on
- * the profile alone is what produced
- * `adapter returned invalid context metadata for provider "trae" model
- * "doubao_1.8"` — a row the live directory published without a window reached
- * DSH unsized and took the whole `trae` route down.
- */
-const FALLBACK_CONTEXT_WINDOW = 200_000
-
-/**
- * The window a served row is actually advertised with.
- *
- * Positive integers pass through untouched — a row's own window is never
- * second-guessed. Anything else (missing, `NaN`, `0`, a negative or a
- * fractional count from a malformed directory entry) falls back, because DSH
- * accepts ONLY a positive integer and rejects the entire provider otherwise.
- */
-function servedContextWindow(info: Pick<TraeModelInfo, 'contextWindow'>): number {
-  const window = info.contextWindow
-  return Number.isInteger(window) && (window as number) > 0 ? window as number : FALLBACK_CONTEXT_WINDOW
-}
 
 function toPiModel(info: TraeModelInfo, baseUrl: string, providerId: string, withRate = true): Model<Api> {
   return {

@@ -57,6 +57,48 @@ export interface TraeModelInfo {
 }
 
 /**
+ * Conservative context capacity used when a row must be advertised with a
+ * number but states no usable one of its own. Every fallback row and every
+ * live Trae row is expected to carry its real window; this is the backstop
+ * that keeps one unsized row from failing the entire provider route
+ * (`INVALID_MODEL_CONTEXT`).
+ *
+ * APPLIED AT EVERY EXIT TOWARD DSH, NOT ONLY IN THE ADAPTER. The pi-ai
+ * profile's `defaultContextWindow` is read by the kernel's catalog-resolution
+ * step, which this plugin never runs: it builds its provider BY HAND through
+ * `createProvider({ models })`, so `Models.getModel()` returns the raw
+ * `toPiModel` row with no defaulting applied anywhere. Leaving the fallback on
+ * the profile alone is what produced
+ * `adapter returned invalid context metadata for provider "trae" model
+ * "doubao_1.8"` — a row the live directory published without a window reached
+ * DSH unsized and took the whole `trae` route down (#70).
+ *
+ * The model-DISCOVERY callback is a second exit with no adapter in between
+ * (#72): the host passes its rows through UNVALIDATED, and a settings surface
+ * adopts one verbatim into a `models` entry, where the schema demands a
+ * positive integer. So this rule guards the row PRODUCERS here as well.
+ */
+export const FALLBACK_CONTEXT_WINDOW = 200_000
+
+/**
+ * The window a row is actually advertised with.
+ *
+ * Positive integers pass through untouched — a row's own window is never
+ * second-guessed. Anything else (missing, `NaN`, `0`, a negative or a
+ * fractional count from a malformed directory entry) falls back, because DSH
+ * accepts ONLY a positive integer and rejects the entire provider otherwise.
+ *
+ * The fractional case is not hypothetical: the parsers that fill these rows
+ * gate the field through `finitePositive`, which checks
+ * `Number.isFinite && > 0` and nothing about integer-ness, so a directory or
+ * wire roster publishing `200000.5` reaches here intact.
+ */
+export function servedContextWindow(info: Pick<TraeModelInfo, 'contextWindow'>): number {
+  const window = info.contextWindow
+  return Number.isInteger(window) && (window as number) > 0 ? window as number : FALLBACK_CONTEXT_WINDOW
+}
+
+/**
  * Bootstrap catalog: identity only where current Trae metadata has not been
  * fetched yet.
  *
@@ -507,7 +549,12 @@ export function mergeTraeModelSources(
       // its own roles: it owns the `config_name`, the function, the output
       // cap, the multiplier and the promotion rule.
       name: model.name,
-      ...model.contextWindow === undefined ? {} : { contextWindow: model.contextWindow },
+      // Omission stays legal here (the catalog may serve an unsized row and
+      // toPiModel backstops it); a PRESENT window is normalized, because a
+      // malformed directory value (0/negative/fractional/NaN — `finitePositive`
+      // checks none of those) would otherwise ride into a saved `lastCatalog`,
+      // where the settings schema rejects the whole write (#72).
+      ...model.contextWindow === undefined ? {} : { contextWindow: servedContextWindow(model) },
       ...model.maxContextWindow === undefined ? {} : { maxContextWindow: model.maxContextWindow },
       ...creditMultiplier === undefined ? {} : { creditMultiplier },
       ...activityDiscount === undefined ? {} : { activityDiscount },
@@ -618,7 +665,10 @@ export function mergeTraeModelSources(
     result.push({
       id: wireModel.id,
       name,
-      ...wireModel.contextWindow === undefined ? {} : { contextWindow: wireModel.contextWindow },
+      // Normalized like the remote branch: the wire's `prompt_max_tokens` /
+      // `context_window_tokens.dev` also pass through `finitePositive`, so a
+      // fractional window can arrive from `get_detail_param` too (#72).
+      ...wireModel.contextWindow === undefined ? {} : { contextWindow: servedContextWindow(wireModel) },
       ...wireModel.maxTokens === undefined ? {} : { maxTokens: wireModel.maxTokens },
       ...wireModel.creditMultiplier === undefined ? {} : { creditMultiplier: wireModel.creditMultiplier },
       ...wireModel.activityDiscount === undefined ? {} : { activityDiscount: wireModel.activityDiscount },
@@ -710,7 +760,9 @@ export function discoveredCatalog(models: readonly TraeDiscoveredModel[]): TraeM
     result.push({
       id: model.id,
       name: model.name,
-      ...model.contextWindow === undefined ? {} : { contextWindow: model.contextWindow },
+      // Same rule as mergeTraeModelSources: omission is allowed, a present but
+      // malformed window is normalized (#72).
+      ...model.contextWindow === undefined ? {} : { contextWindow: servedContextWindow(model) },
       ...model.maxContextWindow === undefined ? {} : { maxContextWindow: model.maxContextWindow },
       input: ['text'],
       ...model.creditMultiplier === undefined ? {} : { creditMultiplier: model.creditMultiplier },

@@ -1,5 +1,66 @@
 # Changelog
 
+## 4.6.12 (2026-10-31)
+
+> **4.6.11 的上下文窗口守卫补上了第二条出口。** issue #72 指出：#70 把兜底做进了
+> `toPiModel`（适配器出口），但 `registerModelDiscovery` 回调——模型发现走向 DSH 的
+> 另一条出口——仍把 `contextWindow` 原样透出，而宿主对发现行**不做任何校验**。一条
+> 畸形的目录行因此能绕过 #70。
+
+### 变更
+
+- **发现回调永远发出正整数窗口**（issue #72 的主点，`src/index.ts`）。
+  - **问题**：宿主 `discoverModels()` 只按 id 去重，`contextWindow`/`maxTokens`
+    原样透传；模型管理界面把发现行**逐字**采纳进 `models` 配置项，而那一项的 schema
+    要求 `step(1).min(1)`。所以原样透出意味着两件事之一：畸形值被带进下游，或者
+    （目录省略窗口时）行以「无窗口」抵达 DSH——正是 #70 的故障形态，只是绕开了
+    适配器。症状同为一条坏行 ⇒ `INVALID_MODEL_CONTEXT` ⇒ 整个区域离线。
+  - **改法**：回调改为永远发出 `contextWindow: servedContextWindow(model)`——
+    与适配器出口同一条规则、同一个兜底值（200 000）。两条「字段缺失即不发」的
+    分支合并成一条恒发字段，两个出口对同一行给出的值因此不可能分叉。
+- **目录层把「在场但畸形」归一化（三处），「省略」依旧合法**（issue #72 的后半 +
+  评审判断，`src/catalog.ts`）。
+  - `mergeTraeModelSources` 的目录分支、`mergeTraeModelSources` 的 wire 提升分支、
+    `discoveredCatalog` 各加一条 `servedContextWindow` 归一化：窗口缺失仍按缺失
+    上报（`tests/catalog.spec.ts` 里钉住这条既有契约的用例保持绿），但**在场**的
+    值必须是正整数，否则换成兜底。
+  - **为什么目录层也值得补**：上游解析门 `finitePositive` 只查 `isFinite && > 0`，
+    所以 `200000.5` 能活着走完解析；一个分数窗口若跟着目录行存进 `lastCatalog`，
+    会让**整次设置写入**被 schema 拒绝（`modelConfig` 的 `step(1).min(1)`）。
+    归一化留在生产侧，坏值就永远进不了持久化。
+  - **评审修正**：报告者建议 wire 提升分支不打守卫，理由是其上游
+    （`get_detail_param`）「结构上产不出畸形值」。核对该分支的取值链
+    `contextWindow = prompt_max_tokens ?? context_window_tokens.dev`——两个来源
+    都出自 `finitePositive`，分数值（如 `300000.5`）**能**从那里活着到达。
+    故本次三个出口一起补；`FALLBACK_CONTEXT_WINDOW` 与 `servedContextWindow`
+    自 `src/adapter.ts` 移入 `src/catalog.ts` 导出（无循环依赖），两处出口共用。
+  - **`maxTokens` 有意不动**：宿主对发现行的 `maxTokens` 同样不校验，但它的
+    校验发生在 `normalizeModelInfo`（`INVALID_MODEL_MAX_TOKENS`，适配器路径，
+    #70 已覆盖）；目录行里 `maxTokens` 畸形只影响「最大输出」展示，没有
+    `INVALID_*` 硬失败面。与 #70 的口径保持一致：本补丁只管上下文窗口。
+  - **未采纳（留待单独评估）**：把 `finitePositive` 收紧为 `finitePositiveInteger`
+    ——报告者自己标注的行为变更，会同时改变目录解析与 wire 解析的入站语义，
+    不适合作为一个守卫补丁的顺车。
+
+### 测试
+
+- 新增 **6** 例（1240 总例，较 4.6.11 净增 6）：
+  - **真实路径**（`tests/discovery-context-window.spec.ts`，5 例）：与
+    `tests/settings-integration.spec.ts` 同款宿主挂具（`LlmRuntime` +
+    0.1.7 形状的内存 settings + 临时 DSH_HOME + 临时 storage.json 凭据，含
+    `readTraeIdentity` 要求的 `telemetry.*` 身份字段），`vi.stubGlobal('fetch')`
+    桩出目录 / wire 花名册 / IDE 花名册三个端点，走
+    `ctx.llm.discoverModels(TRAE_SETTINGS_NS, { provider: 'trae' })` 断言宿主
+    **读回**的行：分数目录行 → 兜底、省略窗口行 → **显式**兜底（`Object.hasOwn`
+    钉住「恒发字段」）、正常 168 000 原样保留（兜底是背板不是钳位）、wire 提升
+    行的分数 `prompt_max_tokens` → 兜底、以及一条「所有行都是正整数」的全量扫描。
+  - **目录单元**（`tests/catalog.spec.ts`，1 例，覆盖
+    分数/0/负数/NaN × 三处出口 + 正常值不动）。
+- **变异验证**：把发现回调改回原样透出 → 真实路径 5 例中 2 例转红（全量扫描、
+  省略窗口）；把 `src/catalog.ts` 三处守卫改回原样 → 目录单元例转红。恢复守卫后
+  全绿。
+- 全仓 **1240** 例通过（97 文件），双 tsconfig 类型检查通过。
+
 ## 4.6.11 (2026-10-30)
 
 > **英文界面下的「最近刷新」不再显示成中文式的时间。** issue #71 里顺带提到的那点：
