@@ -19,6 +19,8 @@
 // `locale` from `dsh-client-locale`. `configForms` is NOT declared here — it
 // is read through `ctx.get()`, which needs no augmentation.
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
+import { createElement as h } from 'react'
+import type { JSX } from 'react'
 import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-slots'
@@ -29,8 +31,13 @@ import { ComposerPointsGate } from './ComposerPointsGate.tsx'
 import { TraeModelLabel } from './TraeModelLabel.tsx'
 import type { TraeUsageCardInjected } from './TraeUsageCard.tsx'
 import type { TraeCreditPosition } from '../status-paths.ts'
+import { TRAE_USAGE_PATH, withTraeRegion } from '../status-paths.ts'
 import { en, zh } from './locales.ts'
 import type { TraeSettingsKey } from './locales.ts'
+import { TRAE_PLUGIN_ICON } from './icon.ts'
+import {
+  setSidebarPanelWanted, sidebarPanelWanted, subscribeSidebarPanelWanted,
+} from './panel-switch.ts'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
@@ -282,6 +289,165 @@ export function apply(ctx: ClientContext): void {
     }
 
     registerModelLabel()
+
+    /**
+     * The sidebar glyph for the optional panel row.
+     *
+     * The host renders `sidebar.panellist` registrants with `{ size, active }`
+     * inside a `currentColor`-themed glyph cell, so the brand mark is drawn as a
+     * small `<img>` — the PNG's own colours read as the plugin's identity, and
+     * the row's selection state is the host's to paint around it.
+     */
+    function TraePanelIcon(props: { size?: number }): JSX.Element {
+      const edge = typeof props.size === 'number' && props.size > 0 ? props.size : 16
+      return h('img', {
+        className: 'dsm-trae-panel-icon',
+        src: TRAE_PLUGIN_ICON,
+        alt: '',
+        width: edge,
+        height: edge,
+        'aria-hidden': 'true',
+      })
+    }
+
+    /**
+     * Back to the conversation, for the page's header.
+     *
+     * Soft-probed: `layout` is a host service this entry deliberately does not
+     * declare in `inject` (an absent service keeps `apply` from running at all,
+     * and the page is useful without the back affordance). `selectPanel(null)` is
+     * the host's own way of handing the centre column back.
+     */
+    const backToConversation = (): void => {
+      const layout = softGet('layout') as { selectPanel?: (id: string | null) => void } | undefined
+      if (layout !== undefined && typeof layout.selectPanel === 'function') layout.selectPanel(null)
+    }
+
+    /**
+     * The Trae panel in the sidebar (`sidebar.panellist` row + `main` keyed
+     * page), mirroring the sibling `dsh-connect-workbuddy` panel and the host's
+     * own Plugins row.
+     *
+     * OPT-IN (`Config.sidebarPanel`, default false). Registering it is NOT the
+     * same as showing it: the host's sidebar builds the nav row from the slot's
+     * ENTRY METADATA, so a component returning `null` leaves a blank but still
+     * clickable button rather than no button. The row therefore has to be
+     * registered only while the switch is on, which is what
+     * {@link syncPanelRegistration} owns. See `panel-switch.ts` for the store
+     * that decision rides on.
+     */
+    const PANEL_ID = 'dsh-connect-trae'
+    const registerPanel = (): Array<() => void> => {
+      const disposers: Array<() => void> = []
+      try {
+        disposers.push(ctx.slots.inject('sidebar.panellist' as never, () => (ctx.slots as unknown as {
+          register(options: { name: string; id: string; order: number; label: () => string; locale: string }, component: unknown): () => void
+        }).register({
+          name: 'sidebar.panellist',
+          id: PANEL_ID,
+          // Below both shipped rows (the host's Plugins at 0 and the market at 1)
+          // and above Scheduled tasks (10): this is a usage readout, not a
+          // primary destination.
+          order: 2,
+          label: () => t('nav.panel'),
+          locale: namespace,
+        }, TraePanelIcon)))
+      } catch (error: unknown) {
+        console.error('[dsh-connect-trae] sidebar panel row failed to register (host provider unaffected):', error)
+      }
+      try {
+        disposers.push(ctx.slots.inject('main' as never, () => (ctx.slots as unknown as {
+          register(options: { name: string; key: string; locale: string; inject: () => TraeUsageCardInjected & { surface: 'page', backToConversation: () => void } }, component: unknown): () => void
+        }).register({
+          name: 'main',
+          key: PANEL_ID,
+          locale: namespace,
+          inject: () => ({ t, settingsScope, surface: 'page' as const, backToConversation }),
+        }, TraeUsageCard)))
+      } catch (error: unknown) {
+        console.error('[dsh-connect-trae] sidebar panel page failed to register (host provider unaffected):', error)
+      }
+      return disposers
+    }
+
+    /**
+     * The live panel registrations, kept SEPARATE from the settings slots.
+     *
+     * They are the only slots in this plugin that come and go while the page is
+     * open (the opt-in switch), so owning them apart means flipping the switch
+     * does not dispose and re-create the card, the composer readout and the
+     * model label — which would be a visible flicker for a change that has
+     * nothing to do with them.
+     */
+    let panelDisposers: Array<() => void> = []
+
+    /**
+     * Bring the panel registrations in line with the opt-in switch.
+     *
+     * Dispose FIRST, then register: a live `key`/`id` cannot be registered
+     * twice (the ledger is keyed), and the throw would be swallowed into "no
+     * entry at all".
+     */
+    const syncPanelRegistration = (): void => {
+      // LEAVE THE PAGE BEFORE ITS PANEL GOES. Disposing a `main` key while the
+      // centre column is dispatching it strands that column on nothing until the
+      // host notices; the host's own sidebar does this same step for the same
+      // reason, and so does the sibling market plugin. Everything is soft-probed,
+      // so a host without `layout` (or without `panelInfo`) simply skips it —
+      // such a host already drops an unresolvable panel id on its own.
+      if (panelDisposers.length > 0) {
+        const layout = softGet('layout') as {
+          selectPanel?: (id: string | null) => void
+          panelInfo?: { getSnapshot?(): { activePanelId?: unknown } }
+        } | undefined
+        try {
+          if (layout?.panelInfo?.getSnapshot?.()?.activePanelId === PANEL_ID) layout.selectPanel?.(null)
+        } catch { /* an unreadable panel id must not block the teardown */ }
+      }
+      for (const dispose of panelDisposers) {
+        try { dispose() } catch { /* already disposed by the slot service */ }
+      }
+      panelDisposers = []
+      if (!sidebarPanelWanted()) return
+      panelDisposers = registerPanel()
+    }
+
+    /**
+     * Follow the switch, and SEED it from the Host.
+     *
+     * The seed is a status read rather than the settings scope on purpose: this
+     * namespace's browser mirror is documented as stale on the affected 0.1.7
+     * deployments, and here a stale `false` would mean the row never appears —
+     * with no later event to correct it, because the mirror reports namespace
+     * edges, not value changes.
+     *
+     * A failed read is NOT an error to show: OFF is the documented default
+     * answer, so a plugin whose status route is unreachable simply gets no row.
+     *
+     * The SUBSCRIPTION is what makes the switch live: the card calls
+     * `setSidebarPanelWanted` after a verified write, so the row appears and
+     * disappears without a reload. The host's layout service drops an
+     * `activePanelId` whose `main` key has gone, so switching off while the page
+     * is open returns the centre column to the conversation on its own.
+     */
+    ctx.effect(
+      () => subscribeSidebarPanelWanted(syncPanelRegistration),
+      'dsh-connect-trae: sidebar panel opt-in',
+    )
+    // Reconcile once now: the store starts OFF, so this is a no-op until the
+    // Host's answer below (or a click on the card) turns it on. Called anyway so
+    // the panel set is never left describing a state nobody reconciled.
+    syncPanelRegistration()
+    void (async () => {
+      try {
+        const response = await fetch(withTraeRegion(TRAE_USAGE_PATH, 'cn'), {
+          headers: { accept: 'application/json' },
+        })
+        if (!response.ok) return
+        const document = await response.json() as { sidebarPanelEnabled?: unknown }
+        if (document.sidebarPanelEnabled === true) setSidebarPanelWanted(true)
+      } catch { /* no answer means no row; the switch stays off */ }
+    })()
 
   } catch (error: unknown) {
     // Degrade silently on the page: the host provider still serves models.

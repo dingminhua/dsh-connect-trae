@@ -460,6 +460,12 @@ export const en = {
   'row.poolRowDeleteNoCopy': '{accountName} had no plugin copy — only its Trae app login',
   'row.poolDeleteHint': 'The plugin keeps its own copy of every local Trae login (a copy is created on refresh unless one already exists) and only ever shows and bills those copies. Delete removes the copy AND signs that account out of Trae itself, leaving a backup of every file it rewrites; a deleted account is not re-imported while it stays signed in Trae. A running Trae would flush its own state back over the file, so quit it first — the card names the app it needs closed.',
   'row.cheer': 'Star on GitHub',
+  // The OPTIONAL sidebar row (see `Config.sidebarPanel`), ported from the
+  // sibling dsh-connect-workbuddy panel.
+  'nav.panel': 'Trae',
+  'row.pageBack': 'Back to conversation',
+  'row.sidebarPanelLabel': 'Show Trae in the sidebar',
+  'row.sidebarPanelHint': 'Adds a Trae row to the DSH sidebar that opens this card as a full page. Off by default: the row takes a global sidebar seat shared by every installed plugin, and the Plugins page already reaches the same content. Takes effect on the click — no Save needed — and switching it off while the page is open returns you to the conversation.',
 } as const
 
 export type TraeSettingsKey = keyof typeof en
@@ -883,4 +889,8 @@ export const zh: Record<TraeSettingsKey, string> = {
   'row.poolRowDeleteNoCopy': '{accountName} 没有插件副本——它只存在于 Trae 应用登录里',
   'row.poolDeleteHint': '本插件会为本机每个 Trae 登录各创建一份自己的副本（刷新时自动创建，已有副本则不动），卡片只显示、也只使用这些副本。「删除」会同时删掉副本并把该账号从 Trae 应用中退出登录，改写的每个文件都留一份备份；只要该账号还登录在 Trae 里，就不会被重新收录。Trae 正在运行时会把自己的状态回写到文件，所以要先完全退出——卡片会点名是哪个应用。',
   'row.cheer': '鼓励一下',
+  'nav.panel': 'Trae',
+  'row.pageBack': '返回会话',
+  'row.sidebarPanelLabel': '在侧边栏显示 Trae',
+  'row.sidebarPanelHint': '在 DSH 侧边栏加一个 Trae 行，点开就是这张卡片的整页版。默认关闭：这一行占的是所有插件共用的全局侧边栏座位，而「插件」页本来就能看到同样的内容。点一下即生效，不用保存；页面开着时关掉它，会直接回到会话。',
 }

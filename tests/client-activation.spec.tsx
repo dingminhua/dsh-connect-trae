@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { Context, Service } from '@deepseek-ai/cordis'
 
 import * as clientEntry from '../src/client/index.tsx'
+import { resetSidebarPanelWanted, setSidebarPanelWanted } from '../src/client/panel-switch.ts'
 
 /**
  * Boots the REAL client entry against a simulated host line.
@@ -28,7 +29,16 @@ import * as clientEntry from '../src/client/index.tsx'
 class Slots extends Service {
   readonly registrations: { name: string; key: string }[] = []
   constructor(owner: Context) { super(owner, 'slots') }
-  inject(_name: string, callback: () => void): void { callback() }
+  /**
+   * Mirrors the real service faithfully in ONE respect that matters here: the
+   * callback's return value becomes this call's disposer. The sidebar panel
+   * registration is kept as `push(ctx.slots.inject(...))`, so a double that
+   * dropped it would leave "turned off again" indistinguishable from
+   * "never registered" — the exact distinction the opt-in switch is about.
+   */
+  inject(_name: string, callback: () => void | (() => void)): () => void {
+    return (callback() as (() => void) | undefined) ?? (() => {})
+  }
   /**
    * The real 0.1.7 registry takes a slot's identity as `id` for the
    * conversation slots and as `key` for the plugin-config card slots — the
@@ -38,8 +48,16 @@ class Slots extends Service {
    * used the other spelling.
    */
   register(options: { name: string; key?: string; id?: string }): () => void {
-    this.registrations.push({ name: options.name, key: options.key ?? options.id ?? '' })
-    return () => {}
+    const entry = { name: options.name, key: options.key ?? options.id ?? '' }
+    this.registrations.push(entry)
+    // The REAL registry removes the entry when its disposer runs, and the
+    // sidebar panel rides on exactly that (the opt-in switch disposes rather
+    // than hiding). A double that only pushed would make "turned off again"
+    // indistinguishable from "never registered".
+    return () => {
+      const index = this.registrations.indexOf(entry)
+      if (index >= 0) this.registrations.splice(index, 1)
+    }
   }
 }
 
@@ -205,5 +223,49 @@ describe('client entry activation on 0.1.7', () => {
 
     spy.mockRestore()
     await ctx.fiber.dispose()
+  })
+
+  /**
+   * The OPTIONAL sidebar panel, exercised through the REAL `apply()`.
+   *
+   * The store gate is what keeps the row off by default, and the panel row is
+   * built from slot ENTRY METADATA — so "off" has to mean NO registration, not a
+   * component returning null (which would leave a blank, still-clickable nav
+   * button). Driving the store and watching the registry is the only way to see
+   * that difference from outside.
+   */
+  it('registers the sidebar row and page only while the opt-in store says so', async () => {
+    const errors: unknown[] = []
+    const spy = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => { errors.push(args) })
+    resetSidebarPanelWanted()
+
+    const ctx = await boot([Slots, Locale, ConfigForms])
+    const fiber = ctx.plugin(clientEntry as unknown as PluginShape)
+    await vi.waitFor(() => { expect(fiber.state).toBe(2) })
+    const slots = ctx.get('slots') as unknown as Slots
+
+    const panelEntries = () => slots.registrations.filter(entry =>
+      entry.name === 'sidebar.panellist' || entry.name === 'main')
+    // OFF by default: no row, no page.
+    expect(panelEntries()).toEqual([])
+
+    // The switch turns BOTH on, sharing one id (the row addresses the page by
+    // list id, so mismatched ids would open nothing), and without a reload.
+    setSidebarPanelWanted(true)
+    await vi.waitFor(() => { expect(panelEntries().length).toBe(2) })
+    expect(panelEntries()).toEqual([
+      { name: 'sidebar.panellist', key: 'dsh-connect-trae' },
+      { name: 'main', key: 'dsh-connect-trae' },
+    ])
+
+    // And back off again: the entry disposes rather than hiding.
+    setSidebarPanelWanted(false)
+    await vi.waitFor(() => { expect(panelEntries()).toEqual([]) })
+
+    expect(errors).toHaveLength(0)
+
+    spy.mockRestore()
+    await ctx.fiber.dispose()
+    resetSidebarPanelWanted()
   })
 })

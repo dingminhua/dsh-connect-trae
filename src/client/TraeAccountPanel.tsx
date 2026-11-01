@@ -89,6 +89,17 @@ export interface TraeAccountPanelProps {
   /** The "show the credit readout" preference, committed plus in-flight. */
   showPointsInMainUi: boolean
   onToggleShowPoints(value: boolean): void
+  /**
+   * The OPTIONAL sidebar row (`Config.sidebarPanel`), committed plus in-flight,
+   * and its writer.
+   *
+   * REGION-AGNOSTIC, like the credit switch above: the row is one global seat
+   * for the whole plugin, so it is offered on whichever tab the user happens to
+   * be on and is never duplicated per region.
+   */
+  sidebarPanelOn: boolean
+  sidebarPanelBusy: boolean
+  onToggleSidebarPanel(value: boolean): void
   /** Where the readout sits for THIS panel. */
   creditPosition: TraeCreditPosition
   onCreditPositionChange(position: TraeCreditPosition): void
@@ -202,6 +213,7 @@ function ClaimCell({ claim, onClaim, t }: {
 export function TraeAccountPanel({
   t, settingsScope, panel, status, statusLabel, credentialRegionIsAi, regionOn,
   showPointsInMainUi, onToggleShowPoints, creditPosition, onCreditPositionChange,
+  sidebarPanelOn, sidebarPanelBusy, onToggleSidebarPanel,
   savingPreferences, creditsLabelId, creditsHintId,
   rows, busy, rescanNote, onRescan, switchingAccount, onSwitchAccount, onClaim, onTransferChanged,
   poolDetails, poolClaims, models, deviceClaimed, onPoolChanged, onPoolRefresh,
@@ -277,6 +289,33 @@ export function TraeAccountPanel({
               </select>
             </span>
             <span className="dsm-trae-pref-hint">{t('row.creditPositionHint')}</span>
+          </span>
+        </label>
+        {/* THE OPTIONAL SIDEBAR ROW (learned from dsh-connect-workbuddy's PR
+            #188, which made the same seat opt-IN after shipping it
+            unconditional).
+
+            A bare line like its two siblings above, for the reason the block's
+            own comment gives: it writes on the click, so there is no Save to
+            remember. It is deliberately NOT gated on `regionOn` or on a sign-in —
+            the row belongs to the whole plugin, and a signed-out card is exactly
+            where someone may still want the page it opens.
+
+            Its own accessible name (the localized label) is what a test should
+            select on, rather than a second class: the box is the same control as
+            its siblings, and an extra hook would be a stylesheet entry nobody
+            needs. */}
+        <label className="dsm-trae-pref" title={t('row.sidebarPanelHint')}>
+          <input
+            type="checkbox"
+            className="dsm-trae-pref-check"
+            checked={sidebarPanelOn}
+            disabled={sidebarPanelBusy || savingPreferences}
+            onChange={event => { onToggleSidebarPanel(event.currentTarget.checked) }}
+          />
+          <span className="dsm-trae-pref-copy">
+            <span className="dsm-trae-pref-label">{t('row.sidebarPanelLabel')}</span>
+            <span className="dsm-trae-pref-hint">{t('row.sidebarPanelHint')}</span>
           </span>
         </label>
       </div>

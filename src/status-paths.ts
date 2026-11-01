@@ -1417,6 +1417,16 @@ export type TraeWebUsage =
     /** A recognized-but-unserved region on this machine (issue #66). */
     unsupportedRegion?: TraeWebUnsupportedRegion
     enabled?: boolean
+    /**
+     * Whether the OPTIONAL sidebar row is switched on (`Config.sidebarPanel`).
+     *
+     * GLOBAL and present on BOTH shapes: the row belongs to the plugin, not to
+     * a region or an account, and a signed-out card is still somewhere the user
+     * may want the page it opens. Absent reads as OFF — the entry seeds its
+     * registration from this answer, and the row claims a seat every bundle
+     * shares, so a Host that cannot answer must never turn it on.
+     */
+    sidebarPanelEnabled?: boolean
   }
   | {
     status: 'signed-in'
@@ -1434,6 +1444,8 @@ export type TraeWebUsage =
     region: TraeRegion
     /** Whether this region's provider is currently offered to DSH. */
     enabled?: boolean
+    /** See the signed-out shape: GLOBAL, absent reads as OFF. */
+    sidebarPanelEnabled?: boolean
     accounts: readonly TraeWebAccount[]
     models: readonly TraeWebModel[]
     enabledModelIds: readonly string[]

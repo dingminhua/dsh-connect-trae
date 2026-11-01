@@ -47,7 +47,13 @@ describe('traeWebUsage', () => {
       async quarantinedCopies() { return [] },
     }) as unknown as ReturnType<TraeUsageRouteOptions['store']>
     const result = await traeWebUsage(deps, 'cn')
-    expect(result).toEqual({ status: 'signed-out', accounts: [], enabled: true, quarantined: [], searched: [] })
+    // `sidebarPanelEnabled` rides on every shape, signed-out included: the
+    // optional sidebar row belongs to the plugin rather than to an account, and
+    // it reads OFF both when the Host answers `false` and when it cannot answer
+    // at all (this fixture declares no `sidebarPanelEnabled` dep).
+    expect(result).toEqual({
+      status: 'signed-out', accounts: [], enabled: true, sidebarPanelEnabled: false, quarantined: [], searched: [],
+    })
   })
 
   it('tells a signed-out user which copy was quarantined', async () => {
@@ -191,6 +197,56 @@ describe('traeWebUsage', () => {
     // Credits and check-in are two independent reads, so the card document
     // costs exactly two upstream calls.
     expect(call).toBe(2)
+  })
+
+  /**
+   * The OPTIONAL sidebar row's switch rides on the status document, GLOBAL and
+   * on every shape (see `Config.sidebarPanel`).
+   *
+   * It has to be the status document rather than the settings mirror because
+   * this namespace's browser mirror is documented as stale on the affected
+   * 0.1.7 deployments: the entry seeds its registration from this answer at
+   * apply time, and a stale `false` there would hide a row the Host is serving
+   * with no later event to correct it.
+   *
+   * `=== true` in both directions, because the row claims a GLOBAL sidebar seat
+   * every installed bundle shares: an absent answer (an older Host) is not
+   * consent, and a `"true"` typo in the config file is not either.
+   */
+  it('carries the sidebar-row switch on every shape, and only an explicit true turns it on', async () => {
+    const fetchImpl = async (input: string | URL | Request) => {
+      const url = String(input)
+      if (url.endsWith('/web_user_ent_usage')) {
+        return new Response(JSON.stringify({
+          is_credits_billing: true,
+          is_dollar_usage_billing: false,
+          is_pay_freshman: true,
+          trial_status: { is_in_trial: false, trial_end_time: 0 },
+          usage_summary: { total_amount: 100, consumed_amount: 0, consumption_ratio: 0 },
+          user_entitlement_pack_list: [],
+        }), { status: 200 })
+      }
+      if (url.endsWith('/checkin_credits/status')) {
+        return new Response(JSON.stringify({ checked_in: false, code: 0, credits: 150, did_checked_in: false, enable: true, extra_credits: 50 }), { status: 200 })
+      }
+      throw new Error(`unexpected fetch: ${url}`)
+    }
+    // Absent dep → OFF (this is the older-Host case).
+    const withoutDep = await traeWebUsage(makeRoute({ fetchImpl }), 'cn')
+    expect(withoutDep.status).toBe('signed-in')
+    expect(withoutDep).toMatchObject({ sidebarPanelEnabled: false })
+
+    // Declared ON → the document says so.
+    const onDeps = makeRoute({ fetchImpl })
+    onDeps.sidebarPanelEnabled = () => true
+    const on = await traeWebUsage(onDeps, 'cn')
+    expect(on).toMatchObject({ sidebarPanelEnabled: true })
+
+    // Declared OFF → OFF, and a signed-out machine is told too: the row belongs
+    // to the plugin, not to an account.
+    const offDeps = makeRoute({ fetchImpl })
+    offDeps.sidebarPanelEnabled = () => false
+    expect(await traeWebUsage(offDeps, 'cn')).toMatchObject({ sidebarPanelEnabled: false })
   })
 
   it('keeps discovered candidates separate from the saved runtime list', async () => {

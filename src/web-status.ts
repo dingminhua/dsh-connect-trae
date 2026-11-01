@@ -118,6 +118,22 @@ export interface TraeUsageRouteOptions {
    * committed settings value rather than a local guess.
    */
   regionEnabled(panel: TraePanel): boolean
+  /**
+   * Whether the OPTIONAL sidebar row is switched on, GLOBAL rather than
+   * per-panel.
+   *
+   * Optional, and `=== true` at the reading site: the row is a property of the
+   * whole plugin, not of one region, and an absent answer (an older Host, a
+   * stack that failed to build) must read as OFF — the row claims a seat every
+   * bundle shares, so a missing answer is never consent.
+   *
+   * It rides on the usage document because that is the read the browser entry
+   * already makes at apply() time: the namespace's settings mirror is
+   * documented as stale on the affected 0.1.7 deployments, so seeding the
+   * switch from the Host's own answer is what keeps a stale `false` from
+   * hiding a row the Host believes it is serving.
+   */
+  sidebarPanelEnabled?(): boolean
   /** Re-read one region's live directory from the upstream. */
   discoverModels?(panel: TraePanel, signal?: AbortSignal): Promise<readonly TraeModelInfo[]>
   /**
@@ -563,6 +579,18 @@ export async function traeWebUsage(
   const store = deps.store(panel)
   const enabled = deps.regionEnabled(panel)
   /**
+   * GLOBAL, read once per answer and repeated on every panel: the card polls
+   * one region at a time, so the sidebar switch has to be present on whichever
+   * tab is open. `=== true` for the same reason as every opt-in switch here —
+   * the row claims a seat every bundle shares, so an absent answer (an older
+   * Host that cannot answer) must never read as "the user asked for this".
+   *
+   * The signed-OUT branches below carry it too: the row is a property of the
+   * plugin, not of a signed-in account, and a signed-out card is exactly where
+   * a user may still want the page it opens.
+   */
+  const sidebarPanelEnabled = deps.sidebarPanelEnabled?.() === true
+  /**
    * Accounts this panel may actually bill.
    *
    * Filtered ONCE, at the source, because this list is spliced into every
@@ -616,6 +644,7 @@ export async function traeWebUsage(
       status: 'signed-out',
       accounts,
       enabled,
+      sidebarPanelEnabled,
       quarantined,
       ...unsupportedRegion === undefined ? {} : { unsupportedRegion },
       searched: failures.map(failure => ({
@@ -653,6 +682,7 @@ export async function traeWebUsage(
       status: 'signed-out',
       accounts,
       enabled,
+      sidebarPanelEnabled,
       quarantined,
       ...unsupportedRegion === undefined ? {} : { unsupportedRegion },
       ...explained ? {} : { message: safeMessage(error) },
@@ -673,6 +703,9 @@ export async function traeWebUsage(
     ...credential.refreshExpiresAtMs === undefined ? {} : { refreshExpiresAtMs: credential.refreshExpiresAtMs },
     region: regionOfPanel(panel),
     enabled,
+    // GLOBAL on every signed-in shape too, because it is spread into all of
+    // them; see the reading site above for why it is `=== true`.
+    sidebarPanelEnabled,
     ...unsupportedRegion === undefined ? {} : { unsupportedRegion },
     accounts,
     models: deps.displayModels(panel).map(model => ({ ...model, ...model.input === undefined ? {} : { input: [...model.input] } })),

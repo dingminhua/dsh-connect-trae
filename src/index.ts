@@ -313,6 +313,22 @@ export interface Config {
    */
   showPointsInMainUi?: boolean
   /**
+   * Show this plugin's own row in the DSH sidebar (`sidebar.panellist`), which
+   * opens the usage card as a full `main` page.
+   *
+   * OFF by default, for exactly the reason the sibling
+   * `dsh-connect-workbuddy` row is off by default (its PR #188 /
+   * `Config.sidebarPanel`): the sidebar's global rows are the host's own pages,
+   * the row claims a seat every installed bundle shares, and the Plugins page
+   * already reaches this same card. A row nobody asked for re-arranges a
+   * surface the plugin does not own.
+   *
+   * The card's checkbox is the only writer (see `panel-switch.ts` on the
+   * browser side, and `sidebarPanelEnabled` on the status document, which is
+   * where the entry seeds the switch at page load).
+   */
+  sidebarPanel?: boolean
+  /**
    * Per-region model state, keyed `cn` | `ai`. The CN and international apps
    * expose different rosters, so each keeps its own directory and selection
    * and switching accounts never drops the other region's picks.
@@ -399,6 +415,22 @@ export function regionEnabled(config: Config, panel: TraePanel): boolean {
  */
 export function creditPosition(config: Config, region: TraeRegion): TraeCreditPosition {
   return regionStateOf(config, region).creditPosition === 'stats' ? 'stats' : 'composer'
+}
+
+/**
+ * Whether the OPTIONAL sidebar row is switched on (`Config.sidebarPanel`).
+ *
+ * `=== true` on purpose, exactly like the sibling workbuddy reader: the row
+ * claims a GLOBAL sidebar seat every installed bundle shares, so an absent,
+ * unreadable or hand-edited value must read as "the user did not ask for this",
+ * never as consent. Only an explicit boolean `true` turns the row on.
+ *
+ * Read through `unwrapVolatile` because the field is volatile on 0.1.7: the
+ * live `{get(): T}` reference would otherwise be a truthy non-boolean and every
+ * config would look switched on.
+ */
+export function sidebarPanelEnabled(config: Config): boolean {
+  return unwrapVolatile(config.sidebarPanel) === true
 }
 
 /**
@@ -545,6 +577,18 @@ export const Config: z<Config> = z.object({
   // OFF by default, matching the stated preference for the sidebar line: a row
   // inside the shared composer toolbar is something to ask for, not to impose.
   showPointsInMainUi: asVolatile(z.boolean().default(false).description('在输入框工具栏显示积分读数「Trae CN · <数值>」（仅当选中的模型属于本插件时出现，可点击查看账号与积分明细）')),
+  // The opt-in sidebar row (see `Config.sidebarPanel`). Volatile for the same
+  // reason as the block above: the card's checkbox writes it, and a full plugin
+  // reload — which disposes both provider stacks and drops in-flight requests —
+  // would be a wildly disproportionate price for adding one nav row.
+  //
+  // OFF by default: the row claims a GLOBAL sidebar seat every installed bundle
+  // shares, and the Plugins page already reaches this card.
+  sidebarPanel: asVolatile(
+    z.boolean()
+      .default(false)
+      .description('在 DSH 侧边栏显示「Trae」面板：点开是这张卡片的整页版。默认关闭——这一行占的是所有插件共用的全局侧边栏座位，而「插件」页本来就能看到同样的内容。点一下即生效，不用保存。'),
+  ) as unknown as z<boolean>,
   accounts: asVolatile(accountSelectionConfig.description('Per-panel account selections, keyed cn | enterprise | ai')) as z<Partial<Record<TraePanel, string>>>,
   regions: asVolatile(z.dict(regionStateConfig).default({}).description('Per-panel model directory and selection, keyed cn | enterprise | ai')),
   lastCatalog: z.array(modelConfig).description('Deprecated: pre-region-split CN model directory') as z<TraeModelInfo[]>,
@@ -1852,6 +1896,13 @@ export function apply(ctx: Context, config: Config): void {
     displayModels: panel => displayModels(current(), panel),
     enabledModelIds: panel => regionStateOf(current(), panel).enabledModelIds ?? [],
     regionEnabled: panel => regionEnabled(current(), panel),
+    // The OPTIONAL sidebar row's switch. Deliver it on the status document
+    // because that is the read the browser entry already makes at apply time:
+    // this namespace's settings mirror is documented as stale on the affected
+    // 0.1.7 deployments, and here a stale `false` would mean the row never
+    // appears — with no later event to correct it, since the mirror reports
+    // namespace edges, not value changes.
+    sidebarPanelEnabled: () => sidebarPanelEnabled(current()),
     discoverModels: (panel, signal) => stacks[panel].discoverModels(signal),
     probeModels: async (panel, ids) => {
       await warmWireMap(panel)

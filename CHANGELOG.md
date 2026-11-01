@@ -1,5 +1,47 @@
 # Changelog
 
+## 4.7.0 (2026-11-02)
+
+> **Trae 现在可以放进侧边栏了 —— 可选，默认关闭。** 学同族
+> `dsh-connect-workbuddy` 的做法（其 PR #188）：在卡片「设置」区多一个
+> 「在侧边栏显示 Trae」勾选框，勾上之后 DSH 侧边栏出现一个 Trae 行，点开是
+> **同一张卡片的整页版**。
+
+### 变更
+
+- **可选侧边栏面板**（`Config.sidebarPanel`，`src/index.ts` / `src/client/`）。
+  - **默认关闭，理由不是保守而是知情**：侧边栏的全局行（`sidebar.panellist`）
+    是宿主自己的页面，这一行占的是**所有已安装插件共用**的座位；而「插件」页
+    本来就能看到同样的卡片。一行没人要求的导航会改变一个插件并不拥有的界面，
+    所以它必须是用户点出来的，不是升级带上来的。
+  - **注册与注销，而不是渲染成 null**：侧边栏的导航行是从**插槽条目元数据**
+    生成的（`options.label` + `renderSlot(...)` 作图标），组件返回 `null`
+    只会留下一个空白但仍可点击的按钮。所以开关驱动的是注册/注销本身：
+    `panel-switch.ts` 里的模块级 store，`apply()` 订阅它并 reconcile。
+  - **不需要刷新页面**：卡片在写入被读回确认之后才 `setSidebarPanelWanted()`，
+    行随即出现或消失。页面开着时关掉，中心栏由宿主的 `layout` 自动回到会话
+    （`retainMainPanels` 会丢弃已不存在的 `main` key）。
+  - **开机时以宿主答案为准**：开关的种子取自状态文档上的 `sidebarPanelEnabled`，
+    而不是设置镜像——这个命名空间的浏览器镜像是**已知会在受影响的 0.1.7 部署上
+    过期**的，在这里过期的 `false` 意味着「行永远不出现」，且没有任何后续事件会
+    纠正它（镜像报的是命名空间边，不是值变化）。
+  - **整页版复用同一份 body**：`TraeUsageCard` 新增 `surface: 'page'` 与
+    `backToConversation`，两处渲染的是同一棵组件树（地区页签、分栏、轮询、
+    草稿、账号池日志），只有外层卡片框换成页面标题栏——复制一份组件树就是复制
+    一处将来会漂移的代码。返回按钮走宿主 `layout.selectPanel(null)`，宿主没有
+    这个服务时**不画**，而不是画一个点不动的。
+  - **新增文案 4 条**（`nav.panel` / `row.pageBack` / `row.sidebarPanelLabel` /
+    `row.sidebarPanelHint`），中英各一份。
+- **配图**：新增 `docs/assets/dsh-connect-trae-sidebar-page.png`（整页版真实渲染，
+  由 `tools/page-shot.tsx` 生成、headless Chrome 实测），中英 README 各挂一张。
+- **测试**：新增 `tests/sidebar-panel-optin.spec.tsx`（17 条）钉住四件事——
+  默认关闭（schema 与两个读取点）、关闭时不注册任何行/页、开关能来回切而不刷新、
+  卡片与宿主状态文档两侧都落实；`tests/client-activation.spec.tsx` 增加一条用
+  **真实 `apply()`** 驱动 store 并观察插槽注册表（含注销）的用例——为此把该文件
+  里的 `Slots` 替身改成**忠实返回 disposer**（替身若只 push，会让「关掉之后」
+  和「从未注册」无法区分，而这正是这个开关要区分的东西）；`tests/web-status.spec.ts`
+  增加「两个形状都带这个字段，且只有显式 true 才算开」的用例。
+
 ## 4.6.12 (2026-10-31)
 
 > **4.6.11 的上下文窗口守卫补上了第二条出口。** issue #72 指出：#70 把兜底做进了

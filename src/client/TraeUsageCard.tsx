@@ -42,6 +42,7 @@ import type { TraeAccountRowView } from './TraeAccountPanel.tsx'
 import type { TraePoolRowDetail } from './AccountPool.tsx'
 import { dotStyle, formatDateTime, formatNumber, refreshTokenWarning } from './display.ts'
 import { planVerdict as payVerdict } from './plan-text.ts'
+import { setSidebarPanelWanted, sidebarPanelEnabledOf } from './panel-switch.ts'
 import type { TraeSettingsKey } from './locales.ts'
 
 /**
@@ -89,6 +90,26 @@ export type TraeUsageCardProps = Partial<TraeUsageCardInjected> & {
    * `page` is the full form with its own save control; `summary` is a
    * one-liner. An absent `view` starts the card collapsed. */
   view?: 'summary' | 'page'
+  /**
+   * Which SURFACE this card is drawn on.
+   *
+   * `card` (the default, and every settings-page registration) is the
+   * collapsible `<li>` the Plugins page renders. `page` is the full-page body
+   * behind the OPTIONAL sidebar row (`sidebar.panellist` + `main`): a page has
+   * no card chrome to collapse, so it always renders expanded and draws its own
+   * header instead.
+   *
+   * The distinction is a prop rather than two components because the body must
+   * stay ONE tree: the region tabs, the polling, the drafts and the pool log
+   * are identical on both surfaces, and a second component would be a copy that
+   * drifts.
+   */
+  surface?: 'card' | 'page'
+  /** Back to the conversation, offered by the page header. Supplied by the
+   * browser entry (it soft-probes the host's `layout` service); absent on a
+   * host that does not declare one, and the affordance is then omitted rather
+   * than drawn dead. */
+  backToConversation?: () => void
 }
 
 const POLL_INTERVAL_MS = 60_000
@@ -295,12 +316,20 @@ function promoBadge(
 
 
 /** Render Trae sign-in state and the total usage summary as one expandable card. */
-export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
+export function TraeUsageCard({ t, settingsScope, view, surface, backToConversation }: TraeUsageCardProps) {
   if (t === undefined) throw new Error('Trae usage card requires its translation function')
+  /**
+   * A PAGE surface (the optional sidebar row's `main` panel) has no card chrome
+   * to collapse: it is always expanded, and the collapse button is not rendered,
+   * so `setOpen` is simply unused there. Keeping ONE `open` value lets every
+   * polling effect below stay untouched.
+   */
+  const pageSurface = surface === 'page'
   // The plugin manager opens the card as a full page (its own save control)
   // when it asks for `view: 'page'`; absent a view, start collapsed so a
   // summary row stays a one-liner.
-  const [open, setOpen] = useState(view === 'page')
+  const [cardOpen, setCardOpen] = useState(view === 'page')
+  const open = pageSurface || cardOpen
   /** The region whose tab is on screen; each tab is its own provider stack. */
   const [activeRegion, setActiveRegion] = useState<TraePanel>('cn')
   /**
@@ -447,6 +476,18 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
    * the control would flip and then quietly snap back on the next snapshot.
    */
   const [writeError, setWriteError] = useState<string | undefined>(undefined)
+  /**
+   * The optional sidebar row's switch (see `Config.sidebarPanel`).
+   *
+   * `undefined` means "no local flip in flight": the box then renders the
+   * committed value from the settings document, or — when that namespace is not
+   * served yet — the Host's own answer on the usage document. Both are read here
+   * rather than echoed from local state for the reason every other switch in
+   * this card reads them: a write made elsewhere (the DSH settings form, another
+   * window) must show up instead of being shadowed by a stale copy.
+   */
+  const [sidebarPanelEdit, setSidebarPanelEdit] = useState<boolean | undefined>(undefined)
+  const [sidebarPanelBusy, setSidebarPanelBusy] = useState(false)
   const mounted = useRef(true)
 
   useEffect(() => {
@@ -525,6 +566,53 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
         setSettingsRevision(revision => revision + 1)
       }
       if (mounted.current) setSavingSettings(false)
+    }
+  }
+
+  /**
+   * Flip the OPTIONAL sidebar row on or off (`Config.sidebarPanel`).
+   *
+   * Two things happen on a verified write, and BOTH are required:
+   *
+   *  1. the settings document is updated through `writeSettingsField`, which
+   *     read-back checks — a switch that only *looks* on while the Host
+   *     disagrees would leave a nav row that vanishes on the next reload;
+   *  2. {@link setSidebarPanelWanted} publishes the value, which is what makes
+   *     the registration appear or disappear WITHOUT a reload. The row is built
+   *     from slot ENTRY METADATA, so it cannot be hidden from inside the
+   *     component — the entry has to register or dispose, and it subscribes to
+   *     that store.
+   *
+   * Serialized by its own `sidebarPanelBusy` rather than `savingSettings`: this
+   * write touches one scalar, and making it share the credit switch's veil would
+   * grey the whole card out for a nav-row toggle.
+   *
+   * A NOT-writable scope still flips the store. That is deliberate: the row is a
+   * client-side registration, and a read-only host (no settings form bound yet)
+   * would otherwise leave the user no way to open the page at all. The box reads
+   * committed-or-Host value, so the next snapshot is what the user sees.
+   */
+  const writeSidebarPanel = async (value: boolean): Promise<void> => {
+    if (sidebarPanelBusy) return
+    setSidebarPanelBusy(true)
+    setWriteError(undefined)
+    setSidebarPanelEdit(value)
+    try {
+      if (settingsScope !== undefined && settingsScope.getSnapshot().writable === true) {
+        await writeSettingsField(settingsScope, 'sidebarPanel', value,
+          readBack => sidebarPanelEnabledOf(readBack) === value)
+      }
+      setSidebarPanelWanted(value)
+    } catch (error: unknown) {
+      if (mounted.current) setWriteError(error instanceof Error ? error.message : t('row.requestFailed'))
+    } finally {
+      // Drop the local flip either way: on success the committed value (or the
+      // Host's answer) now agrees with it, and on failure the truth is what the
+      // box must show.
+      if (mounted.current) {
+        setSidebarPanelEdit(undefined)
+        setSidebarPanelBusy(false)
+      }
     }
   }
 
@@ -1693,6 +1781,799 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
         ? t('row.requestFailed')
         : t('row.signedOut')
 
+  /**
+   * Whether the sidebar row's box is ticked.
+   *
+   * Precedence: an in-flight flip, then the committed settings value when this
+   * namespace is actually served, then the HOST's answer on the usage document.
+   * The Host is the fallback rather than the first source because the card can
+   * be bound before the mirror settles; it is consulted at all because that
+   * mirror is documented as stale on the affected 0.1.7 deployments, so a stale
+   * `false` alone would make a served row look switched off.
+   */
+  const sidebarPanelOn = sidebarPanelEdit
+    ?? (settingsScope === undefined
+      ? undefined
+      : sidebarPanelEnabledOf(unwrapVolatileDeep(settingsScope.getSnapshot().value)))
+    ?? ((loaded as { sidebarPanelEnabled?: unknown } | undefined)?.sidebarPanelEnabled === true)
+
+  /**
+   * The body BOTH surfaces draw: the region tabs, the section tabs and every
+   * section below them.
+   *
+   * Kept as one value because a page duplicate would be a copy that drifts —
+   * the SURFACE changes the chrome around this tree, nothing inside it.
+   */
+  const cardBody = (
+    <div className="dsm-trae-usage">
+      <div className="dsm-trae-tabs" role="tablist" aria-label={title}>
+        {TRAE_PANELS.map(item => {
+          const regionStatus = statusByRegion[item]
+          const on = regionOn(item)
+          return (
+            // The switch lives beside the tab, never inside it: a
+            // checkbox nested in a <button role="tab"> is invalid HTML
+            // and its click would be swallowed by the tab handler
+            // (switching tabs instead of toggling the provider). The
+            // presentational wrapper keeps the tablist/tab relationship
+            // intact for assistive technology.
+            <div className="dsm-trae-tab-cell" role="presentation" key={item}>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={item === activeRegion}
+                className={`dsm-trae-tab${item === activeRegion ? ' dsm-trae-tab-active' : ''}${on ? '' : ' dsm-trae-tab-off'}`}
+                onClick={() => { setActiveRegion(item) }}
+              >
+                {regionStatus === undefined
+                  ? null
+                  : <span aria-hidden="true" className="dsm-trae-tab-dot" style={dotStyle(regionStatus.status)} />}
+                {item === 'cn' ? t('row.tabCn') : item === 'enterprise' ? t('row.tabEnterprise') : t('row.tabAi')}
+              </button>
+              {/* Same knob as the settings switches: a raw accent
+                  checkbox next to a styled toggle read as two different
+                  products in one card. */}
+              <label className="dsm-trae-switch dsm-trae-tab-switch" title={t('row.tabSwitchHint')}>
+                <input
+                  type="checkbox"
+                  checked={on}
+                  disabled={settingsScope?.getSnapshot().writable !== true || togglingRegion !== undefined}
+                  aria-label={t('row.tabSwitchAria', { region: item === 'cn' ? t('row.tabCn') : item === 'enterprise' ? t('row.tabEnterprise') : t('row.tabAi') })}
+                  onChange={event => { void toggleRegion(item, event.currentTarget.checked) }}
+                />
+              </label>
+            </div>
+          )
+        })}
+      </div>
+      <p className="dsm-trae-tab-hint">{t('row.tabHint')}</p>
+      {writeError === undefined
+        ? null
+        : <p className="dsm-trae-usage-error" role="alert">{t('row.settingsWriteFailed', { message: writeError })}</p>}
+      {regionOn(activeRegion)
+        ? null
+        : <p className="dsm-trae-tab-off-notice" role="status">{t('row.tabOffNotice')}</p>}
+      {/* THE CARD'S THREE SECTIONS. Above this row, the region tabs are
+          the SCOPE — which provider the whole card is about — and they
+          scroll with the content like any other header. These are the
+          sections of that one scope, so they are deliberately drawn in
+          the app's own settings idiom (an underlined strip) rather than
+          as a second row of boxed chips: two rows of boxes would read as
+          one six-way choice, and the region chips already mean "pick a
+          provider".
+          Rendered only while signed in: a signed-out card is one screen
+          of instructions, and a tab that hides the only thing it has to
+          say would be worse than no tab. */}
+      {signedIn
+        ? <div className="dsm-trae-panels" role="tablist" aria-label={t('row.panelAria')}>
+            <button
+              type="button"
+              role="tab"
+              id="dsm-trae-tab-accounts"
+              aria-controls="dsm-trae-panel-accounts"
+              aria-selected={panel === 'accounts'}
+              className={`dsm-trae-panel-tab${panel === 'accounts' ? ' dsm-trae-panel-tab-active' : ''}`}
+              onClick={() => { setPanel('accounts') }}
+            >
+              {t('row.panelAccounts')}
+            </button>
+            <button
+              type="button"
+              role="tab"
+              id="dsm-trae-tab-models"
+              aria-controls="dsm-trae-panel-models"
+              aria-selected={panel === 'models'}
+              className={`dsm-trae-panel-tab${panel === 'models' ? ' dsm-trae-panel-tab-active' : ''}`}
+              onClick={() => { setPanel('models') }}
+            >
+              {t('row.panelModels')}
+            </button>
+            <button
+              type="button"
+              role="tab"
+              id="dsm-trae-tab-diag"
+              aria-controls="dsm-trae-panel-diag"
+              aria-selected={panel === 'diag'}
+              className={`dsm-trae-panel-tab${panel === 'diag' ? ' dsm-trae-panel-tab-active' : ''}`}
+              onClick={() => { setPanel('diag') }}
+            >
+              {t('row.panelDiag')}
+            </button>
+          </div>
+        : null}
+      {/* ACCOUNT — the default section: who is serving, what is left,
+          the check-in, the pool, and every notice about the credential.
+          All of it commits on the click, which is why it is the section
+          that has nothing to save. The markup lives in
+          `TraeAccountPanel` because it was a third of this file; the
+          RULES that feed it stay here, next to the writes they belong
+          to. */}
+      <div
+        className="dsm-trae-panel"
+        role="tabpanel"
+        id="dsm-trae-panel-accounts"
+        aria-labelledby="dsm-trae-tab-accounts"
+        /* `signedIn &&` — a signed-out card renders no section tabs, so
+           nothing may hide that one screen behind a tab the user cannot
+           see or change. */
+        hidden={signedIn && panel !== 'accounts'}
+      >
+        <TraeAccountPanel
+          t={t}
+          settingsScope={settingsScope}
+          panel={activeRegion}
+          status={status}
+          statusLabel={label}
+          credentialRegionIsAi={credentialRegionIsAi}
+          regionOn={activeRegionOn}
+          showPointsInMainUi={settingsEdits.showPointsInMainUi}
+          onToggleShowPoints={value => { void writePreference('showPointsInMainUi', value) }}
+          creditPosition={creditPositionOn(activeRegion)}
+          onCreditPositionChange={position => { void changeCreditPosition(activeRegion, position) }}
+          sidebarPanelOn={sidebarPanelOn}
+          sidebarPanelBusy={sidebarPanelBusy}
+          onToggleSidebarPanel={value => { void writeSidebarPanel(value) }}
+          savingPreferences={savingSettings}
+          creditsLabelId={creditsLabelId}
+          creditsHintId={creditsHintId}
+          rows={accountRows}
+          busy={busy}
+          rescanNote={rescanNote}
+          onRescan={() => { void rescanAccounts() }}
+          switchingAccount={switchingAccount}
+          onSwitchAccount={accountId => { void switchAccount(accountId) }}
+          onClaim={accountId => { void claimFor(accountId) }}
+          onTransferChanged={async () => {
+            // Re-read this region's snapshot so an imported account
+            // appears without the user closing and reopening settings.
+            const fresh = await refreshUsage(activeRegion)
+            if (fresh !== undefined) setStatusByRegion(current => ({ ...current, [activeRegion]: fresh }))
+          }}
+          poolDetails={poolDetails}
+          poolClaims={status.status === 'signed-in' && status.pool?.checkinSupported === true
+            ? Object.fromEntries(status.accounts.map(account =>
+                [account.id, claimViewOf(account.id, accountStatusByRegion[activeRegion][account.id])]))
+            : undefined}
+          models={visibleModels}
+          deviceClaimed={deviceClaimedToday}
+          onPoolChanged={async () => {
+            const fresh = await refreshUsage(activeRegion)
+            if (fresh !== undefined) setStatusByRegion(current => ({ ...current, [activeRegion]: fresh }))
+          }}
+          onPoolRefresh={async () => {
+            const fresh = await refreshUsage(activeRegion)
+            if (fresh !== undefined) setStatusByRegion(current => ({ ...current, [activeRegion]: fresh }))
+          }}
+          creditsUnavailable={status.status === 'signed-in' ? status.creditsUnavailable : undefined}
+          creditsExpiry={status.status === 'signed-in' ? status.credits?.expiry : undefined}
+          alternatives={status.status === 'signed-in' ? status.alternatives : undefined}
+          onSwitchToAlternative={accountId => { void switchAccount(accountId) }}
+        />
+      </div>
+
+      {/* MODELS — the catalog section, and the only one whose edits are
+          a DRAFT: the checkboxes below stage state that 「保存」 commits,
+          which is precisely why it lives in a section of its own instead
+          of at the bottom of a column whose other half had already
+          committed on the click. */}
+      <div
+        className="dsm-trae-panel"
+        role="tabpanel"
+        id="dsm-trae-panel-models"
+        aria-labelledby="dsm-trae-tab-models"
+        hidden={!signedIn || panel !== 'models'}
+      >
+        {signedIn
+          ? <>
+            <section className="dsm-trae-models" aria-label={t('row.modelsTitle')}>
+              <div className="dsm-trae-models-head">
+                <div>
+                  <h3 className="dsm-trae-models-title">{t('row.modelsTitle')}</h3>
+                  <p className="dsm-trae-models-summary">{t('row.modelsSummary', { count: activeEnabledIds.size })}</p>
+                </div>
+                <div className="dsm-trae-models-actions">
+                  <button
+                    type="button"
+                    className="dsm-btn dsm-btn-outline"
+                    disabled={busy}
+                    onClick={() => { void refreshModels() }}
+                  >
+                    {busy ? t('row.modelsRefreshing') : t('row.modelsRefresh')}
+                  </button>
+                  <button
+                    type="button"
+                    className="dsm-btn dsm-btn-outline"
+                    disabled={busy || testing !== undefined || activeEnabledIds.size === 0}
+                    title={t('row.modelsTestHint')}
+                    onClick={() => { void testEnabledModels() }}
+                  >
+                    {testing === undefined
+                      ? t('row.modelsTestEnabled')
+                      : t('row.modelsTesting', { done: testing.done, total: testing.total })}
+                  </button>
+                  <button
+                    type="button"
+                    className="dsm-btn dsm-btn-outline"
+                    disabled={busy || testing !== undefined || visibleModels.length === 0}
+                    title={t('row.modelsTestAllHint')}
+                    onClick={() => { void testAllModels() }}
+                  >
+                    {testing === undefined
+                      ? t('row.modelsTestAll')
+                      : t('row.modelsTesting', { done: testing.done, total: testing.total })}
+                  </button>
+                </div>
+              </div>
+              {/* ONE line of explanation for both buttons. The second
+                  paragraph here said the same thing a different way
+                  and only pushed the model list further down. */}
+              <p className="dsm-trae-models-hint">{t('row.modelsTestHint')}</p>
+              {testSummary === undefined ? null : <p className="dsm-trae-models-summary">{testSummary}</p>}
+              {testError === undefined ? null : <p className="dsm-trae-usage-error" role="alert">{testError}</p>}
+              {/* Scope chips — rendered ONLY when the catalog actually
+                  has rows outside the common channels. On an account
+                  (or a region) where every row is a `solo_work_*` row
+                  the control would switch between two identical lists,
+                  and a toggle that does nothing is worse than none. */}
+              {orderedModels.length > commonModelCount
+                ? <div className="dsm-trae-models-view" role="group" aria-label={t('row.modelsViewLabel')}>
+                  <button
+                    type="button"
+                    className="dsm-trae-models-view-opt"
+                    aria-pressed={modelView === 'common'}
+                    title={t('row.modelsViewCommonHint')}
+                    onClick={() => { setModelView('common') }}
+                  >
+                    {t('row.modelsViewCommon', { count: commonModelCount })}
+                  </button>
+                  <button
+                    type="button"
+                    className="dsm-trae-models-view-opt"
+                    aria-pressed={modelView === 'all'}
+                    title={t('row.modelsViewAllHint')}
+                    onClick={() => { setModelView('all') }}
+                  >
+                    {t('row.modelsViewAll', { count: orderedModels.length })}
+                  </button>
+                </div>
+                : null}
+              <div className="dsm-trae-models-search">
+                <input
+                  type="search"
+                  className="dsm-trae-models-search-input"
+                  value={modelQuery}
+                  placeholder={t('row.modelsSearchPlaceholder')}
+                  aria-label={t('row.modelsSearch')}
+                  onChange={event => {
+                    setModelQuery(event.target.value)
+                    // A search answers 「where is it」, so it opens every
+                    // group it touches once; folding them back stays
+                    // available afterwards.
+                    setClosedModelGroups(new Set())
+                  }}
+                />
+                {modelQueryActive
+                  ? <span className="dsm-trae-models-search-count">{t('row.modelsSearchCount', { shown: shownModels.length, total: scopedModels.length })}</span>
+                  : null}
+              </div>
+              <div className="dsm-trae-model-list">
+                {modelGroups.length === 0
+                  ? matchesOutsideView > 0
+                    /* The query DOES exist, just not where this view is
+                       looking. Saying 「没有匹配」 here would be the one
+                       answer a search box must never give (see
+                       `matchesOutsideView`), so the message names the
+                       other scope and hands over the switch. */
+                    ? <p className="dsm-trae-models-empty">
+                      {t('row.modelsSearchOutsideView', { query: modelQuery.trim(), count: matchesOutsideView })}
+                      <button
+                        type="button"
+                        className="dsm-trae-models-widen"
+                        onClick={() => { setModelView('all') }}
+                      >
+                        {t('row.modelsViewShowAll')}
+                      </button>
+                    </p>
+                    : <p className="dsm-trae-models-empty">{t('row.modelsSearchEmpty', { query: modelQuery.trim() })}</p>
+                  : null}
+                {modelGroups.map(group => {
+                  const groupKey = `${activeRegion}|${group.channel ?? ''}`
+                  const groupOpen = modelQueryActive || !closedModelGroups.has(groupKey)
+                  return (
+                    <details
+                      className="dsm-trae-model-group"
+                      key={groupKey}
+                      open={groupOpen}
+                      onToggle={event => {
+                        const open = event.currentTarget.open
+                        setClosedModelGroups(current => {
+                          if (open === !current.has(groupKey)) return current
+                          const next = new Set(current)
+                          if (open) next.delete(groupKey)
+                          else next.add(groupKey)
+                          return next
+                        })
+                      }}
+                    >
+                      <summary className="dsm-trae-model-group-head">
+                        <span className="dsm-trae-model-group-name">
+                          {modelChannelLabel(group.channel, t)}
+                        </span>
+                        <span className="dsm-trae-model-group-count">
+                          {t('row.modelsGroupCount', { count: group.rows.length })}
+                        </span>
+                      </summary>
+                      {group.rows.map(model => (
+                        <div className={`dsm-trae-model${activeEnabledIds.has(model.id) ? '' : ' dsm-trae-model-disabled'}`} key={model.id}>
+                          <div className="dsm-trae-model-head">
+                            <label className="dsm-trae-model-enabled">
+                              <input
+                                type="checkbox"
+                                checked={activeEnabledIds.has(model.id)}
+                                disabled={settingsScope?.getSnapshot().writable !== true || saving}
+                                onChange={() => { toggleModel(model.id) }}
+                              />
+                              <span className="dsm-trae-model-copy">
+                                <span className="dsm-trae-model-name">
+                                  {model.name}
+                                  {/* No rate on the enterprise tab: the
+                                      multiplier is a CONSUMER-pool figure
+                                      (personal credits per token), which the
+                                      tenant pool does not bill against. A
+                                      number there would be read as a price. */}
+                                  {activeRegion === 'enterprise' || model.creditMultiplier === undefined ? null
+                                    : <span className="dsm-trae-model-name-rate">· x{model.creditMultiplier.toFixed(2)}</span>}
+                                  {probeBadge(probeByRegion[activeRegion][model.id], t)}
+                                </span>
+                                {/* Outside the name span on purpose: the
+                                    name is ellipsis-truncated, so a capsule
+                                    inside it would be clipped on exactly the
+                                    long model names. Judged at paint time
+                                    (see promoBadge). */}
+                                {promoBadge(model, t, nowForPromo)}
+                              </span>
+                            </label>
+                            <div className="dsm-trae-model-options">
+                              <label className="dsm-trae-model-image">
+                                <input
+                                  type="checkbox"
+                                  checked={rowAcceptsImage(model)}
+                                  disabled={rowImageIsAutomatic(model) || settingsScope?.getSnapshot().writable !== true || saving}
+                                  title={rowImageIsAutomatic(model) ? t('row.modelImageAuto') : undefined}
+                                  onChange={() => { toggleImage(model.id) }}
+                                />
+                                <span>{t('row.modelImage')}</span>
+                              </label>
+                            <fieldset className="dsm-trae-context-budget" aria-label={t('row.contextBudget')} title={t('row.contextBudgetHint')}>
+                              {/* Issue #60: the window a row shows is Trae's OWN
+                                  advertisement, while these radios only set DSH's
+                                  local budget — the request body carries no window
+                                  or Max-mode field, so raising it does not make the
+                                  upstream serve the wider window. The hint says so
+                                  rather than letting the label imply otherwise. */}
+                              {contextBudgetOptions(model).map(option => {
+                                // Each radio is one selectable window. A model with no
+                                // Max window has a single option (its dev window), which
+                                // stays checked and disabled — the same read-only shape
+                                // the old two-radio markup produced.
+                                const selectable = model.maxContextWindow !== undefined
+                                const checked = (activeContextBudgets[model.id] ?? model.contextWindow) === option
+                                return (
+                                  <label key={option}>
+                                    <input
+                                      type="radio"
+                                      name={`context-${model.id}`}
+                                      checked={checked}
+                                      disabled={!selectable || settingsScope?.getSnapshot().writable !== true || saving}
+                                      onChange={() => { setContextBudget(model.id, option) }}
+                                    />
+                                    <span>{formatCapacity(option, t('row.modelUnknown'))}</span>
+                                  </label>
+                                )
+                              })}
+                            </fieldset>
+                            </div>
+                          </div>
+                          <div className="dsm-trae-model-meta">
+                            <span>{t('row.modelContext', { context: formatCapacity(model.maxContextWindow ?? model.contextWindow, t('row.modelUnknown')) })}</span>
+                            {model.maxTokens === undefined ? null
+                              : <span>{t('row.modelOutput', { output: formatCapacity(model.maxTokens, t('row.modelUnknown')) })}</span>}
+                            {model.reasoning === undefined ? null
+                              : <span>{t('row.modelReasoning', { efforts: model.reasoning.supported.join(' / ') })}</span>}
+                          </div>
+                        </div>
+                      ))}
+                    </details>
+                  )
+                })}
+              </div>
+              {/* The one thing a scoped list can get WRONG: hiding a row
+                  that is already switched on. The checkbox that would
+                  turn it off is not rendered here, so the list says how
+                  many there are and offers the widen. Nothing about the
+                  save is affected — `activeEnabledIds` comes from state,
+                  never from the rendered checkboxes — but a reader who
+                  counted the ticked boxes would otherwise conclude those
+                  models were disabled. */}
+              {enabledOutsideView.length === 0
+                ? null
+                : <p className="dsm-trae-models-note">
+                  {t('row.modelsEnabledOutsideView', { count: enabledOutsideView.length })}
+                  <button
+                    type="button"
+                    className="dsm-trae-models-widen"
+                    onClick={() => { setModelView('all') }}
+                  >
+                    {t('row.modelsViewShowAll')}
+                  </button>
+                </p>}
+              {/* Bulk context switch (issue #42): sits directly under the
+                  per-row budget radios it replaces a click-walk through,
+                  so the affordance is next to what it acts on. It ranges
+                  over `visibleModels`, NOT the view: 「全部」 means the
+                  catalog, and a hidden row must not be skipped by a
+                  button whose label promises otherwise. */}
+              <div className="dsm-trae-context-bulk">
+                <button
+                  type="button"
+                  className="dsm-btn dsm-btn-outline"
+                  disabled={busy || saving || settingsScope?.getSnapshot().writable !== true || !visibleModels.some(model => contextBudgetOptions(model).includes(TRAE_CONTEXT_BUDGET_MID))}
+                  title={t('row.contextAllMidHint')}
+                  onClick={setAllContextMid}
+                >
+                  {t('row.contextAllMid')}
+                </button>
+                <button
+                  type="button"
+                  className="dsm-btn dsm-btn-outline"
+                  disabled={busy || saving || settingsScope?.getSnapshot().writable !== true || !visibleModels.some(model => model.maxContextWindow !== undefined)}
+                  title={t('row.contextAllMaxHint')}
+                  onClick={setAllContextMax}
+                >
+                  {t('row.contextAllMax')}
+                </button>
+                <button
+                  type="button"
+                  className="dsm-btn dsm-btn-outline"
+                  disabled={busy || saving || settingsScope?.getSnapshot().writable !== true || Object.keys(activeContextBudgets).length === 0}
+                  title={t('row.contextAllDefaultHint')}
+                  onClick={resetAllContextBudgets}
+                >
+                  {t('row.contextAllDefault')}
+                </button>
+              </div>
+              <p className="dsm-trae-model-capability-note">{t('row.contextBudgetHint')}</p>
+              {/* Per-panel 生图 consent (opt-in). The tool is registered
+                  ONLY while this box is ticked, so an unticked box means
+                  the model has no way to spend credits on images — the
+                  grant is the affordance, not a hint. The two panels
+                  that never measured image behaviour are refused
+                  outright and say why (`DRAW_IMAGE_PANELS`, the same
+                  list the Host registers from): enterprise bills through
+                  a tenant gateway, ai was never probed. */}
+              <label
+                className="dsm-trae-draw-image"
+                data-disabled={drawImageServable ? undefined : 'true'}
+                title={drawImageServable ? t('row.drawImageHint') : drawImageUnavailableHint}
+              >
+                <input
+                  type="checkbox"
+                  checked={drawImageOn}
+                  disabled={!drawImageServable || busy || saving || savingSettings || settingsScope?.getSnapshot().writable !== true}
+                  onChange={event => { void writeDrawImage(event.target.checked) }}
+                />
+                <span>
+                  {t('row.drawImage')}
+                  <span className="dsm-trae-draw-image-hint">
+                    {' '}
+                    {drawImageServable ? t('row.drawImageHint') : drawImageUnavailableHint}
+                  </span>
+                </span>
+              </label>
+              <p className="dsm-trae-model-capability-note">{t('row.modelCapabilityPending')}</p>
+              <div className="dsm-trae-model-actions">
+                <a
+                  className="dsm-trae-usage-cheer"
+                  href={TRAE_GITHUB_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  {t('row.cheer')}
+                  <span className="dsm-trae-usage-cheer-star" aria-hidden="true">★</span>
+                </a>
+                <div className="dsm-trae-model-actions-buttons">
+                  <button type="button" className="dsm-btn dsm-btn-outline" disabled={!dirty || saving} onClick={discardModels}>
+                    {t('row.discard')}
+                  </button>
+                  <button type="button" className="dsm-btn dsm-btn-primary" disabled={!dirty || saving || activeEnabledIds.size === 0} onClick={() => { void saveModels() }}>
+                    {saving ? t('row.saving') : t('row.save')}
+                  </button>
+                </div>
+              </div>
+            </section>
+          </>
+        : null}
+      </div>
+      {/* DIAGNOSTICS — the third section, and the one that earns its tab
+          by holding nothing the other two already say: the facts a bug
+          report needs (which panel, which provider id, which account,
+          which expiry, how big the catalog actually is) plus every
+          upstream error text this panel last reported, verbatim rather
+          than summarised. Deliberately no control lives here: a
+          diagnostics panel that can change settings is a settings panel
+          with a worse name. */}
+      <div
+        className="dsm-trae-panel"
+        role="tabpanel"
+        id="dsm-trae-panel-diag"
+        aria-labelledby="dsm-trae-tab-diag"
+        hidden={!signedIn || panel !== 'diag'}
+      >
+        {/* The TWO other panels stay mounted on purpose (a half-filled
+            model draft and the pool's log must survive a look at
+            another section). This one is the exception, and it is a
+            deliberate one: it derives every value from the current
+            document and holds no state at all, so there is nothing a
+            remount could lose — while keeping its text in the tree
+            would put a second copy of the account name (and of every
+            error string) where a reader scrolling the account section
+            can already see the first. */}
+        {status.status !== 'signed-in' || panel !== 'diag'
+          ? null
+          : <>
+              <div className="dsm-trae-diag">
+                <div className="dsm-trae-diag-row">
+                  <span className="dsm-trae-diag-label">{t('row.diagRegion')}</span>
+                  <span className="dsm-trae-diag-value">
+                    {activeRegion === 'cn' ? t('row.tabCn') : activeRegion === 'enterprise' ? t('row.tabEnterprise') : t('row.tabAi')}
+                  </span>
+                </div>
+                {status.unsupportedRegion === undefined
+                  ? null
+                  : <div className="dsm-trae-diag-row">
+                      <span className="dsm-trae-diag-label">{t('row.diagUnsupportedRegion')}</span>
+                      <span className="dsm-trae-diag-value dsm-trae-diag-bad">
+                        {status.unsupportedRegion.region.toUpperCase()}
+                        {' · '}
+                        {status.unsupportedRegion.accounts.join(', ')}
+                      </span>
+                    </div>}
+                <div className="dsm-trae-diag-row">
+                  <span className="dsm-trae-diag-label">{t('row.diagProvider')}</span>
+                  <span className="dsm-trae-diag-value dsm-trae-diag-mono">{providerOfPanel(activeRegion)}</span>
+                </div>
+                <div className="dsm-trae-diag-row">
+                  <span className="dsm-trae-diag-label">{t('row.diagAccount')}</span>
+                  <span className="dsm-trae-diag-value">{status.accountName}</span>
+                </div>
+                <div className="dsm-trae-diag-row">
+                  <span className="dsm-trae-diag-label">{t('row.diagToken')}</span>
+                  <span className="dsm-trae-diag-value dsm-trae-diag-mono">{formatDateTime(status.tokenExpiresAtMs)}</span>
+                </div>
+                <div className="dsm-trae-diag-row">
+                  <span className="dsm-trae-diag-label">{t('row.diagRefresh')}</span>
+                  {/* The horizon that actually ends automatic renewal.
+                      A credential that carries no refresh token (a CLI
+                      token does not) says so instead of printing a date
+                      that does not exist. */}
+                  <span className="dsm-trae-diag-value dsm-trae-diag-mono">
+                    {status.refreshExpiresAtMs === undefined
+                      ? t('row.diagRefreshNone')
+                      : formatDateTime(status.refreshExpiresAtMs)}
+                  </span>
+                </div>
+                <div className="dsm-trae-diag-row">
+                  <span className="dsm-trae-diag-label">{t('row.diagCatalog')}</span>
+                  <span className="dsm-trae-diag-value">{formatNumber(status.models.length)}</span>
+                </div>
+                <div className="dsm-trae-diag-row">
+                  <span className="dsm-trae-diag-label">{t('row.diagEnabled')}</span>
+                  <span className="dsm-trae-diag-value">{formatNumber(status.enabledModelIds.length)}</span>
+                </div>
+                <div className="dsm-trae-diag-row">
+                  <span className="dsm-trae-diag-label">{t('row.diagPool')}</span>
+                  <span className="dsm-trae-diag-value">
+                    {status.pool === undefined
+                      ? t('row.diagPoolOff')
+                      : status.pool.enabled
+                        ? t('row.diagPoolOn', { count: status.pool.effectiveMemberAccountIds?.length ?? status.pool.accounts.length })
+                        : t('row.diagPoolOff')}
+                  </span>
+                </div>
+                <div className="dsm-trae-diag-row">
+                  <span className="dsm-trae-diag-label">{t('row.diagCheckin')}</span>
+                  <span className="dsm-trae-diag-value">
+                    {/* Judged from the CHECK-IN DOCUMENT first, not from
+                        the pool: the pool is a separate, opt-in feature
+                        and its absence says nothing about whether this
+                        panel's upstream offers the daily reward. Reading
+                        `pool.checkinSupported` alone reported 「本面板不
+                        提供」 on every profile that had not turned the
+                        pool on — the opposite of the truth on a CN
+                        account, which is the only panel that HAS it. */}
+                    {status.checkin !== undefined || status.pool?.checkinSupported === true
+                      ? t('row.diagCheckinOn')
+                      : t('row.diagCheckinOff')}
+                  </span>
+                </div>
+                <div className="dsm-trae-diag-row">
+                  <span className="dsm-trae-diag-label">{t('row.diagRaw')}</span>
+                  <span className="dsm-trae-diag-value dsm-trae-diag-mono">
+                    {status.rawChat === undefined ? t('row.diagRawOff') : status.rawChat.state}
+                  </span>
+                </div>
+                <div className="dsm-trae-diag-row">
+                  <span className="dsm-trae-diag-label">{t('row.diagFailures')}</span>
+                  {(() => {
+                    // The upstream's OWN text, joined — not a rewritten
+                    // sentence. This panel exists to be quoted.
+                    const failures: string[] = []
+                    if (status.creditsError !== undefined) failures.push(status.creditsError)
+                    if (status.payStatusError !== undefined) failures.push(status.payStatusError)
+                    if (status.checkinError !== undefined) failures.push(status.checkinError)
+                    if (writeError !== undefined) failures.push(writeError)
+                    return failures.length === 0
+                      ? <span className="dsm-trae-diag-value">{t('row.diagNoFailures')}</span>
+                      : <span className="dsm-trae-diag-value dsm-trae-diag-bad dsm-trae-diag-mono">
+                          {failures.join(' · ')}
+                        </span>
+                  })()}
+                </div>
+                <div className="dsm-trae-diag-row">
+                  <span className="dsm-trae-diag-label">{t('row.diagQuarantine')}</span>
+                  {/* A copy that was found unreadable is KEPT, renamed
+                      aside — so the account it held is still on disk,
+                      just not where the plugin looks any more. That is
+                      the answer to "where did my account go", and it
+                      belongs in the panel meant to be quoted. */}
+                  {status.quarantined === undefined || status.quarantined.length === 0
+                    ? <span className="dsm-trae-diag-value">{t('row.diagQuarantineNone')}</span>
+                    : <span className="dsm-trae-diag-value dsm-trae-diag-bad dsm-trae-diag-mono">
+                        {status.quarantined.map(item => item.quarantinedAs).join(' · ')}
+                      </span>}
+                </div>
+              </div>
+              <p className="dsm-trae-diag-hint">{t('row.diagHint')}</p>
+            </>}
+      </div>
+      {status.status === 'signed-out' && loading
+        ? <>
+          {/* Nothing has answered yet. Saying "not signed in" here would be a
+              claim, not a placeholder — issue #77 is exactly the case of a
+              signed-in user reading it for a minute. */}
+          <p className="dsm-trae-usage-text" role="status">{t('row.accountsLoading')}</p>
+        </>
+        : null}
+      {status.status === 'signed-out' && !loading
+        ? <>
+          <p className="dsm-trae-usage-text">{status.message ?? t('row.signedOutHint')}</p>
+          {/* A recognized-but-unserved region (issue #66). Placed on the
+              signed-out screen for the same reason the quarantine notice
+              is: that is where the exclusion leaves the user. Without it
+              the panel says "not signed in" while a real US login sits on
+              disk — the exact state that made the reporter sign in again
+              and again. */}
+          {status.unsupportedRegion === undefined
+            ? null
+            : <details className="dsm-trae-quarantine" open>
+              <summary>{t('row.unsupportedRegionTitle')}</summary>
+              <p className="dsm-trae-quarantine-hint">{t('row.unsupportedRegionHint')}</p>
+              <ul className="dsm-trae-quarantine-list">
+                {status.unsupportedRegion.accounts.map(name => (
+                  <li key={name}><code>{name}</code></li>
+                ))}
+              </ul>
+            </details>}
+          {/* A quarantined copy is the ONE explanation that fits the
+              state a user lands in after an account went missing: the
+              signed-out screen is exactly where issue #56's reporter
+              was, so the notice belongs here and not only in the
+              diagnostics panel (which a signed-out user never sees). */}
+          {status.quarantined && status.quarantined.length > 0
+            ? <details className="dsm-trae-quarantine" open>
+              <summary>{t('row.quarantineTitle')} ({status.quarantined.length})</summary>
+              <p className="dsm-trae-quarantine-hint">{t('row.quarantineHint')}</p>
+              <ul className="dsm-trae-quarantine-list">
+                {status.quarantined.map(item => (
+                  <li key={item.quarantinedAs}>
+                    <code>{item.quarantinedAs}</code>
+                    <span className="dsm-trae-quarantine-reason">
+                      {item.accounts === undefined
+                        ? t('row.quarantineAccountsUnknown')
+                        : t('row.quarantineAccounts', { count: item.accounts })}
+                      {' · '}
+                      {t('row.quarantineBytes', { bytes: item.bytes })}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </details>
+            : null}
+          {status.searched && status.searched.length > 0
+            ? <details className="dsm-trae-searched">
+              <summary>{t('row.searchedTitle')} ({status.searched.length})</summary>
+              <p className="dsm-trae-searched-hint">{t('row.searchedHint')}</p>
+              <ul className="dsm-trae-searched-list">
+                {status.searched.map(item => (
+                  <li key={`${item.source}:${item.path}`}>
+                    <code>{item.path}</code>
+                    <span className="dsm-trae-searched-reason">
+                      {t(item.source === 'cli' ? 'row.sourceCli' : 'row.sourceDesktop')}
+                      {' · '}
+                      {t(item.reason === 'missing' ? 'row.reasonMissing' : item.reason === 'unreadable' ? 'row.reasonUnreadable' : 'row.reasonInvalid')}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </details>
+            : null}
+        </>
+        : null}
+      {status.status === 'error' ? <p className="dsm-trae-usage-error">{status.message}</p> : null}
+    </div>
+  )
+
+  /**
+   * The page header, drawn only by the sidebar row's `main` panel.
+   *
+   * A settings card has the Plugins page's own chrome around it; a full page has
+   * nothing, so it has to say what it is and how to leave. The back control
+   * reuses the host's `layout.selectPanel(null)` (handed down as
+   * `backToConversation`), which is the only public contract for returning the
+   * centre column to the conversation — and it is omitted, not drawn dead, on a
+   * host that does not declare `layout`.
+   */
+  const pageHead = pageSurface
+    ? (
+        <div className="dsm-trae-page-head">
+          {backToConversation === undefined
+            ? null
+            : (
+                <button type="button" className="dsm-trae-page-back" onClick={backToConversation}>
+                  <span aria-hidden="true" className="dsm-trae-page-back-caret" />
+                  <span>{t('row.pageBack')}</span>
+                </button>
+              )}
+          <img className="dsm-trae-page-icon" src={TRAE_PLUGIN_ICON} alt="" />
+          <span className="dsm-trae-page-title">{title}</span>
+          <span className="dsm-trae-page-desc">{t('row.desc')}</span>
+        </div>
+      )
+    : null
+
+  if (pageSurface) {
+    return (
+      <div className="dsm-trae-page">
+        {pageHead}
+        <div className="dsm-trae-page-body">{cardBody}</div>
+        <BusyOverlay
+          visible={saving || savingSettings}
+          message={t('row.veilSaving')}
+        />
+      </div>
+    )
+  }
+
   return (
     <li className={`dsm-plugin-card${open ? ' dsm-plugin-card-open' : ''}`}>
       <button
@@ -1700,7 +2581,7 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
         className="dsm-plugin-card-header"
         aria-expanded={open}
         aria-label={`${t(open ? 'row.collapse' : 'row.expand')}: ${title}`}
-        onClick={() => { setOpen(!open) }}
+        onClick={() => { setCardOpen(!open) }}
       >
         <img className="dsm-plugin-card-icon" src={TRAE_PLUGIN_ICON} alt="" />
         <span className="dsm-plugin-card-head">
@@ -1713,731 +2594,7 @@ export function TraeUsageCard({ t, settingsScope, view }: TraeUsageCardProps) {
         />
       </button>
       <div className="dsm-plugin-card-body" hidden={!open}>
-        {open
-          ? <div className="dsm-trae-usage">
-              <div className="dsm-trae-tabs" role="tablist" aria-label={title}>
-                {TRAE_PANELS.map(item => {
-                  const regionStatus = statusByRegion[item]
-                  const on = regionOn(item)
-                  return (
-                    // The switch lives beside the tab, never inside it: a
-                    // checkbox nested in a <button role="tab"> is invalid HTML
-                    // and its click would be swallowed by the tab handler
-                    // (switching tabs instead of toggling the provider). The
-                    // presentational wrapper keeps the tablist/tab relationship
-                    // intact for assistive technology.
-                    <div className="dsm-trae-tab-cell" role="presentation" key={item}>
-                      <button
-                        type="button"
-                        role="tab"
-                        aria-selected={item === activeRegion}
-                        className={`dsm-trae-tab${item === activeRegion ? ' dsm-trae-tab-active' : ''}${on ? '' : ' dsm-trae-tab-off'}`}
-                        onClick={() => { setActiveRegion(item) }}
-                      >
-                        {regionStatus === undefined
-                          ? null
-                          : <span aria-hidden="true" className="dsm-trae-tab-dot" style={dotStyle(regionStatus.status)} />}
-                        {item === 'cn' ? t('row.tabCn') : item === 'enterprise' ? t('row.tabEnterprise') : t('row.tabAi')}
-                      </button>
-                      {/* Same knob as the settings switches: a raw accent
-                          checkbox next to a styled toggle read as two different
-                          products in one card. */}
-                      <label className="dsm-trae-switch dsm-trae-tab-switch" title={t('row.tabSwitchHint')}>
-                        <input
-                          type="checkbox"
-                          checked={on}
-                          disabled={settingsScope?.getSnapshot().writable !== true || togglingRegion !== undefined}
-                          aria-label={t('row.tabSwitchAria', { region: item === 'cn' ? t('row.tabCn') : item === 'enterprise' ? t('row.tabEnterprise') : t('row.tabAi') })}
-                          onChange={event => { void toggleRegion(item, event.currentTarget.checked) }}
-                        />
-                      </label>
-                    </div>
-                  )
-                })}
-              </div>
-              <p className="dsm-trae-tab-hint">{t('row.tabHint')}</p>
-              {writeError === undefined
-                ? null
-                : <p className="dsm-trae-usage-error" role="alert">{t('row.settingsWriteFailed', { message: writeError })}</p>}
-              {regionOn(activeRegion)
-                ? null
-                : <p className="dsm-trae-tab-off-notice" role="status">{t('row.tabOffNotice')}</p>}
-              {/* THE CARD'S THREE SECTIONS. Above this row, the region tabs are
-                  the SCOPE — which provider the whole card is about — and they
-                  scroll with the content like any other header. These are the
-                  sections of that one scope, so they are deliberately drawn in
-                  the app's own settings idiom (an underlined strip) rather than
-                  as a second row of boxed chips: two rows of boxes would read as
-                  one six-way choice, and the region chips already mean "pick a
-                  provider".
-                  Rendered only while signed in: a signed-out card is one screen
-                  of instructions, and a tab that hides the only thing it has to
-                  say would be worse than no tab. */}
-              {signedIn
-                ? <div className="dsm-trae-panels" role="tablist" aria-label={t('row.panelAria')}>
-                    <button
-                      type="button"
-                      role="tab"
-                      id="dsm-trae-tab-accounts"
-                      aria-controls="dsm-trae-panel-accounts"
-                      aria-selected={panel === 'accounts'}
-                      className={`dsm-trae-panel-tab${panel === 'accounts' ? ' dsm-trae-panel-tab-active' : ''}`}
-                      onClick={() => { setPanel('accounts') }}
-                    >
-                      {t('row.panelAccounts')}
-                    </button>
-                    <button
-                      type="button"
-                      role="tab"
-                      id="dsm-trae-tab-models"
-                      aria-controls="dsm-trae-panel-models"
-                      aria-selected={panel === 'models'}
-                      className={`dsm-trae-panel-tab${panel === 'models' ? ' dsm-trae-panel-tab-active' : ''}`}
-                      onClick={() => { setPanel('models') }}
-                    >
-                      {t('row.panelModels')}
-                    </button>
-                    <button
-                      type="button"
-                      role="tab"
-                      id="dsm-trae-tab-diag"
-                      aria-controls="dsm-trae-panel-diag"
-                      aria-selected={panel === 'diag'}
-                      className={`dsm-trae-panel-tab${panel === 'diag' ? ' dsm-trae-panel-tab-active' : ''}`}
-                      onClick={() => { setPanel('diag') }}
-                    >
-                      {t('row.panelDiag')}
-                    </button>
-                  </div>
-                : null}
-              {/* ACCOUNT — the default section: who is serving, what is left,
-                  the check-in, the pool, and every notice about the credential.
-                  All of it commits on the click, which is why it is the section
-                  that has nothing to save. The markup lives in
-                  `TraeAccountPanel` because it was a third of this file; the
-                  RULES that feed it stay here, next to the writes they belong
-                  to. */}
-              <div
-                className="dsm-trae-panel"
-                role="tabpanel"
-                id="dsm-trae-panel-accounts"
-                aria-labelledby="dsm-trae-tab-accounts"
-                /* `signedIn &&` — a signed-out card renders no section tabs, so
-                   nothing may hide that one screen behind a tab the user cannot
-                   see or change. */
-                hidden={signedIn && panel !== 'accounts'}
-              >
-                <TraeAccountPanel
-                  t={t}
-                  settingsScope={settingsScope}
-                  panel={activeRegion}
-                  status={status}
-                  statusLabel={label}
-                  credentialRegionIsAi={credentialRegionIsAi}
-                  regionOn={activeRegionOn}
-                  showPointsInMainUi={settingsEdits.showPointsInMainUi}
-                  onToggleShowPoints={value => { void writePreference('showPointsInMainUi', value) }}
-                  creditPosition={creditPositionOn(activeRegion)}
-                  onCreditPositionChange={position => { void changeCreditPosition(activeRegion, position) }}
-                  savingPreferences={savingSettings}
-                  creditsLabelId={creditsLabelId}
-                  creditsHintId={creditsHintId}
-                  rows={accountRows}
-                  busy={busy}
-                  rescanNote={rescanNote}
-                  onRescan={() => { void rescanAccounts() }}
-                  switchingAccount={switchingAccount}
-                  onSwitchAccount={accountId => { void switchAccount(accountId) }}
-                  onClaim={accountId => { void claimFor(accountId) }}
-                  onTransferChanged={async () => {
-                    // Re-read this region's snapshot so an imported account
-                    // appears without the user closing and reopening settings.
-                    const fresh = await refreshUsage(activeRegion)
-                    if (fresh !== undefined) setStatusByRegion(current => ({ ...current, [activeRegion]: fresh }))
-                  }}
-                  poolDetails={poolDetails}
-                  poolClaims={status.status === 'signed-in' && status.pool?.checkinSupported === true
-                    ? Object.fromEntries(status.accounts.map(account =>
-                        [account.id, claimViewOf(account.id, accountStatusByRegion[activeRegion][account.id])]))
-                    : undefined}
-                  models={visibleModels}
-                  deviceClaimed={deviceClaimedToday}
-                  onPoolChanged={async () => {
-                    const fresh = await refreshUsage(activeRegion)
-                    if (fresh !== undefined) setStatusByRegion(current => ({ ...current, [activeRegion]: fresh }))
-                  }}
-                  onPoolRefresh={async () => {
-                    const fresh = await refreshUsage(activeRegion)
-                    if (fresh !== undefined) setStatusByRegion(current => ({ ...current, [activeRegion]: fresh }))
-                  }}
-                  creditsUnavailable={status.status === 'signed-in' ? status.creditsUnavailable : undefined}
-                  creditsExpiry={status.status === 'signed-in' ? status.credits?.expiry : undefined}
-                  alternatives={status.status === 'signed-in' ? status.alternatives : undefined}
-                  onSwitchToAlternative={accountId => { void switchAccount(accountId) }}
-                />
-              </div>
-
-              {/* MODELS — the catalog section, and the only one whose edits are
-                  a DRAFT: the checkboxes below stage state that 「保存」 commits,
-                  which is precisely why it lives in a section of its own instead
-                  of at the bottom of a column whose other half had already
-                  committed on the click. */}
-              <div
-                className="dsm-trae-panel"
-                role="tabpanel"
-                id="dsm-trae-panel-models"
-                aria-labelledby="dsm-trae-tab-models"
-                hidden={!signedIn || panel !== 'models'}
-              >
-                {signedIn
-                  ? <>
-                    <section className="dsm-trae-models" aria-label={t('row.modelsTitle')}>
-                      <div className="dsm-trae-models-head">
-                        <div>
-                          <h3 className="dsm-trae-models-title">{t('row.modelsTitle')}</h3>
-                          <p className="dsm-trae-models-summary">{t('row.modelsSummary', { count: activeEnabledIds.size })}</p>
-                        </div>
-                        <div className="dsm-trae-models-actions">
-                          <button
-                            type="button"
-                            className="dsm-btn dsm-btn-outline"
-                            disabled={busy}
-                            onClick={() => { void refreshModels() }}
-                          >
-                            {busy ? t('row.modelsRefreshing') : t('row.modelsRefresh')}
-                          </button>
-                          <button
-                            type="button"
-                            className="dsm-btn dsm-btn-outline"
-                            disabled={busy || testing !== undefined || activeEnabledIds.size === 0}
-                            title={t('row.modelsTestHint')}
-                            onClick={() => { void testEnabledModels() }}
-                          >
-                            {testing === undefined
-                              ? t('row.modelsTestEnabled')
-                              : t('row.modelsTesting', { done: testing.done, total: testing.total })}
-                          </button>
-                          <button
-                            type="button"
-                            className="dsm-btn dsm-btn-outline"
-                            disabled={busy || testing !== undefined || visibleModels.length === 0}
-                            title={t('row.modelsTestAllHint')}
-                            onClick={() => { void testAllModels() }}
-                          >
-                            {testing === undefined
-                              ? t('row.modelsTestAll')
-                              : t('row.modelsTesting', { done: testing.done, total: testing.total })}
-                          </button>
-                        </div>
-                      </div>
-                      {/* ONE line of explanation for both buttons. The second
-                          paragraph here said the same thing a different way
-                          and only pushed the model list further down. */}
-                      <p className="dsm-trae-models-hint">{t('row.modelsTestHint')}</p>
-                      {testSummary === undefined ? null : <p className="dsm-trae-models-summary">{testSummary}</p>}
-                      {testError === undefined ? null : <p className="dsm-trae-usage-error" role="alert">{testError}</p>}
-                      {/* Scope chips — rendered ONLY when the catalog actually
-                          has rows outside the common channels. On an account
-                          (or a region) where every row is a `solo_work_*` row
-                          the control would switch between two identical lists,
-                          and a toggle that does nothing is worse than none. */}
-                      {orderedModels.length > commonModelCount
-                        ? <div className="dsm-trae-models-view" role="group" aria-label={t('row.modelsViewLabel')}>
-                          <button
-                            type="button"
-                            className="dsm-trae-models-view-opt"
-                            aria-pressed={modelView === 'common'}
-                            title={t('row.modelsViewCommonHint')}
-                            onClick={() => { setModelView('common') }}
-                          >
-                            {t('row.modelsViewCommon', { count: commonModelCount })}
-                          </button>
-                          <button
-                            type="button"
-                            className="dsm-trae-models-view-opt"
-                            aria-pressed={modelView === 'all'}
-                            title={t('row.modelsViewAllHint')}
-                            onClick={() => { setModelView('all') }}
-                          >
-                            {t('row.modelsViewAll', { count: orderedModels.length })}
-                          </button>
-                        </div>
-                        : null}
-                      <div className="dsm-trae-models-search">
-                        <input
-                          type="search"
-                          className="dsm-trae-models-search-input"
-                          value={modelQuery}
-                          placeholder={t('row.modelsSearchPlaceholder')}
-                          aria-label={t('row.modelsSearch')}
-                          onChange={event => {
-                            setModelQuery(event.target.value)
-                            // A search answers 「where is it」, so it opens every
-                            // group it touches once; folding them back stays
-                            // available afterwards.
-                            setClosedModelGroups(new Set())
-                          }}
-                        />
-                        {modelQueryActive
-                          ? <span className="dsm-trae-models-search-count">{t('row.modelsSearchCount', { shown: shownModels.length, total: scopedModels.length })}</span>
-                          : null}
-                      </div>
-                      <div className="dsm-trae-model-list">
-                        {modelGroups.length === 0
-                          ? matchesOutsideView > 0
-                            /* The query DOES exist, just not where this view is
-                               looking. Saying 「没有匹配」 here would be the one
-                               answer a search box must never give (see
-                               `matchesOutsideView`), so the message names the
-                               other scope and hands over the switch. */
-                            ? <p className="dsm-trae-models-empty">
-                              {t('row.modelsSearchOutsideView', { query: modelQuery.trim(), count: matchesOutsideView })}
-                              <button
-                                type="button"
-                                className="dsm-trae-models-widen"
-                                onClick={() => { setModelView('all') }}
-                              >
-                                {t('row.modelsViewShowAll')}
-                              </button>
-                            </p>
-                            : <p className="dsm-trae-models-empty">{t('row.modelsSearchEmpty', { query: modelQuery.trim() })}</p>
-                          : null}
-                        {modelGroups.map(group => {
-                          const groupKey = `${activeRegion}|${group.channel ?? ''}`
-                          const groupOpen = modelQueryActive || !closedModelGroups.has(groupKey)
-                          return (
-                            <details
-                              className="dsm-trae-model-group"
-                              key={groupKey}
-                              open={groupOpen}
-                              onToggle={event => {
-                                const open = event.currentTarget.open
-                                setClosedModelGroups(current => {
-                                  if (open === !current.has(groupKey)) return current
-                                  const next = new Set(current)
-                                  if (open) next.delete(groupKey)
-                                  else next.add(groupKey)
-                                  return next
-                                })
-                              }}
-                            >
-                              <summary className="dsm-trae-model-group-head">
-                                <span className="dsm-trae-model-group-name">
-                                  {modelChannelLabel(group.channel, t)}
-                                </span>
-                                <span className="dsm-trae-model-group-count">
-                                  {t('row.modelsGroupCount', { count: group.rows.length })}
-                                </span>
-                              </summary>
-                              {group.rows.map(model => (
-                                <div className={`dsm-trae-model${activeEnabledIds.has(model.id) ? '' : ' dsm-trae-model-disabled'}`} key={model.id}>
-                                  <div className="dsm-trae-model-head">
-                                    <label className="dsm-trae-model-enabled">
-                                      <input
-                                        type="checkbox"
-                                        checked={activeEnabledIds.has(model.id)}
-                                        disabled={settingsScope?.getSnapshot().writable !== true || saving}
-                                        onChange={() => { toggleModel(model.id) }}
-                                      />
-                                      <span className="dsm-trae-model-copy">
-                                        <span className="dsm-trae-model-name">
-                                          {model.name}
-                                          {/* No rate on the enterprise tab: the
-                                              multiplier is a CONSUMER-pool figure
-                                              (personal credits per token), which the
-                                              tenant pool does not bill against. A
-                                              number there would be read as a price. */}
-                                          {activeRegion === 'enterprise' || model.creditMultiplier === undefined ? null
-                                            : <span className="dsm-trae-model-name-rate">· x{model.creditMultiplier.toFixed(2)}</span>}
-                                          {probeBadge(probeByRegion[activeRegion][model.id], t)}
-                                        </span>
-                                        {/* Outside the name span on purpose: the
-                                            name is ellipsis-truncated, so a capsule
-                                            inside it would be clipped on exactly the
-                                            long model names. Judged at paint time
-                                            (see promoBadge). */}
-                                        {promoBadge(model, t, nowForPromo)}
-                                      </span>
-                                    </label>
-                                    <div className="dsm-trae-model-options">
-                                      <label className="dsm-trae-model-image">
-                                        <input
-                                          type="checkbox"
-                                          checked={rowAcceptsImage(model)}
-                                          disabled={rowImageIsAutomatic(model) || settingsScope?.getSnapshot().writable !== true || saving}
-                                          title={rowImageIsAutomatic(model) ? t('row.modelImageAuto') : undefined}
-                                          onChange={() => { toggleImage(model.id) }}
-                                        />
-                                        <span>{t('row.modelImage')}</span>
-                                      </label>
-                                    <fieldset className="dsm-trae-context-budget" aria-label={t('row.contextBudget')} title={t('row.contextBudgetHint')}>
-                                      {/* Issue #60: the window a row shows is Trae's OWN
-                                          advertisement, while these radios only set DSH's
-                                          local budget — the request body carries no window
-                                          or Max-mode field, so raising it does not make the
-                                          upstream serve the wider window. The hint says so
-                                          rather than letting the label imply otherwise. */}
-                                      {contextBudgetOptions(model).map(option => {
-                                        // Each radio is one selectable window. A model with no
-                                        // Max window has a single option (its dev window), which
-                                        // stays checked and disabled — the same read-only shape
-                                        // the old two-radio markup produced.
-                                        const selectable = model.maxContextWindow !== undefined
-                                        const checked = (activeContextBudgets[model.id] ?? model.contextWindow) === option
-                                        return (
-                                          <label key={option}>
-                                            <input
-                                              type="radio"
-                                              name={`context-${model.id}`}
-                                              checked={checked}
-                                              disabled={!selectable || settingsScope?.getSnapshot().writable !== true || saving}
-                                              onChange={() => { setContextBudget(model.id, option) }}
-                                            />
-                                            <span>{formatCapacity(option, t('row.modelUnknown'))}</span>
-                                          </label>
-                                        )
-                                      })}
-                                    </fieldset>
-                                    </div>
-                                  </div>
-                                  <div className="dsm-trae-model-meta">
-                                    <span>{t('row.modelContext', { context: formatCapacity(model.maxContextWindow ?? model.contextWindow, t('row.modelUnknown')) })}</span>
-                                    {model.maxTokens === undefined ? null
-                                      : <span>{t('row.modelOutput', { output: formatCapacity(model.maxTokens, t('row.modelUnknown')) })}</span>}
-                                    {model.reasoning === undefined ? null
-                                      : <span>{t('row.modelReasoning', { efforts: model.reasoning.supported.join(' / ') })}</span>}
-                                  </div>
-                                </div>
-                              ))}
-                            </details>
-                          )
-                        })}
-                      </div>
-                      {/* The one thing a scoped list can get WRONG: hiding a row
-                          that is already switched on. The checkbox that would
-                          turn it off is not rendered here, so the list says how
-                          many there are and offers the widen. Nothing about the
-                          save is affected — `activeEnabledIds` comes from state,
-                          never from the rendered checkboxes — but a reader who
-                          counted the ticked boxes would otherwise conclude those
-                          models were disabled. */}
-                      {enabledOutsideView.length === 0
-                        ? null
-                        : <p className="dsm-trae-models-note">
-                          {t('row.modelsEnabledOutsideView', { count: enabledOutsideView.length })}
-                          <button
-                            type="button"
-                            className="dsm-trae-models-widen"
-                            onClick={() => { setModelView('all') }}
-                          >
-                            {t('row.modelsViewShowAll')}
-                          </button>
-                        </p>}
-                      {/* Bulk context switch (issue #42): sits directly under the
-                          per-row budget radios it replaces a click-walk through,
-                          so the affordance is next to what it acts on. It ranges
-                          over `visibleModels`, NOT the view: 「全部」 means the
-                          catalog, and a hidden row must not be skipped by a
-                          button whose label promises otherwise. */}
-                      <div className="dsm-trae-context-bulk">
-                        <button
-                          type="button"
-                          className="dsm-btn dsm-btn-outline"
-                          disabled={busy || saving || settingsScope?.getSnapshot().writable !== true || !visibleModels.some(model => contextBudgetOptions(model).includes(TRAE_CONTEXT_BUDGET_MID))}
-                          title={t('row.contextAllMidHint')}
-                          onClick={setAllContextMid}
-                        >
-                          {t('row.contextAllMid')}
-                        </button>
-                        <button
-                          type="button"
-                          className="dsm-btn dsm-btn-outline"
-                          disabled={busy || saving || settingsScope?.getSnapshot().writable !== true || !visibleModels.some(model => model.maxContextWindow !== undefined)}
-                          title={t('row.contextAllMaxHint')}
-                          onClick={setAllContextMax}
-                        >
-                          {t('row.contextAllMax')}
-                        </button>
-                        <button
-                          type="button"
-                          className="dsm-btn dsm-btn-outline"
-                          disabled={busy || saving || settingsScope?.getSnapshot().writable !== true || Object.keys(activeContextBudgets).length === 0}
-                          title={t('row.contextAllDefaultHint')}
-                          onClick={resetAllContextBudgets}
-                        >
-                          {t('row.contextAllDefault')}
-                        </button>
-                      </div>
-                      <p className="dsm-trae-model-capability-note">{t('row.contextBudgetHint')}</p>
-                      {/* Per-panel 生图 consent (opt-in). The tool is registered
-                          ONLY while this box is ticked, so an unticked box means
-                          the model has no way to spend credits on images — the
-                          grant is the affordance, not a hint. The two panels
-                          that never measured image behaviour are refused
-                          outright and say why (`DRAW_IMAGE_PANELS`, the same
-                          list the Host registers from): enterprise bills through
-                          a tenant gateway, ai was never probed. */}
-                      <label
-                        className="dsm-trae-draw-image"
-                        data-disabled={drawImageServable ? undefined : 'true'}
-                        title={drawImageServable ? t('row.drawImageHint') : drawImageUnavailableHint}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={drawImageOn}
-                          disabled={!drawImageServable || busy || saving || savingSettings || settingsScope?.getSnapshot().writable !== true}
-                          onChange={event => { void writeDrawImage(event.target.checked) }}
-                        />
-                        <span>
-                          {t('row.drawImage')}
-                          <span className="dsm-trae-draw-image-hint">
-                            {' '}
-                            {drawImageServable ? t('row.drawImageHint') : drawImageUnavailableHint}
-                          </span>
-                        </span>
-                      </label>
-                      <p className="dsm-trae-model-capability-note">{t('row.modelCapabilityPending')}</p>
-                      <div className="dsm-trae-model-actions">
-                        <a
-                          className="dsm-trae-usage-cheer"
-                          href={TRAE_GITHUB_URL}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                        >
-                          {t('row.cheer')}
-                          <span className="dsm-trae-usage-cheer-star" aria-hidden="true">★</span>
-                        </a>
-                        <div className="dsm-trae-model-actions-buttons">
-                          <button type="button" className="dsm-btn dsm-btn-outline" disabled={!dirty || saving} onClick={discardModels}>
-                            {t('row.discard')}
-                          </button>
-                          <button type="button" className="dsm-btn dsm-btn-primary" disabled={!dirty || saving || activeEnabledIds.size === 0} onClick={() => { void saveModels() }}>
-                            {saving ? t('row.saving') : t('row.save')}
-                          </button>
-                        </div>
-                      </div>
-                    </section>
-                  </>
-                : null}
-              </div>
-              {/* DIAGNOSTICS — the third section, and the one that earns its tab
-                  by holding nothing the other two already say: the facts a bug
-                  report needs (which panel, which provider id, which account,
-                  which expiry, how big the catalog actually is) plus every
-                  upstream error text this panel last reported, verbatim rather
-                  than summarised. Deliberately no control lives here: a
-                  diagnostics panel that can change settings is a settings panel
-                  with a worse name. */}
-              <div
-                className="dsm-trae-panel"
-                role="tabpanel"
-                id="dsm-trae-panel-diag"
-                aria-labelledby="dsm-trae-tab-diag"
-                hidden={!signedIn || panel !== 'diag'}
-              >
-                {/* The TWO other panels stay mounted on purpose (a half-filled
-                    model draft and the pool's log must survive a look at
-                    another section). This one is the exception, and it is a
-                    deliberate one: it derives every value from the current
-                    document and holds no state at all, so there is nothing a
-                    remount could lose — while keeping its text in the tree
-                    would put a second copy of the account name (and of every
-                    error string) where a reader scrolling the account section
-                    can already see the first. */}
-                {status.status !== 'signed-in' || panel !== 'diag'
-                  ? null
-                  : <>
-                      <div className="dsm-trae-diag">
-                        <div className="dsm-trae-diag-row">
-                          <span className="dsm-trae-diag-label">{t('row.diagRegion')}</span>
-                          <span className="dsm-trae-diag-value">
-                            {activeRegion === 'cn' ? t('row.tabCn') : activeRegion === 'enterprise' ? t('row.tabEnterprise') : t('row.tabAi')}
-                          </span>
-                        </div>
-                        {status.unsupportedRegion === undefined
-                          ? null
-                          : <div className="dsm-trae-diag-row">
-                              <span className="dsm-trae-diag-label">{t('row.diagUnsupportedRegion')}</span>
-                              <span className="dsm-trae-diag-value dsm-trae-diag-bad">
-                                {status.unsupportedRegion.region.toUpperCase()}
-                                {' · '}
-                                {status.unsupportedRegion.accounts.join(', ')}
-                              </span>
-                            </div>}
-                        <div className="dsm-trae-diag-row">
-                          <span className="dsm-trae-diag-label">{t('row.diagProvider')}</span>
-                          <span className="dsm-trae-diag-value dsm-trae-diag-mono">{providerOfPanel(activeRegion)}</span>
-                        </div>
-                        <div className="dsm-trae-diag-row">
-                          <span className="dsm-trae-diag-label">{t('row.diagAccount')}</span>
-                          <span className="dsm-trae-diag-value">{status.accountName}</span>
-                        </div>
-                        <div className="dsm-trae-diag-row">
-                          <span className="dsm-trae-diag-label">{t('row.diagToken')}</span>
-                          <span className="dsm-trae-diag-value dsm-trae-diag-mono">{formatDateTime(status.tokenExpiresAtMs)}</span>
-                        </div>
-                        <div className="dsm-trae-diag-row">
-                          <span className="dsm-trae-diag-label">{t('row.diagRefresh')}</span>
-                          {/* The horizon that actually ends automatic renewal.
-                              A credential that carries no refresh token (a CLI
-                              token does not) says so instead of printing a date
-                              that does not exist. */}
-                          <span className="dsm-trae-diag-value dsm-trae-diag-mono">
-                            {status.refreshExpiresAtMs === undefined
-                              ? t('row.diagRefreshNone')
-                              : formatDateTime(status.refreshExpiresAtMs)}
-                          </span>
-                        </div>
-                        <div className="dsm-trae-diag-row">
-                          <span className="dsm-trae-diag-label">{t('row.diagCatalog')}</span>
-                          <span className="dsm-trae-diag-value">{formatNumber(status.models.length)}</span>
-                        </div>
-                        <div className="dsm-trae-diag-row">
-                          <span className="dsm-trae-diag-label">{t('row.diagEnabled')}</span>
-                          <span className="dsm-trae-diag-value">{formatNumber(status.enabledModelIds.length)}</span>
-                        </div>
-                        <div className="dsm-trae-diag-row">
-                          <span className="dsm-trae-diag-label">{t('row.diagPool')}</span>
-                          <span className="dsm-trae-diag-value">
-                            {status.pool === undefined
-                              ? t('row.diagPoolOff')
-                              : status.pool.enabled
-                                ? t('row.diagPoolOn', { count: status.pool.effectiveMemberAccountIds?.length ?? status.pool.accounts.length })
-                                : t('row.diagPoolOff')}
-                          </span>
-                        </div>
-                        <div className="dsm-trae-diag-row">
-                          <span className="dsm-trae-diag-label">{t('row.diagCheckin')}</span>
-                          <span className="dsm-trae-diag-value">
-                            {/* Judged from the CHECK-IN DOCUMENT first, not from
-                                the pool: the pool is a separate, opt-in feature
-                                and its absence says nothing about whether this
-                                panel's upstream offers the daily reward. Reading
-                                `pool.checkinSupported` alone reported 「本面板不
-                                提供」 on every profile that had not turned the
-                                pool on — the opposite of the truth on a CN
-                                account, which is the only panel that HAS it. */}
-                            {status.checkin !== undefined || status.pool?.checkinSupported === true
-                              ? t('row.diagCheckinOn')
-                              : t('row.diagCheckinOff')}
-                          </span>
-                        </div>
-                        <div className="dsm-trae-diag-row">
-                          <span className="dsm-trae-diag-label">{t('row.diagRaw')}</span>
-                          <span className="dsm-trae-diag-value dsm-trae-diag-mono">
-                            {status.rawChat === undefined ? t('row.diagRawOff') : status.rawChat.state}
-                          </span>
-                        </div>
-                        <div className="dsm-trae-diag-row">
-                          <span className="dsm-trae-diag-label">{t('row.diagFailures')}</span>
-                          {(() => {
-                            // The upstream's OWN text, joined — not a rewritten
-                            // sentence. This panel exists to be quoted.
-                            const failures: string[] = []
-                            if (status.creditsError !== undefined) failures.push(status.creditsError)
-                            if (status.payStatusError !== undefined) failures.push(status.payStatusError)
-                            if (status.checkinError !== undefined) failures.push(status.checkinError)
-                            if (writeError !== undefined) failures.push(writeError)
-                            return failures.length === 0
-                              ? <span className="dsm-trae-diag-value">{t('row.diagNoFailures')}</span>
-                              : <span className="dsm-trae-diag-value dsm-trae-diag-bad dsm-trae-diag-mono">
-                                  {failures.join(' · ')}
-                                </span>
-                          })()}
-                        </div>
-                        <div className="dsm-trae-diag-row">
-                          <span className="dsm-trae-diag-label">{t('row.diagQuarantine')}</span>
-                          {/* A copy that was found unreadable is KEPT, renamed
-                              aside — so the account it held is still on disk,
-                              just not where the plugin looks any more. That is
-                              the answer to "where did my account go", and it
-                              belongs in the panel meant to be quoted. */}
-                          {status.quarantined === undefined || status.quarantined.length === 0
-                            ? <span className="dsm-trae-diag-value">{t('row.diagQuarantineNone')}</span>
-                            : <span className="dsm-trae-diag-value dsm-trae-diag-bad dsm-trae-diag-mono">
-                                {status.quarantined.map(item => item.quarantinedAs).join(' · ')}
-                              </span>}
-                        </div>
-                      </div>
-                      <p className="dsm-trae-diag-hint">{t('row.diagHint')}</p>
-                    </>}
-              </div>
-              {status.status === 'signed-out' && loading
-                ? <>
-                  {/* Nothing has answered yet. Saying "not signed in" here would be a
-                      claim, not a placeholder — issue #77 is exactly the case of a
-                      signed-in user reading it for a minute. */}
-                  <p className="dsm-trae-usage-text" role="status">{t('row.accountsLoading')}</p>
-                </>
-                : null}
-              {status.status === 'signed-out' && !loading
-                ? <>
-                  <p className="dsm-trae-usage-text">{status.message ?? t('row.signedOutHint')}</p>
-                  {/* A recognized-but-unserved region (issue #66). Placed on the
-                      signed-out screen for the same reason the quarantine notice
-                      is: that is where the exclusion leaves the user. Without it
-                      the panel says "not signed in" while a real US login sits on
-                      disk — the exact state that made the reporter sign in again
-                      and again. */}
-                  {status.unsupportedRegion === undefined
-                    ? null
-                    : <details className="dsm-trae-quarantine" open>
-                      <summary>{t('row.unsupportedRegionTitle')}</summary>
-                      <p className="dsm-trae-quarantine-hint">{t('row.unsupportedRegionHint')}</p>
-                      <ul className="dsm-trae-quarantine-list">
-                        {status.unsupportedRegion.accounts.map(name => (
-                          <li key={name}><code>{name}</code></li>
-                        ))}
-                      </ul>
-                    </details>}
-                  {/* A quarantined copy is the ONE explanation that fits the
-                      state a user lands in after an account went missing: the
-                      signed-out screen is exactly where issue #56's reporter
-                      was, so the notice belongs here and not only in the
-                      diagnostics panel (which a signed-out user never sees). */}
-                  {status.quarantined && status.quarantined.length > 0
-                    ? <details className="dsm-trae-quarantine" open>
-                      <summary>{t('row.quarantineTitle')} ({status.quarantined.length})</summary>
-                      <p className="dsm-trae-quarantine-hint">{t('row.quarantineHint')}</p>
-                      <ul className="dsm-trae-quarantine-list">
-                        {status.quarantined.map(item => (
-                          <li key={item.quarantinedAs}>
-                            <code>{item.quarantinedAs}</code>
-                            <span className="dsm-trae-quarantine-reason">
-                              {item.accounts === undefined
-                                ? t('row.quarantineAccountsUnknown')
-                                : t('row.quarantineAccounts', { count: item.accounts })}
-                              {' · '}
-                              {t('row.quarantineBytes', { bytes: item.bytes })}
-                            </span>
-                          </li>
-                        ))}
-                      </ul>
-                    </details>
-                    : null}
-                  {status.searched && status.searched.length > 0
-                    ? <details className="dsm-trae-searched">
-                      <summary>{t('row.searchedTitle')} ({status.searched.length})</summary>
-                      <p className="dsm-trae-searched-hint">{t('row.searchedHint')}</p>
-                      <ul className="dsm-trae-searched-list">
-                        {status.searched.map(item => (
-                          <li key={`${item.source}:${item.path}`}>
-                            <code>{item.path}</code>
-                            <span className="dsm-trae-searched-reason">
-                              {t(item.source === 'cli' ? 'row.sourceCli' : 'row.sourceDesktop')}
-                              {' · '}
-                              {t(item.reason === 'missing' ? 'row.reasonMissing' : item.reason === 'unreadable' ? 'row.reasonUnreadable' : 'row.reasonInvalid')}
-                            </span>
-                          </li>
-                        ))}
-                      </ul>
-                    </details>
-                    : null}
-                </>
-                : null}
-              {status.status === 'error' ? <p className="dsm-trae-usage-error">{status.message}</p> : null}
-            </div>
-          : null}
+        {open ? cardBody : null}
       </div>
       <BusyOverlay
         visible={saving || savingSettings}

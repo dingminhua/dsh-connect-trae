@@ -209,6 +209,11 @@ describe('the card stylesheet behind the 3.2.0 settings and account blocks', () 
  * bundle) instead of inventing a plausible-looking name.
  */
 const TOKENS_VERIFIED_AGAINST_DSH = new Set([
+  // The optional sidebar PAGE's back control (Config.sidebarPanel). The page is
+  // a full-height surface, so its back button sits on the base layer rather than
+  // on a nested card layer — `--dsw-alias-bg-layer-1` is the host's "primary
+  // raised surface" token, verified against the live theme.
+  '--dsw-alias-bg-layer-1',
   '--dsw-alias-bg-layer-2',
   '--dsw-alias-bg-layer-3',
   // The busy veil's mask: the exact pair the host's own overlays use, so the

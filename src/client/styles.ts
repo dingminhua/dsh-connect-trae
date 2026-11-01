@@ -704,6 +704,29 @@ export const TRAE_CARD_CSS = `
 .dsm-trae-pool-log-warn{border-left-color:var(--dsw-alias-state-warn-primary,#b45309)}
 .dsm-trae-pool-log-error{border-left-color:var(--dsw-alias-state-error-primary,#d92d20)}
 .dsm-trae-pool-log-text{overflow-wrap:anywhere}
+/* THE OPTIONAL SIDEBAR PAGE (Config.sidebarPanel).
+ *
+ * The same card body, drawn as a full page in the centre column: no card border
+ * or header, its own heading, and a scrolling column so a long pool log cannot
+ * push the header off screen. Widths are capped at the host's own reading width
+ * rather than the viewport, which is what keeps a wide monitor from stretching
+ * the account table into unreadable rows.
+ *
+ * The page's back control reuses the card's own button shape but not its
+ * dsm-btn class: this one is navigation, not an action. Its caret is drawn in
+ * CSS, for the same reason the card's chevron is — the host primitives' icon
+ * names are not a stable contract across DSH releases. */
+.dsm-trae-page{box-sizing:border-box;height:100%;display:flex;flex-direction:column;align-items:center;gap:20px;padding:28px clamp(24px,4vw,48px) 48px;overflow:auto;color:var(--dsw-alias-label-primary,#e6e6e6)}
+.dsm-trae-page>*{width:100%;max-width:860px}
+.dsm-trae-page-head{display:flex;flex-direction:column;gap:6px}
+.dsm-trae-page-back{appearance:none;font:inherit;cursor:pointer;border:1px solid var(--dsw-alias-border-l2,#36373b);background:var(--dsw-alias-bg-layer-1,#17181b);color:var(--dsw-alias-label-secondary,#c7c7c7);border-radius:8px;padding:5px 12px;display:inline-flex;align-items:center;gap:6px;align-self:flex-start;font-size:13px;line-height:20px}
+.dsm-trae-page-back:hover{color:var(--dsw-alias-label-primary,#e6e6e6);border-color:var(--dsw-alias-label-dimmed,#777)}
+.dsm-trae-page-back-caret{display:inline-block;width:7px;height:7px;border-left:1.6px solid currentColor;border-bottom:1.6px solid currentColor;transform:rotate(45deg);margin-right:2px}
+.dsm-trae-page-icon{width:40px;height:40px;border-radius:9px;align-self:flex-start;margin-top:14px}
+.dsm-trae-page-title{margin:0;font-size:20px;font-weight:600;line-height:1.4}
+.dsm-trae-page-desc{margin:0;font-size:13px;line-height:1.5;color:var(--dsw-alias-label-tertiary,#999)}
+.dsm-trae-page-body .dsm-trae-usage{padding:20px 20px 8px;border:1px solid var(--dsw-alias-border-l2,#36373b);background:var(--dsw-alias-bg-layer-3,#202126);border-radius:12px}
+.dsm-trae-panel-icon{display:block;border-radius:4px;flex:none}
 `
 
 

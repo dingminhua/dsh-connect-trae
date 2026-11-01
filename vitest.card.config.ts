@@ -11,7 +11,7 @@ import { defineConfig } from 'vitest/config'
  */
 export default defineConfig({
   test: {
-    include: ['tools/card-shot.tsx', 'tools/promo-shot.tsx', 'tools/panels-shot.tsx'],
+    include: ['tools/card-shot.tsx', 'tools/promo-shot.tsx', 'tools/panels-shot.tsx', 'tools/page-shot.tsx'],
     environment: 'node',
   },
 })
