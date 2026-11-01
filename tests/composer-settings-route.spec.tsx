@@ -162,6 +162,43 @@ describe('the panel header carries a SETTINGS button', () => {
     await waitFor(() => { expect(document.querySelector('[role="dialog"]')).toBeNull() })
   })
 
+  it('is drawn on the INTERNATIONAL panel too, not just the CN one', async () => {
+    // The report that asked for this (m01198) was about the GLOBAL panel — it
+    // read 「Trae 国际版套餐」 and its rows carried plans, not balances. The
+    // header is shared, but "shared" is an assumption a test should hold: the two
+    // regions already diverge in the table (a plan column, a different fetch
+    // route), so a future edit could easily make the button CN-only by accident.
+    const calls: string[] = []
+    vi.stubGlobal('fetch', async (input: string | URL | Request) => {
+      calls.push(String(input))
+      return new Response(JSON.stringify({
+        status: 'signed-in',
+        accountId: 'ai-1',
+        accountName: 'dingminhua',
+        tokenExpiresAtMs: Date.now() + 3_600_000,
+        region: 'ai',
+        accounts: [
+          { id: 'ai-1', accountName: 'dingminhua', edition: 'sg', region: 'ai', source: 'desktop', tokenExpiresAtMs: Date.now() + 3_600_000, selected: true },
+        ],
+        models: [],
+        enabledModelIds: [],
+        payStatus: { isDollarUsageBilling: true, hasPackage: false, inTrial: false, trialEndTimeMs: 0, payIdentity: 5, payIdentityStr: 'Free' },
+      }), { status: 200 })
+    })
+    const onOpenSettings = vi.fn(() => true)
+    const { container } = render(
+      <ComposerPoints t={t} provider="trae-global" region="ai" onOpenSettings={onOpenSettings} />,
+    )
+    await openPanel(container)
+
+    // It is the INTERNATIONAL panel that is open (its own aria-label), and the
+    // settings control is there beside that title.
+    expect(document.querySelector('[role="dialog"]')?.getAttribute('aria-label')).toBe('composer.panelTitleGlobal')
+    expect(settingsButton()).not.toBeNull()
+    fireEvent.click(settingsButton() as HTMLButtonElement)
+    expect(onOpenSettings).toHaveBeenCalledTimes(1)
+  })
+
   it('is NOT drawn when no route was injected', async () => {
     // The same rule the page header's back button follows: a control that cannot
     // do anything must not be drawn.

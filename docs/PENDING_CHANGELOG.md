@@ -68,13 +68,14 @@
 
 ### 测试
 
-- 新增 `tests/composer-settings-route.spec.tsx`（14 例），四组：
+- 新增 `tests/composer-settings-route.spec.tsx`（15 例），四组：
   - **路由**：`openBundle` 按精确包名优先、`pluginNavigation` 缺席时回退到
     `selectPanel('plugins')`、两者都没有时返回 `false` 而不抛、`openBundle` 抛时
     仍回退、**两者都抛时返回 `false`**、以及**每次调用都重新探测**（后出现的服务
     要能找到）。
-  - **按钮**：有路线时画出来、按下后**关掉浮层**、无路线时不画、打不开时显示
-    错误行且**浮层不关**、错误行与「读上游失败」互不覆盖。
+  - **按钮**：有路线时画出来、按下后**关掉浮层**、**国际版面板同样有它**（那条报告
+    说的就是国际版）、无路线时不画、打不开时显示错误行且**浮层不关**、错误行与
+    「读上游失败」互不覆盖。
   - **穿过 gate**：把路线接到 `ComposerPointsGate` 上真的能按到——否则路线可以
     接进入口却被 gate 丢掉，而上面每一条断言都还是绿的。
   - **没留下残骸**：两个字典里的 `composer.refresh` / `composer.refreshing`
@@ -89,4 +90,4 @@
   的**，只序列化渲染容器会得到一个空浮层（第一版就是这样，AUDIT 全部 null）；
   **jsdom 的盒子全是 0**，所以锚定定位会把浮层放到视口外，预览里必须用
   `!important` 钉住位置才拍得到。
-- 全仓 **99 个文件 / 1273 例**通过；两个 tsconfig 分别 typecheck 通过；构建通过。
+- 全仓 **99 个文件 / 1274 例**通过；两个 tsconfig 分别 typecheck 通过；构建通过。
