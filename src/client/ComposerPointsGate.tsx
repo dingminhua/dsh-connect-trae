@@ -100,6 +100,12 @@ export interface ComposerPointsGateProps {
   /** Settings scope from the configForms mirror; the card writes the same field. */
   settingsScope?: TraeUsageCardInjected['settingsScope']
   /**
+   * Route to this plugin's settings page, for the panel header's control.
+   * Absent in tests and on a caller that did not wire it — the panel then draws
+   * no settings button at all (see `ComposerPointsProps.onOpenSettings`).
+   */
+  onOpenSettings?: () => boolean
+  /**
    * Standard slot hook: reads one Host-computed projection for this session.
    * Injected by the slot, so it is absent when this gate is rendered directly
    * from a test.
@@ -157,5 +163,13 @@ export function ComposerPointsGate(props: ComposerPointsGateProps) {
   // rejects it.
   if (regionCreditPositionOf(scopeValueOf(settingsScope), region) !== (position ?? 'composer')) return null
 
-  return <ComposerPoints t={t} provider={provider as string} region={region} {...settingsScope === undefined ? {} : { settingsScope }} />
+  return (
+    <ComposerPoints
+      t={t}
+      provider={provider as string}
+      region={region}
+      {...settingsScope === undefined ? {} : { settingsScope }}
+      {...props.onOpenSettings === undefined ? {} : { onOpenSettings: props.onOpenSettings }}
+    />
+  )
 }

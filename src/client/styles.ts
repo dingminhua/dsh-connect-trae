@@ -778,17 +778,19 @@ export const COMPOSER_POINTS_CSS = `
 .dsm-trae-composer-panel-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
 .dsm-trae-composer-panel-title{font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary,CanvasText)}
 /* Self-contained: the dsm-btn primitive lives in TRAE_CARD_CSS, which the
-   composer never loads, so the refresh button must style itself. */
-.dsm-trae-composer-panel-refresh{
+   composer never loads, so the settings button must style itself. Same shape as
+   the page header's back control (navigation, not an action), sized to this
+   narrower panel. */
+.dsm-trae-composer-panel-settings{
   appearance:none;flex:none;margin-left:auto;padding:3px 10px;
   border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.34));
   border-radius:7px;background:transparent;
   color:var(--dsw-alias-label-secondary,#444);
   font:inherit;font-size:11px;line-height:16px;cursor:pointer;
 }
-.dsm-trae-composer-panel-refresh:hover:not(:disabled){border-color:var(--dsw-alias-label-dimmed,rgba(127,127,127,.6));color:var(--dsw-alias-label-primary,CanvasText)}
-.dsm-trae-composer-panel-refresh:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#5686fe);outline-offset:1px}
-.dsm-trae-composer-panel-refresh:disabled{opacity:.5;cursor:default}
+.dsm-trae-composer-panel-settings:hover:not(:disabled){border-color:var(--dsw-alias-label-dimmed,rgba(127,127,127,.6));color:var(--dsw-alias-label-primary,CanvasText)}
+.dsm-trae-composer-panel-settings:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#5686fe);outline-offset:1px}
+.dsm-trae-composer-panel-settings:disabled{opacity:.5;cursor:default}
 /* The panel is a TABLE: one row per account in the region, one figure (the
    general balance) per row, and a row click switches accounts.
 

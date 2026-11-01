@@ -225,8 +225,13 @@ export const en = {
   'composer.signedOut': 'Not signed in',
   'composer.points': 'Trae CN',
   'composer.pointsGlobal': 'Trae Global',
-  'composer.refresh': 'Refresh credits',
-  'composer.refreshing': 'Refreshing credits…',
+  // The panel header's one control: a route to this plugin's own settings page.
+  // It REPLACED the refresh button — the balance already re-reads when the
+  // panel opens, on every account switch and every five minutes, while "where
+  // do I change this?" had no answer from inside the popover.
+  'composer.openSettings': 'Settings',
+  'composer.openSettingsHint': 'Open this plugin\'s settings page',
+  'composer.openSettingsFailed': 'This host has no route to the plugin settings page',
   'composer.refreshFailed': 'Could not refresh credits',
   'row.accountsRefreshed': 'Accounts refreshed: {count} found{selected}',
   'row.accountsSaved': 'bound to',
@@ -668,8 +673,9 @@ export const zh: Record<TraeSettingsKey, string> = {
   'composer.signedOut': '未登录',
   'composer.points': 'Trae CN',
   'composer.pointsGlobal': 'Trae 国际版',
-  'composer.refresh': '刷新积分',
-  'composer.refreshing': '正在刷新积分…',
+  'composer.openSettings': '设置',
+  'composer.openSettingsHint': '打开本插件的设置页',
+  'composer.openSettingsFailed': '这个宿主没有通向插件设置页的入口',
   'composer.refreshFailed': '积分刷新失败',
   'row.accountsRefreshed': '已刷新账号：找到 {count} 个账号{selected}',
   'row.accountsSaved': '已绑定',

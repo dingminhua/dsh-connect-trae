@@ -28,6 +28,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import { TraeUsageCard } from './TraeUsageCard.tsx'
 import { ComposerPointsGate } from './ComposerPointsGate.tsx'
+import type { ComposerPointsGateProps } from './ComposerPointsGate.tsx'
 import { TraeModelLabel } from './TraeModelLabel.tsx'
 import type { TraeUsageCardInjected } from './TraeUsageCard.tsx'
 import type { TraeCreditPosition } from '../status-paths.ts'
@@ -38,6 +39,7 @@ import { TRAE_PLUGIN_ICON } from './icon.ts'
 import {
   setSidebarPanelWanted, sidebarPanelWanted, subscribeSidebarPanelWanted,
 } from './panel-switch.ts'
+import { openPluginSettingsPage } from './settings-route.ts'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
@@ -86,6 +88,17 @@ export function apply(ctx: ClientContext): void {
     // absent service. Never touch `ctx.configForms` directly; go through
     // `get`.
     const softGet = (name: string): unknown => (ctx as unknown as { get(name: string): unknown }).get(name)
+
+    /**
+     * The composer panel's route to this plugin's own settings page.
+     *
+     * Wrapped in a closure, not resolved here: `pluginNavigation` belongs to the
+     * Plugins bundle and its apply order is not ours to assume, so probing once
+     * at `apply` could capture `undefined` permanently. The decision itself (and
+     * its `layout` fallback) lives in `settings-route.ts`, where the spec can
+     * exercise the real chain instead of a mirror.
+     */
+    const onOpenSettings = (): boolean => openPluginSettingsPage(softGet)
 
     const forms = softGet('configForms') as
       | {
@@ -219,7 +232,12 @@ export function apply(ctx: ClientContext): void {
       try {
         ctx.slots.inject(slotName as never, () => (ctx.slots as unknown as {
           register(
-            options: { name: string; id: string; order: number; locale: string; inject: () => TraeUsageCardInjected },
+            // The gate's OWN prop shape, not the card's: this registration
+            // injects `position` and `onOpenSettings` on top of the card's
+            // `t` / `settingsScope`. Spellling it `TraeUsageCardInjected` made
+            // the two extra props an excess-property surprise waiting for the
+            // next refactor to trip over.
+            options: { name: string; id: string; order: number; locale: string; inject: () => ComposerPointsGateProps },
             component: unknown,
           ): () => void
         }).register({
@@ -229,8 +247,10 @@ export function apply(ctx: ClientContext): void {
           locale: namespace,
           // `settingsScope` rides along so the gate can honor the card's
           // "show credits in the composer" switch and its seat without a second
-          // writer; `position` is which seat THIS registration occupies.
-          inject: () => ({ t, settingsScope, position }),
+          // writer; `position` is which seat THIS registration occupies;
+          // `onOpenSettings` is the panel header's route to this plugin's own
+          // page (see `settings-route.ts` for why it is probed at PRESS time).
+          inject: () => ({ t, settingsScope, position, onOpenSettings }),
         }, ComposerPointsGate))
       } catch (error: unknown) {
         // Isolated per seat: a failed registration in one must never take the

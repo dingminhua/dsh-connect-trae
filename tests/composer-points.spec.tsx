@@ -455,10 +455,10 @@ describe('ComposerPoints readout', () => {
     await waitFor(() => { expect(screen.queryByText(/composer\.panelTitle/)).toBeNull() })
   })
 
-  it('the row is one clickable trigger with NO refresh button; refresh lives in the panel', async () => {
+  it('the row is one clickable trigger with NO header controls of its own', async () => {
     // The composer row is shared and must stay narrow: it is a single trigger,
-    // and the refresh action is behind the click (in the anchored panel), like
-    // the neighbouring Expert control.
+    // and everything else is behind the click (in the anchored panel), like the
+    // neighbouring Expert control.
     stubRoute()
     const { container } = render(<ComposerPoints t={t} provider="trae" region="cn" />)
     await waitFor(() => { expect(screen.getByText(/composer\.points/)).toBeTruthy() })
@@ -467,15 +467,20 @@ describe('ComposerPoints readout', () => {
     expect(trigger?.getAttribute('aria-haspopup')).toBe('dialog')
     // The only button in the row is the trigger itself.
     expect(container.querySelectorAll('button')).toHaveLength(1)
-    expect(screen.queryByText(/composer\.refresh/)).toBeNull()
+    expect(screen.queryByText(/composer\.openSettings/)).toBeNull()
 
-    // Clicking opens the panel, which carries the account, both buckets and the
-    // refresh button.
+    // Clicking opens the panel, which carries the account table. No
+    // `onOpenSettings` was passed here, so it draws NO settings button: a
+    // control that cannot do anything must not be drawn.
     fireEvent.click(trigger as HTMLButtonElement)
     await waitFor(() => { expect(screen.getByText(/composer\.panelTitle/)).toBeTruthy() })
     expect(screen.getByText(/composer\.account/)).toBeTruthy()
     expect(screen.getByText(/composer\.generalCredits/)).toBeTruthy()
-    expect(screen.getByText(/composer\.refresh/)).toBeTruthy()
+    expect(screen.queryByText(/composer\.openSettings/)).toBeNull()
+    // The refresh button is GONE, not renamed: the balance re-reads on open, on
+    // every account switch and every five minutes, so it had no work of its own
+    // left (m01198).
+    expect(document.querySelector('.dsm-trae-composer-panel-refresh')).toBeNull()
     // The panel is a TABLE of accounts, not a property list: every account in
     // the region gets a row, and the one figure per row is the general balance.
     expect(screen.getByText('LaoDing')).toBeTruthy()

@@ -10,9 +10,16 @@
  * at a time and nothing overlaps.
  *
  * The row itself is a bare clickable readout — `Trae CN · 657` — with NO
- * refresh control. Clicking it opens an anchored panel: a TABLE with one row
+ * controls of its own. Clicking it opens an anchored panel: a TABLE with one row
  * per account in the region and that account's general balance, where a row
- * click switches to it. The manual refresh button lives in the panel too.
+ * click switches to it.
+ *
+ * The panel's header carries a SETTINGS button, not a refresh button: the
+ * question a reader actually has at this panel is "where do I change this?", and
+ * the answer used to require closing the popover, finding the Plugins row and
+ * clicking the bundle. Refreshing is not lost — the readout polls every five
+ * minutes and every account switch re-reads — but it no longer needs a button of
+ * its own. One press now lands on this plugin's own page (`./settings-route.ts`).
  *
  * Two deliberate choices in that panel:
  *
@@ -97,6 +104,17 @@ export interface ComposerPointsProps extends Partial<ComposerPointsInjected> {
    * inert, because a panel that switches nothing must not pretend to.
    */
   settingsScope?: TraeUsageCardInjected['settingsScope']
+  /**
+   * Opens this plugin's own settings page; `false` means this host has no route
+   * there. Absent means the panel draws no settings button at all — a control
+   * that cannot do anything must not be drawn, the same rule the page header's
+   * back button follows.
+   *
+   * Passed in rather than reached for here for one reason: the route needs the
+   * entry's service probe, and this component is rendered directly by tests that
+   * have no host. `./settings-route.ts` owns the decision; this owns the button.
+   */
+  onOpenSettings?: () => boolean
 }
 
 /**
@@ -185,7 +203,7 @@ function formatClock(value: number): string {
 }
 
 export function ComposerPoints(props: ComposerPointsProps) {
-  const { t, provider, region, settingsScope } = props
+  const { t, provider, region, settingsScope, onOpenSettings } = props
   if (t === undefined) throw new Error('Composer points readout requires its translation function')
   const owned = provider === undefined ? undefined : TRAE_COMPOSER_PROVIDERS[provider]
   const activeRegion = region ?? owned
@@ -202,9 +220,16 @@ export function ComposerPoints(props: ComposerPointsProps) {
    * open, for the same reason the credit route does.
    */
   const [accountPlans, setAccountPlans] = useState<Record<string, TraeWebPayStatus | undefined> | undefined>(undefined)
-  const [busy, setBusy] = useState(false)
   const [switchingId, setSwitchingId] = useState<string | undefined>(undefined)
   const [failed, setFailed] = useState(false)
+  /**
+   * The settings button was pressed on a host with no route to the page.
+   *
+   * Its own state rather than reusing `failed`: the two say different things
+   * ("the upstream read failed" vs "this host cannot open the settings page"),
+   * and a shared flag would let one press erase the other's explanation.
+   */
+  const [settingsFailed, setSettingsFailed] = useState(false)
   const [lastRefresh, setLastRefresh] = useState<number | undefined>(undefined)
   const [open, setOpen] = useState(false)
   const inFlight = useRef(false)
@@ -230,7 +255,6 @@ export function ComposerPoints(props: ComposerPointsProps) {
   const fetchUsage = useCallback(async (signal?: AbortSignal): Promise<void> => {
     if (inFlight.current || activeRegion === undefined) return
     inFlight.current = true
-    if (mounted.current) setBusy(true)
     try {
       const response = await fetch(withTraeRegion(TRAE_USAGE_PATH, activeRegion), {
         headers: { accept: 'application/json' },
@@ -247,7 +271,6 @@ export function ComposerPoints(props: ComposerPointsProps) {
       if (mounted.current && signal?.aborted !== true) setFailed(true)
     } finally {
       inFlight.current = false
-      if (mounted.current) setBusy(false)
     }
   }, [activeRegion])
 
@@ -380,6 +403,30 @@ export function ComposerPoints(props: ComposerPointsProps) {
     }
   }
 
+  /**
+   * The header's settings control: open this plugin's page, then close.
+   *
+   * CLOSING IS PART OF THE JOB. The panel is portaled to `document.body` and
+   * floats over the composer; navigating the centre column does not remove it,
+   * so leaving it open would park a credits table on top of the page the user
+   * just asked for. It is not reopened on return — a popover that comes back by
+   * itself after navigation is a popover the user cannot get rid of.
+   *
+   * `false` (no route on this host) sets the panel's own error line rather than
+   * doing nothing: a press that changes nothing on screen is indistinguishable
+   * from a broken button, and the honest answer here is "this host has no way
+   * there".
+   */
+  const openSettings = (): void => {
+    const opened = onOpenSettings === undefined ? false : onOpenSettings()
+    if (!opened) {
+      setSettingsFailed(true)
+      return
+    }
+    setSettingsFailed(false)
+    setOpen(false)
+  }
+
   // Not this plugin's model: render nothing at all, so the composer row is
   // untouched while another provider is in use.
   //
@@ -477,14 +524,30 @@ export function ComposerPoints(props: ComposerPointsProps) {
             <span className="dsm-trae-composer-panel-title">
               {activeRegion === 'ai' ? t('composer.panelTitleGlobal') : t('composer.panelTitle')}
             </span>
-            <button
-              type="button"
-              className="dsm-trae-composer-panel-refresh"
-              disabled={busy || switchingId !== undefined}
-              onClick={() => { void fetchUsage() }}
-            >
-              {busy ? t('composer.refreshing') : t('composer.refresh')}
-            </button>
+            {/* SETTINGS, not refresh (the owner's m01198).
+                The reader looking at this panel has a question — "where do I
+                change this?" — and answering it used to mean closing the
+                popover, finding the Plugins row and clicking the bundle. The
+                balance itself no longer needs a button: it polls every five
+                minutes, every account switch re-reads, and OPENING this panel
+                re-reads too (see the open effect above), so the affordance the
+                refresh button provided is still one click away.
+                Not drawn when `onOpenSettings` is absent: a control that cannot
+                do anything must not be drawn, the same rule the page header's
+                back button follows. */}
+            {onOpenSettings === undefined
+              ? null
+              : (
+                <button
+                  type="button"
+                  className="dsm-trae-composer-panel-settings"
+                  title={t('composer.openSettingsHint')}
+                  disabled={switchingId !== undefined}
+                  onClick={openSettings}
+                >
+                  {t('composer.openSettings')}
+                </button>
+              )}
           </div>
           {signedOut
             ? <p className="dsm-trae-composer-panel-empty">{t('composer.signedOut')}</p>
@@ -557,6 +620,9 @@ export function ComposerPoints(props: ComposerPointsProps) {
             </span>
           </div>
           {failed ? <p className="dsm-trae-composer-panel-error" role="status">{t('composer.refreshFailed')}</p> : null}
+          {settingsFailed
+            ? <p className="dsm-trae-composer-panel-error" role="status">{t('composer.openSettingsFailed')}</p>
+            : null}
         </div>,
         document.body,
       )}
