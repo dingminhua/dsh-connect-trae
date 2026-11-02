@@ -241,7 +241,7 @@ export const en = {
   // header is 222px wide inside a 248px popover, and a longer label does not
   // wrap — it pushes the settings pill off its own row.
   'composer.test': 'Refresh',
-  'composer.testHint': 'Test every account checked into this panel\'s pool, one at a time, and re-read the results',
+  'composer.testHint': 'Refresh every account checked into this panel\'s pool — probes each one in turn (spends a small amount of credits, can take a minute)',
   'composer.testing': 'Refreshing…',
   'composer.testDone': 'Pool tested: {ok} of {total} answered',
   'composer.testFailed': 'Could not test the pool',
@@ -691,7 +691,7 @@ export const zh: Record<TraeSettingsKey, string> = {
   'composer.openSettingsHint': '打开本插件的设置页',
   'composer.openSettingsFailed': '这个宿主没有通向插件设置页的入口',
   'composer.test': '刷新',
-  'composer.testHint': '逐个测试本面板账号池里勾选的账号，测完重新读一次结果',
+  'composer.testHint': '刷新本面板账号池里勾选账号的状态——逐个探测（会消耗少量积分，最长约一分钟）',
   'composer.testing': '刷新中…',
   'composer.testDone': '账号池已测：{total} 个里 {ok} 个可用',
   'composer.testFailed': '账号池测速失败',

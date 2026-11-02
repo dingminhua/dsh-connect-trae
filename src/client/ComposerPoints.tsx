@@ -257,6 +257,19 @@ export function ComposerPoints(props: ComposerPointsProps) {
   const [testFailed, setTestFailed] = useState<string | undefined>(undefined)
   const [testNote, setTestNote] = useState<string | undefined>(undefined)
   const testingRef = useRef(false)
+  /**
+   * The usage document, mirrored into a ref.
+   *
+   * `fetchAccountPlans` has to read the roster out of it, and reading it as a
+   * `useCallback` DEPENDENCY made that callback a new function on every poll
+   * (every `fetchUsage` stores a fresh object). The open/region effect calls
+   * the callback by identity, so a new identity re-ran it — which meant every
+   * five-minute poll silently re-read the per-account status of every account,
+   * the exact "read on OPEN, not on a cycle" cost the effect's own comment says
+   * it is avoiding. The ref keeps the callback stable while still reading the
+   * newest document.
+   */
+  const usageRef = useRef<TraeWebUsage | undefined>(undefined)
   const [lastRefresh, setLastRefresh] = useState<number | undefined>(undefined)
   const [open, setOpen] = useState(false)
   const inFlight = useRef(false)
@@ -291,6 +304,7 @@ export function ComposerPoints(props: ComposerPointsProps) {
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
       const value = await response.json() as TraeWebUsage
       if (!mounted.current || signal?.aborted === true) return
+      usageRef.current = value
       setUsage(value)
       setLastRefresh(Date.now())
       setFailed(false)
@@ -355,8 +369,11 @@ export function ComposerPoints(props: ComposerPointsProps) {
    */
   const fetchAccountPlans = useCallback(async (signal?: AbortSignal): Promise<void> => {
     if (activeRegion !== 'ai') return
-    const roster = usage?.status === 'signed-in'
-      ? usage.accounts.filter(account => account.region === 'ai')
+    // Through the ref, not the state variable: see `usageRef` for why depending
+    // on the object here turned this into a per-poll read.
+    const document = usageRef.current
+    const roster = document?.status === 'signed-in'
+      ? document.accounts.filter(account => account.region === 'ai')
       : []
     if (roster.length === 0) { setAccountPlans({}); return }
     const entries = await Promise.all(roster.map(async account => {
@@ -374,7 +391,7 @@ export function ComposerPoints(props: ComposerPointsProps) {
     }))
     if (!mounted.current || signal?.aborted === true) return
     setAccountPlans(Object.fromEntries(entries))
-  }, [activeRegion, usage])
+  }, [activeRegion])
 
   // Per-account figures are read on OPEN, not on the 5-minute cycle.
   useEffect(() => {
@@ -527,8 +544,12 @@ export function ComposerPoints(props: ComposerPointsProps) {
       clearTimeout(timer)
       testingRef.current = false
       if (mounted.current) setTesting(false)
-      // Re-read AFTER the flags: the document is what carries the new marks.
-      await fetchUsage()
+      // Re-read AFTER the flags, and BOTH documents. The usage document carries
+      // the marks (limited-until, reachable); the account-credits document is
+      // where the table's FIGURES come from. Re-reading only the former left
+      // the numbers in the table below still showing what they said before the
+      // batch — the panel's whole point was that those numbers are stale.
+      await Promise.all([fetchUsage(), fetchAccountCredits()])
     }
   }
 
@@ -689,10 +710,54 @@ export function ComposerPoints(props: ComposerPointsProps) {
                     type="button"
                     className="dsm-trae-composer-panel-test"
                     title={t('composer.testHint')}
+                    // The label is one word ("Refresh" / 「刷新」) and says nothing
+                    // about scope or cost, so the accessible name carries the
+                    // hint instead. `title` alone is not a name for a screen
+                    // reader, and a button announced as bare "Refresh" next to a
+                    // "Settings" is the ambiguity the hint exists to remove.
+                    aria-label={t('composer.testHint')}
                     disabled={testing || switchingId !== undefined}
                     onClick={() => { void testAccounts() }}
                   >
-                    {testing ? t('composer.testing') : t('composer.test')}
+                    {/* The same icon-plus-word shape the settings pill beside it
+                        uses, so the header reads as one family rather than a
+                        pill next to a bare word. A circular arrow, though, not a
+                        gear: this one re-runs the batch, it does not navigate.
+                        `aria-hidden` for the same reason as the gear — the
+                        button's own text already names it. */}
+                    <svg
+                      className={testing
+                        ? 'dsm-trae-composer-panel-test-icon dsm-trae-composer-panel-test-icon-spin'
+                        : 'dsm-trae-composer-panel-test-icon'}
+                      viewBox="0 0 16 16"
+                      width="12"
+                      height="12"
+                      fill="none"
+                      aria-hidden="true"
+                      focusable="false"
+                    >
+                      {/* Drawn in the SAME 16-unit grid with the same 1.5px stroke
+                          as the gear beside it: a 24-unit grid scaled to 12px
+                          halves the stroke and the arc renders as a grey smudge
+                          next to the crisp gear. One icon family, one grid. */}
+                      <path
+                        d="M13.4 8a5.4 5.4 0 1 1-5.4-5.4c1.5 0 2.95.62 3.96 1.63L13.4 5.6"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                      <path
+                        d="M13.4 2.6v3h-3"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                    <span className="dsm-trae-composer-panel-test-label">
+                      {testing ? t('composer.testing') : t('composer.test')}
+                    </span>
                   </button>
                 )}
               {onOpenSettings === undefined

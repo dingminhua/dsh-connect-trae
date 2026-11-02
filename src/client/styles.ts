@@ -765,9 +765,15 @@ export const COMPOSER_POINTS_CSS = `
 /* The panel is portaled to document.body and positioned from the trigger, so it
    MUST be fixed 鈥?otherwise the left/top it measures are ignored and it lands in
    document flow. All material comes from shell tokens so it follows the theme. */
+/* 264px, not the 248px this started as (m02477). The header holds a title plus
+   two icon+word controls now, and measured in the browser the English pair
+   ("Refresh" + "Settings") needed 233px of content where 248px of panel leaves
+   222 — the settings pill overflowed its own header by 11px. Widening the panel
+   is the honest fix: the alternative is renaming the owner's words, and
+   "Refresh"/「刷新」 are what they asked for. */
 .dsm-trae-composer-panel{
   position:fixed;z-index:1100;box-sizing:border-box;
-  width:min(248px,calc(100vw - 24px));padding:12px;
+  width:min(264px,calc(100vw - 24px));padding:12px;
   border:1px solid var(--dsw-alias-border-l1,rgba(127,127,127,.28));
   border-radius:var(--dsw-radius-lg,14px);
   background:var(--dsw-specific-menu,Canvas);
@@ -787,21 +793,26 @@ export const COMPOSER_POINTS_CSS = `
    always rendered (a host with no route renders none) and a wrapper that is
    always present keeps the header layout identical either way. */
 .dsm-trae-composer-panel-actions{flex:none;margin-left:auto;display:flex;align-items:center;gap:6px}
-/* THE POOL TEST BUTTON (m02091), sitting to the settings pill's left.
-   Same PILL geometry as that pill — one header, one shape language — but
-   deliberately NOT the brand tint: the fill is what marks an action as primary
-   in this product, and a batch that spends credits is not more primary than the
-   navigation beside it. Two identically-tinted pills in a 248px header would
-   also read as one segmented control instead of two different things.
+/* THE POOL TEST BUTTON (m02091, restyled m02477), sitting to the settings
+   pill's left.
 
-   Quiet-but-bordered, matching the card's own outline buttons (dsm-btn-outline)
-   at the popover's smaller type scale, because the two buttons that run this
-   batch should look like the same kind of control in both places. */
+   A GHOST control: no border, no fill, an icon plus a word — and the FILL
+   appears only on hover. That shape is the owner's call (the reference shows a
+   bare circular arrow and 「刷新」 beside the tinted settings pill) and it also
+   reads correctly: the two controls are different kinds of thing. Settings
+   navigates, so it carries the brand fill and behaves like a pill; this one
+   re-runs a batch in place, so it stays quiet until the pointer arrives.
+
+   What the earlier bordered pill got wrong: a 1px outline at rest made it look
+   like the card's dsm-btn-outline (a save/cancel control), and two bordered or
+   two tinted shapes in a 264px header read as one segmented control instead of
+   two different actions. The icon is a circular arrow, not a gear — same family,
+   different verb. */
 .dsm-trae-composer-panel-test{
   appearance:none;flex:none;
-  padding:3px 8px;
-  border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.34));
-  border-radius:999px;background:transparent;
+  display:inline-flex;align-items:center;gap:4px;
+  padding:3px 6px;
+  border:1px solid transparent;border-radius:999px;background:transparent;
   color:var(--dsw-alias-label-secondary,#444);
   font:inherit;font-size:11px;line-height:16px;
   white-space:nowrap;cursor:pointer;
@@ -809,12 +820,37 @@ export const COMPOSER_POINTS_CSS = `
 }
 .dsm-trae-composer-panel-test:hover:not(:disabled){
   background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.10));
-  border-color:var(--dsw-alias-label-dimmed,rgba(127,127,127,.6));
+  border-color:transparent;
   color:var(--dsw-alias-label-primary,CanvasText);
 }
 .dsm-trae-composer-panel-test:active{background:rgba(127,127,127,.16)}
 .dsm-trae-composer-panel-test:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#5686fe);outline-offset:1px}
 .dsm-trae-composer-panel-test:disabled{opacity:.5;cursor:default}
+/* The arrow does not shrink when the label is a longer word ("Refresh" vs
+   「刷新」): a flex item defaults to shrinking, which squashes the 12px icon into
+   an oval on a narrow popover — the same trap the gear beside it documents. */
+.dsm-trae-composer-panel-test-icon{flex:none;display:block}
+/* While the batch runs the arrow TURNS — 900ms a revolution. A disabled button
+   whose icon sits still reads as broken, and this batch is serial: the slowest
+   account decides when it ends, so "did my press land?" is a real question for
+   as long as the panel is open. Fast enough to read as motion, slow enough not
+   to look like a rendering fault. */
+.dsm-trae-composer-panel-test-icon-spin{animation:dsm-trae-panel-test-spin .9s linear infinite}
+@keyframes dsm-trae-panel-test-spin{to{transform:rotate(360deg)}}
+/* The label never wraps. Two lines in a 16px-tall control would push the header
+   taller and unstick the table below it. */
+.dsm-trae-composer-panel-test-label{flex:none;white-space:nowrap}
+/* Reduced motion: the colour transition is decoration, and the hover state is
+   still fully visible without it. */
+@media (prefers-reduced-motion:reduce){
+  .dsm-trae-composer-panel-test{transition:none}
+  /* The motion is dropped but the STATE SIGNAL must not be: the icon keeps a
+     distinct dimmed look, and the label already switches to 「刷新中…」. Without
+     this the spinning arrow would simply freeze at an arbitrary angle and read
+     as a static icon — i.e. exactly the "did my press land?" silence that the
+     rotation was added to fix. */
+  .dsm-trae-composer-panel-test-icon-spin{animation:none;opacity:.5}
+}
 /* The batch's own outcome line: a NOTE (it succeeded but not everything
    answered), not an error. Sized like the footer so it reads as a report. */
 .dsm-trae-composer-panel-note{

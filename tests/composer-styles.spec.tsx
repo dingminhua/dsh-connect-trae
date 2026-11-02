@@ -60,6 +60,23 @@ function stubRoute(): void {
         expired: { total: 0, packs: 0 },
       },
     },
+    // The pool section, for the same reason the expiry block above is here: the
+    // header's test pill only mounts when the Host reports a pool, so without
+    // this the class guard below would quietly skip that pill, its icon and its
+    // label — the exact hole this file exists to close.
+    pool: {
+      enabled: true,
+      checkinSupported: true,
+      targetModelId: 'deepseek-v4.1-flash',
+      targetModelSource: 'preferred',
+      probeInputTokens: 0,
+      memberAccountIds: ['account-1'],
+      effectiveMemberAccountIds: ['account-1'],
+      memberNames: {},
+      accounts: [
+        { accountId: 'account-1', accountName: 'LaoDing', member: true, current: true, reachable: true, generalAvailable: 3392 },
+      ],
+    },
   }), { status: 200 }))
 }
 
@@ -137,6 +154,11 @@ describe('the composer readout injects its own stylesheet', () => {
     expect(names).toContain('dsm-trae-composer-panel-settings-icon')
     expect(names).toContain('dsm-trae-composer-panel-settings-label')
     expect(names).toContain('dsm-trae-composer-panel-actions')
+    // The test pill and its icon/label came later and have their own pass below;
+    // asserting them here keeps the guard honest about what is on screen.
+    expect(names).toContain('dsm-trae-composer-panel-test')
+    expect(names).toContain('dsm-trae-composer-panel-test-icon')
+    expect(names).toContain('dsm-trae-composer-panel-test-label')
     const missing = [...new Set(names)].filter(
       name => !COMPOSER_POINTS_CSS.includes(`.${name}{`) && !COMPOSER_POINTS_CSS.includes(`.${name}:`),
     )

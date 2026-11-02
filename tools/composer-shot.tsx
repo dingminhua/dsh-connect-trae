@@ -13,7 +13,7 @@
  *
  * The specific question this change raises (m01198): the header used to carry a
  * 「刷新积分」 button and now carries 「设置」 instead. Both are single short
- * labels in a 248px panel, but the header also holds the title — so what has to
+ * labels in a 264px panel, but the header also holds the title — so what has to
  * be checked is that the title still fits on one line beside it, and that the
  * button's height stays on the 16px line rather than growing the header.
  *

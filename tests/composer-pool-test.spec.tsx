@@ -218,6 +218,25 @@ describe('the pool test button in the panel header', () => {
     })
   })
 
+  it('re-reads the account-credits document too, because that is where the FIGURES are', async () => {
+    // The sibling case above only proves the usage read happens, and that
+    // document has no balance figures in it — the table's numbers come from
+    // `/account-credits`. A press that skipped that read left the table showing
+    // exactly the figures the batch had just made stale, which is the one thing
+    // this button exists to prevent.
+    const { calls } = stubRoutes()
+    const { container } = render(<ComposerPoints t={t} provider="trae" region="cn" />)
+    await openPanel(container)
+    const before = calls.filter(call => call.startsWith('GET ') && call.includes('/account-credits')).length
+
+    fireEvent.click(testButton() as HTMLButtonElement)
+    await waitFor(() => { expect(screen.getByText(/composer\.testDone/)).toBeTruthy() })
+    await waitFor(() => {
+      const after = calls.filter(call => call.startsWith('GET ') && call.includes('/account-credits')).length
+      expect(after).toBeGreaterThan(before)
+    })
+  })
+
   it('says the batch was given up on when the DEADLINE aborts it', async () => {
     // An ABORT is the deadline, not a transport failure: "took too long, gave
     // up" is actionable where "failed" is not. Driven with fake timers because
@@ -319,21 +338,37 @@ describe('the pool test button in the panel header', () => {
   })
 })
 
-describe('the test button copies no styling from the settings pill', () => {
-  it('is a pill of the same geometry but WITHOUT the brand fill', () => {
-    // One header, one shape language — but the brand tint marks a primary
-    // action, and a batch that spends credits is not more primary than the
-    // navigation beside it. Two identically-tinted pills would also read as one
-    // segmented control.
+describe('the test button is the header\'s GHOST control, not a second pill', () => {
+  it('has no border and no fill at rest, and gains its fill only on hover', () => {
+    // The reference (m02477) shows a bare circular arrow and 「刷新」 with no
+    // outline and no tint, beside a settings pill that carries both. The two
+    // controls are different kinds of thing: one navigates, one re-runs a batch
+    // in place — so they must not share a resting shape.
+    //
+    // What the first version got wrong: a 1px outline at rest read as the card's
+    // dsm-btn-outline (a save/cancel control), and two bordered shapes in a
+    // 248px header read as one segmented control.
     const rule = /\.dsm-trae-composer-panel-test\{([^}]*)\}/.exec(COMPOSER_POINTS_CSS)?.[1]
     expect(rule).toBeDefined()
     expect(rule).toContain('border-radius:999px')
     expect(rule).toContain('font-size:11px')
     expect(rule).toContain('cursor:pointer')
+    // Ghost: the border is transparent (kept for layout stability, so the hover
+    // state does not change the box size) and the fill is none.
+    expect(rule).toContain('border:1px solid transparent')
+    expect(rule).toContain('background:transparent')
+    // Not the brand tint: that fill is what marks the settings pill primary.
     expect(rule).not.toContain('rgba(86,134,254')
-    // Bordered like the card's own outline buttons, because the same batch is
-    // run from there and the two controls should look like the same kind.
-    expect(rule).toContain('border:1px solid var(--dsw-alias-border-l2')
+    // Icon plus word, laid out in a row — the same shape the settings pill uses.
+    expect(rule).toContain('display:inline-flex')
+    expect(rule).toContain('gap:4px')
+  })
+
+  it('does not tint its hover either, so it never competes for the brand colour', () => {
+    const hover = /\.dsm-trae-composer-panel-test:hover:not\(:disabled\)\{([^}]*)\}/.exec(COMPOSER_POINTS_CSS)?.[1]
+    expect(hover).toBeDefined()
+    expect(hover).toContain('interactive-bg-hover')
+    expect(hover).not.toContain('rgba(86,134,254')
   })
 
   it('carries hover, active, focus and disabled states', () => {
@@ -341,6 +376,35 @@ describe('the test button copies no styling from the settings pill', () => {
     expect(COMPOSER_POINTS_CSS).toContain('.dsm-trae-composer-panel-test:active{')
     expect(COMPOSER_POINTS_CSS).toContain('.dsm-trae-composer-panel-test:focus-visible{')
     expect(COMPOSER_POINTS_CSS).toContain('.dsm-trae-composer-panel-test:disabled{')
+  })
+
+  it('pins the icon and the label so neither shrinks into an oval', () => {
+    // flex:none on both: a flex item defaults to shrinking, and at 11px a
+    // squashed 12px arrow renders as a smudge — the trap the gear documents.
+    const icon = /\.dsm-trae-composer-panel-test-icon\{([^}]*)\}/.exec(COMPOSER_POINTS_CSS)?.[1]
+    const label = /\.dsm-trae-composer-panel-test-label\{([^}]*)\}/.exec(COMPOSER_POINTS_CSS)?.[1]
+    expect(icon).toContain('flex:none')
+    expect(label).toContain('flex:none')
+    expect(label).toContain('white-space:nowrap')
+  })
+
+  it('keeps the panel wide enough for title + two icon-and-word controls', () => {
+    // Measured in a browser, not guessed: with the panel at 248px the header's
+    // content box is 222px, and the English title "Trae credits" plus "Refresh"
+    // plus "Settings" needs 233px — the settings pill overflowed its own header
+    // by 11px. 264px gives the row 238px, which fits with 5px to spare in the
+    // tighter of the two locales.
+    //
+    // The alternative fixes are worse: renaming the owner's words («刷新» /
+    // "Refresh" are what was asked for), or dropping the icons, which is what
+    // makes the two controls read as one family.
+    //
+    // jsdom does no layout, so this pins the DECLARATION and the reason lives
+    // here. If a future change adds a third control, this number is the thing
+    // that has to move, and the comment says how it was derived.
+    const rule = /\.dsm-trae-composer-panel\{([^}]*)\}/.exec(COMPOSER_POINTS_CSS)?.[1]
+    expect(rule).toBeDefined()
+    expect(rule).toContain('width:min(264px,calc(100vw - 24px))')
   })
 
   it('gives the outcome NOTE a quieter rule than the error line', () => {
