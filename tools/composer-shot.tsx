@@ -99,10 +99,14 @@ describe('composer shot', () => {
     const React = await import('react')
     const { ComposerPoints } = await import('../src/client/ComposerPoints.tsx')
     const { COMPOSER_POINTS_CSS } = await import('../src/client/styles.ts')
-    const { zh } = await import('../src/client/locales.ts')
+    const { zh, en } = await import('../src/client/locales.ts')
+    // EN on request: 'Settings' is a longer label than '设置', and whether the
+    // pill still fits beside the title is exactly the sort of thing this dump
+    // exists to answer rather than guess.
+    const table = process.env['SHOT_LOCALE'] === 'en' ? en : zh
 
     const t = ((key: string, params?: Record<string, unknown>) => {
-      const raw = (zh as Record<string, string>)[key] ?? key
+      const raw = (table as Record<string, string>)[key] ?? key
       if (params === undefined) return raw
       return raw.replace(/\{(\w+)\}/g, (_m, name: string) => String(params[name] ?? ''))
     }) as never
@@ -184,6 +188,6 @@ describe('composer shot', () => {
     const shell = '<!doctype html><html><head><meta charset="utf-8"><style>'
     const css = TOKENS + '\n' + COMPOSER_POINTS_CSS.replace(/<\/style/gi, '<\\/style')
     const body = '</style></head><body>' + staged + '</body></html>'
-    writeFileSync('/tmp/composer-preview.html', (shell + css + body).replace('</body>', AUDIT + '</body>'))
+    writeFileSync(process.env['SHOT_LOCALE'] === 'en' ? '/tmp/composer-preview-en.html' : '/tmp/composer-preview.html', (shell + css + body).replace('</body>', AUDIT + '</body>'))
   })
 })

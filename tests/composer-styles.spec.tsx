@@ -115,6 +115,34 @@ describe('the composer readout injects its own stylesheet', () => {
     expect(missing).toEqual([])
   })
 
+  it('every class the SETTINGS control renders has a rule too', async () => {
+    // The case above renders WITHOUT a route, so the settings button — and its
+    // wrapper, icon and label classes — never mount, and the coverage guard
+    // silently skips the newest markup. That is the same shape of hole this whole
+    // file exists to close, so the button gets its own pass.
+    stubRoute()
+    const { container } = render(
+      <ComposerPoints t={t} provider="trae" region="cn" onOpenSettings={() => true} />,
+    )
+    await waitFor(() => { expect(screen.getByText(/composer\.points/)).toBeTruthy() })
+    fireEvent.click(screen.getByRole('button', { name: /composer\.points/ }))
+    await waitFor(() => { expect(screen.getByText(/composer\.panelTitle/)).toBeTruthy() })
+
+    const panel = document.querySelector('[role="dialog"]') as HTMLElement
+    expect(panel).not.toBeNull()
+    const names = [...classesIn(panel), ...classesIn(container)]
+    // Guard the guard: without these the case would pass having asserted nothing
+    // about the control it is named after.
+    expect(names).toContain('dsm-trae-composer-panel-settings')
+    expect(names).toContain('dsm-trae-composer-panel-settings-icon')
+    expect(names).toContain('dsm-trae-composer-panel-settings-label')
+    expect(names).toContain('dsm-trae-composer-panel-actions')
+    const missing = [...new Set(names)].filter(
+      name => !COMPOSER_POINTS_CSS.includes(`.${name}{`) && !COMPOSER_POINTS_CSS.includes(`.${name}:`),
+    )
+    expect(missing).toEqual([])
+  })
+
   it('the panel rule is position: fixed — without it the panel has no geometry at all', () => {
     // The measured left/top are written as inline styles; an element that is not
     // positioned ignores them and lands in document flow instead of under its

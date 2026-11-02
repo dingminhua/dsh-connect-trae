@@ -524,7 +524,9 @@ export function ComposerPoints(props: ComposerPointsProps) {
             <span className="dsm-trae-composer-panel-title">
               {activeRegion === 'ai' ? t('composer.panelTitleGlobal') : t('composer.panelTitle')}
             </span>
-            {/* SETTINGS, not refresh (the owner's m01198).
+            {/* SETTINGS, not refresh (the owner's m01198), styled as the sibling
+                `dsh-connect-workbuddy` styles its own — the same pill so the two
+                connectors' popovers agree (m01930).
                 The reader looking at this panel has a question — "where do I
                 change this?" — and answering it used to mean closing the
                 popover, finding the Plugins row and clicking the bundle. The
@@ -534,20 +536,55 @@ export function ComposerPoints(props: ComposerPointsProps) {
                 refresh button provided is still one click away.
                 Not drawn when `onOpenSettings` is absent: a control that cannot
                 do anything must not be drawn, the same rule the page header's
-                back button follows. */}
-            {onOpenSettings === undefined
-              ? null
-              : (
-                <button
-                  type="button"
-                  className="dsm-trae-composer-panel-settings"
-                  title={t('composer.openSettingsHint')}
-                  disabled={switchingId !== undefined}
-                  onClick={openSettings}
-                >
-                  {t('composer.openSettings')}
-                </button>
-              )}
+                back button follows. The WRAPPER stays either way, so the header
+                layout is identical with and without the button. */}
+            <span className="dsm-trae-composer-panel-actions">
+              {onOpenSettings === undefined
+                ? null
+                : (
+                  <button
+                    type="button"
+                    className="dsm-trae-composer-panel-settings"
+                    title={t('composer.openSettingsHint')}
+                    disabled={switchingId !== undefined}
+                    onClick={openSettings}
+                  >
+                    {/* A gear, because the label is one word and a one-word
+                        underlined link reads as body text that happens to be
+                        clickable. `aria-hidden`: the button's own text already
+                        names it, so the icon must not be announced twice. */}
+                    <svg
+                      className="dsm-trae-composer-panel-settings-icon"
+                      viewBox="0 0 16 16"
+                      width="12"
+                      height="12"
+                      fill="none"
+                      aria-hidden="true"
+                      focusable="false"
+                    >
+                      {/* 1.5px stroke, not 1.3: at 11px the gear's teeth blur
+                          into a grey disc and the icon reads as a smudge next to
+                          the label. 12px + 1.5 keeps them legible — the shape is
+                          the affordance. */}
+                      <path
+                        d="M8 10.2a2.2 2.2 0 1 0 0-4.4 2.2 2.2 0 0 0 0 4.4Z"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                      />
+                      <path
+                        d="M12.9 9.6a1.2 1.2 0 0 0 .24 1.32l.04.04a1.4 1.4 0 1 1-1.98 1.98l-.04-.04a1.2 1.2 0 0 0-1.32-.24 1.2 1.2 0 0 0-.72 1.1v.12a1.4 1.4 0 1 1-2.8 0v-.07a1.2 1.2 0 0 0-.78-1.1 1.2 1.2 0 0 0-1.32.24l-.04.04a1.4 1.4 0 1 1-1.98-1.98l.04-.04a1.2 1.2 0 0 0 .24-1.32 1.2 1.2 0 0 0-1.1-.72h-.12a1.4 1.4 0 1 1 0-2.8h.07a1.2 1.2 0 0 0 1.1-.78 1.2 1.2 0 0 0-.24-1.32l-.04-.04a1.4 1.4 0 1 1 1.98-1.98l.04.04a1.2 1.2 0 0 0 1.32.24h.05a1.2 1.2 0 0 0 .72-1.1v-.12a1.4 1.4 0 1 1 2.8 0v.07a1.2 1.2 0 0 0 .72 1.1 1.2 1.2 0 0 0 1.32-.24l.04-.04a1.4 1.4 0 1 1 1.98 1.98l-.04.04a1.2 1.2 0 0 0-.24 1.32v.05a1.2 1.2 0 0 0 1.1.72h.12a1.4 1.4 0 1 1 0 2.8h-.07a1.2 1.2 0 0 0-1.1.72Z"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                    <span className="dsm-trae-composer-panel-settings-label">
+                      {t('composer.openSettings')}
+                    </span>
+                  </button>
+                )}
+            </span>
           </div>
           {signedOut
             ? <p className="dsm-trae-composer-panel-empty">{t('composer.signedOut')}</p>

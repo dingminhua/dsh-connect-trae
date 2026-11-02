@@ -286,11 +286,95 @@ describe('the replacement left nothing behind', () => {
     expect(COMPOSER_POINTS_CSS).not.toContain('.dsm-trae-composer-panel-refresh')
   })
 
-  it('keeps the settings button buttonable while an account switch is in flight', () => {
-    // Not disabled by `busy`: opening the settings page is a navigation, and a
-    // five-minute read blocking it would make the control look broken.
+  it('keeps the settings button clickable', () => {
     const rule = /\.dsm-trae-composer-panel-settings\{[^}]*\}/.exec(COMPOSER_POINTS_CSS)
     expect(rule).not.toBeNull()
     expect(rule?.[0]).toContain('cursor:pointer')
+  })
+})
+
+describe('the button copies the sibling workbuddy pill (m01930)', () => {
+  /**
+   * The owner asked for the SAME control style as `dsh-connect-workbuddy`, which
+   * solved this exact problem in the same place: a settings link in a ~250px
+   * credit popover's header.
+   *
+   * Those are CSS strings, so jsdom cannot cascade them — the assertions are
+   * structural, on the shipped rule text. They are worth having anyway, because
+   * the failure mode here is silent: every behavioural case above still passes if
+   * this rule is reverted to a bordered box, and only a reader looking at a
+   * screenshot would notice the two connectors had drifted apart.
+   */
+  const rule = (): string => {
+    const found = /\.dsm-trae-composer-panel-settings\{[^}]*\}/.exec(COMPOSER_POINTS_CSS)
+    if (found === null) throw new Error('the settings rule is missing')
+    return found[0]
+  }
+
+  it('is a PILL (999px radius), not a bordered box and not an underlined link', () => {
+    expect(rule()).toContain('border-radius:999px')
+    // A bordered box was the first version; an underline was workbuddy's first
+    // version. Both were rejected for the same reason: neither has a SHAPE at
+    // rest, and the affordance is needed before the pointer arrives.
+    expect(rule()).toContain('border:1px solid transparent')
+    expect(COMPOSER_POINTS_CSS).not.toMatch(/\.dsm-trae-composer-panel-settings\{[^}]*text-decoration:underline/)
+  })
+
+  it('is tinted with the BRAND colour at 10%, so it reads as a product action', () => {
+    // Not a fourth grey chip beside the title, and not the label-secondary grey
+    // the previous version used.
+    expect(rule()).toContain('background:rgba(86,134,254,.10)')
+    expect(rule()).toContain('color:var(--dsw-alias-brand-primary,#5686fe)')
+    expect(rule()).toContain('font-weight:500')
+  })
+
+  it('has the same three hover/active/focus states as its sibling', () => {
+    // A pill whose hover does nothing reads as disabled.
+    expect(COMPOSER_POINTS_CSS).toContain('.dsm-trae-composer-panel-settings:hover:not(:disabled){')
+    expect(COMPOSER_POINTS_CSS).toContain('.dsm-trae-composer-panel-settings:active{background:rgba(86,134,254,.26)}')
+    expect(COMPOSER_POINTS_CSS).toContain('.dsm-trae-composer-panel-settings:focus-visible{')
+  })
+
+  it('honours reduced motion, because the colour transition is decoration', () => {
+    const media = /@media \(prefers-reduced-motion:reduce\)\{[^}]*\.dsm-trae-composer-panel-settings\{transition:none\}/.exec(COMPOSER_POINTS_CSS)
+    expect(media).not.toBeNull()
+  })
+
+  it('carries a GEAR icon and a non-wrapping label, both sized so they cannot squash', async () => {
+    // Rendered, not just styled: the icon is part of what makes the pill read as
+    // a control, so its absence is a visual regression the CSS alone cannot show.
+    stubRoute()
+    const { container } = render(
+      <ComposerPoints t={t} provider="trae" region="cn" onOpenSettings={() => true} />,
+    )
+    await openPanel(container)
+    const button = settingsButton()
+    const icon = button?.querySelector('svg.dsm-trae-composer-panel-settings-icon')
+    const label = button?.querySelector('span.dsm-trae-composer-panel-settings-label')
+    expect(icon).not.toBeNull()
+    // `aria-hidden`: the button's own text already names it, so the icon must not
+    // be announced twice by a screen reader.
+    expect(icon?.getAttribute('aria-hidden')).toBe('true')
+    expect(label?.textContent).toBe('composer.openSettings')
+    // Both halves must be told not to shrink: a flex item defaults to shrinking,
+    // which squashes a 12px gear into an oval on a narrow popover.
+    expect(COMPOSER_POINTS_CSS).toContain('.dsm-trae-composer-panel-settings-icon{flex:none;display:block}')
+    expect(COMPOSER_POINTS_CSS).toContain('.dsm-trae-composer-panel-settings-label{flex:none;white-space:nowrap}')
+  })
+
+  it('pins the title to one line, which the pill forced', () => {
+    // Measured on the sibling's live host: the moment the control joined the row,
+    // the TITLE broke across two lines. The wrapper owns the auto margin so the
+    // header is title … [settings] whether or not the button renders.
+    expect(COMPOSER_POINTS_CSS).toContain('.dsm-trae-composer-panel-title{flex:none;white-space:nowrap;')
+    expect(COMPOSER_POINTS_CSS).toContain('.dsm-trae-composer-panel-actions{flex:none;margin-left:auto;display:flex;align-items:center}')
+  })
+
+  it('keeps the wrapper in the DOM when there is no button, so the header does not reflow', async () => {
+    stubRoute()
+    const { container } = render(<ComposerPoints t={t} provider="trae" region="cn" />)
+    await openPanel(container)
+    expect(settingsButton()).toBeNull()
+    expect(document.querySelector('.dsm-trae-composer-panel-actions')).not.toBeNull()
   })
 })

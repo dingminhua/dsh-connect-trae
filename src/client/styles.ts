@@ -776,21 +776,64 @@ export const COMPOSER_POINTS_CSS = `
   font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#444);
 }
 .dsm-trae-composer-panel-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
-.dsm-trae-composer-panel-title{font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary,CanvasText)}
-/* Self-contained: the dsm-btn primitive lives in TRAE_CARD_CSS, which the
-   composer never loads, so the settings button must style itself. Same shape as
-   the page header's back control (navigation, not an action), sized to this
-   narrower panel. */
+/* nowrap: the header is a title plus an 11px control in a ~250px popover, and
+   without it the TITLE broke across two lines the moment the settings control
+   joined the row — measured on the live Desktop host for the sibling plugin.
+   The title is the one thing that must stay on one line; what follows it is
+   short by construction. */
+.dsm-trae-composer-panel-title{flex:none;white-space:nowrap;font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary,CanvasText)}
+/* The header's right-hand control: the link to this plugin's settings.
+   A wrapper rather than an auto margin on the button, because the button is NOT
+   always rendered (a host with no route renders none) and a wrapper that is
+   always present keeps the header layout identical either way. */
+.dsm-trae-composer-panel-actions{flex:none;margin-left:auto;display:flex;align-items:center}
+/* PORTED VERBATIM IN SHAPE from the sibling dsh-connect-workbuddy
+   (ComposerCredits), so the two connectors' popovers agree: a quiet tinted
+   PILL, not a bordered button and not an underlined link.
+
+   Why not the bordered button this started as: navigating away is not the
+   header's primary action, and a bordered box beside a 13px title reads as a
+   toolbar. Why not an underlined link: a one-word underline reads as body text
+   that happens to be clickable — in a 13px header the eye does not register it
+   as a control at all. The tinted fill plus the gear give it a SHAPE at rest,
+   which is where the affordance is actually needed (the underline only appeared
+   on hover, i.e. after the user already knew). The fill is the brand colour at
+   10%, so it reads as "secondary action in this product" rather than as a fourth
+   grey chip beside the title.
+
+   Self-contained: the dsm-btn primitive lives in TRAE_CARD_CSS, which the
+   composer never loads. */
 .dsm-trae-composer-panel-settings{
-  appearance:none;flex:none;margin-left:auto;padding:3px 10px;
-  border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.34));
-  border-radius:7px;background:transparent;
-  color:var(--dsw-alias-label-secondary,#444);
-  font:inherit;font-size:11px;line-height:16px;cursor:pointer;
+  appearance:none;flex:none;
+  display:inline-flex;align-items:center;gap:4px;
+  padding:3px 8px 3px 6px;
+  border:1px solid transparent;border-radius:999px;
+  background:rgba(86,134,254,.10);
+  color:var(--dsw-alias-brand-primary,#5686fe);
+  font:inherit;font-size:11px;line-height:16px;font-weight:500;
+  cursor:pointer;
+  transition:background-color .12s ease,border-color .12s ease,color .12s ease;
 }
-.dsm-trae-composer-panel-settings:hover:not(:disabled){border-color:var(--dsw-alias-label-dimmed,rgba(127,127,127,.6));color:var(--dsw-alias-label-primary,CanvasText)}
+.dsm-trae-composer-panel-settings:hover:not(:disabled){
+  background:rgba(86,134,254,.18);
+  border-color:rgba(86,134,254,.34);
+  color:var(--dsw-alias-brand-primary,#5686fe);
+}
+.dsm-trae-composer-panel-settings:active{background:rgba(86,134,254,.26)}
 .dsm-trae-composer-panel-settings:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#5686fe);outline-offset:1px}
 .dsm-trae-composer-panel-settings:disabled{opacity:.5;cursor:default}
+/* The gear does not shrink when the label is a longer word ("Settings" vs
+   "设置"): a flex item defaults to shrinking, which would squash the icon into
+   an oval on a narrow popover. */
+.dsm-trae-composer-panel-settings-icon{flex:none;display:block}
+/* The label never wraps. Two lines in a 16px-tall pill would push the header
+   taller and unstick the table below it. */
+.dsm-trae-composer-panel-settings-label{flex:none;white-space:nowrap}
+/* Reduced motion: the colour transition is decoration, and the hover state is
+   still fully visible without it. */
+@media (prefers-reduced-motion:reduce){
+  .dsm-trae-composer-panel-settings{transition:none}
+}
 /* The panel is a TABLE: one row per account in the region, one figure (the
    general balance) per row, and a row click switches accounts.
 
