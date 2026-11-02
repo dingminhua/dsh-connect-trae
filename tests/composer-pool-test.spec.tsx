@@ -354,19 +354,20 @@ describe('the test button copies no styling from the settings pill', () => {
 })
 
 describe('the new copy exists in both dictionaries', () => {
-  it('keeps the label SHORT and puts the scope in the tooltip', () => {
-    // Measured, not preferred: the header is 222px inside a 248px popover, and
-    // with a longer label ("Test pool" / "测速账号池") the title plus two pills
-    // needed 229px in English — the settings pill overflowed its own header by
-    // 7px. Nothing wraps here; a long label pushes a control off the row.
-    //
-    // So the button says what it DOES and the tooltip says WHICH accounts. The
-    // scope is not lost: the outcome line reads 「账号池已测」, and the tooltip
-    // names the checked-in members.
-    expect(zh['composer.test'].length).toBeLessThanOrEqual(4)
-    expect(en['composer.test'].length).toBeLessThanOrEqual(6)
+  it('labels the button with the owner\'s word and puts the SCOPE in the tooltip', () => {
+    // "Refresh" / 「刷新」 is the requested label. It is also a label that
+    // under-describes what the press does — it tests the pool's members and
+    // SPENDS CREDITS doing it (one minimal ping each) — so the tooltip and the
+    // outcome line have to carry what the label no longer can.
+    expect(zh['composer.test']).toBe('刷新')
+    expect(en['composer.test']).toBe('Refresh')
     expect(zh['composer.testHint']).toMatch(/勾选/)
     expect(en['composer.testHint']).toMatch(/checked into/)
+    // Long labels do not wrap in this header; they push the settings pill out.
+    // "Refresh" fits (measured), so this bound guards against someone later
+    // writing "Refresh pool" here.
+    expect(en['composer.test'].length).toBeLessThanOrEqual(8)
+    expect(zh['composer.test'].length).toBeLessThanOrEqual(3)
   })
 
   it('keeps the outcome line explicit about the POOL, which the label no longer can', () => {

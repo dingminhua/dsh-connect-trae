@@ -666,10 +666,22 @@ export function ComposerPoints(props: ComposerPointsProps) {
                   produce an error, so it is not drawn (the same rule the
                   settings pill follows for a host with no route).
 
-                  The label states the SCOPE, because "测试" alone would suggest
-                  it tests the rows on screen: it tests the pool's checked-in
-                  members, which is what the route does and what the card's own
-                  button words as 「测速勾选的账号」. */}
+                  The label reads 「刷新」/ "Refresh" at the owner's request. That
+                  is the owner's word for the action, and the label is not the
+                  place to argue with it — but it IS a label that under-describes
+                  the press in two ways, so both live in the tooltip
+                  (`composer.testHint`) and in the foot line instead:
+
+                  1. SCOPE: it tests the pool's checked-in members, not the rows
+                     on screen (the route only ever reads
+                     `effectiveMemberAccountIds`).
+                  2. COST: it is the only press in this plugin that SPENDS
+                     credits — one minimal ping per member. A bare "Refresh"
+                     reads as free, and this is not.
+
+                  The label stays short for a measured reason too: the header is
+                  222px inside a 248px popover and long labels do not wrap here,
+                  they push the settings pill off the row. */}
               {pool === undefined
                 ? null
                 : (
