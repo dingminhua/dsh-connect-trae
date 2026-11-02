@@ -129,6 +129,23 @@ describe('composer shot', () => {
       models: [],
       enabledModelIds: [],
       credits: { total: 7500, consumed: 5_879.63, available: 1_620.37, workAvailable: 0, generalAvailable: 634, accounts: [] },
+      // The pool section, so the header's TEST button renders: the shot exists to
+      // measure the row the user actually sees, and on a configured profile both
+      // controls are in it.
+      pool: {
+        enabled: true,
+        checkinSupported: true,
+        targetModelId: 'deepseek-v4.1-flash',
+        targetModelSource: 'preferred',
+        probeInputTokens: 0,
+        memberAccountIds: ['account-1', 'account-2'],
+        effectiveMemberAccountIds: ['account-1', 'account-2'],
+        memberNames: {},
+        accounts: [
+          { accountId: 'account-1', accountName: 'LaoDing', member: true, current: true, reachable: true, generalAvailable: 634 },
+          { accountId: 'account-2', accountName: '用户7520607992', member: true, current: false, reachable: true, generalAvailable: 784 },
+        ],
+      },
     }
 
     const originalFetch = globalThis.fetch

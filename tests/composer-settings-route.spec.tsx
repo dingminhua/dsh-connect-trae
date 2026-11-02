@@ -365,9 +365,15 @@ describe('the button copies the sibling workbuddy pill (m01930)', () => {
   it('pins the title to one line, which the pill forced', () => {
     // Measured on the sibling's live host: the moment the control joined the row,
     // the TITLE broke across two lines. The wrapper owns the auto margin so the
-    // header is title … [settings] whether or not the button renders.
+    // header is title … [controls] however many controls render.
     expect(COMPOSER_POINTS_CSS).toContain('.dsm-trae-composer-panel-title{flex:none;white-space:nowrap;')
-    expect(COMPOSER_POINTS_CSS).toContain('.dsm-trae-composer-panel-actions{flex:none;margin-left:auto;display:flex;align-items:center}')
+    // Asserted by RULE BODY, not by whole-rule text: the row's gap grew when a
+    // second control joined it, and a whole-string assertion turns every such
+    // tweak into a failure that says nothing about the property being guarded.
+    const wrapper = /\.dsm-trae-composer-panel-actions\{([^}]*)\}/.exec(COMPOSER_POINTS_CSS)?.[1]
+    expect(wrapper).toContain('flex:none')
+    expect(wrapper).toContain('margin-left:auto')
+    expect(wrapper).toContain('display:flex')
   })
 
   it('keeps the wrapper in the DOM when there is no button, so the header does not reflow', async () => {

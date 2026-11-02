@@ -232,6 +232,19 @@ export const en = {
   'composer.openSettings': 'Settings',
   'composer.openSettingsHint': 'Open this plugin\'s settings page',
   'composer.openSettingsFailed': 'This host has no route to the plugin settings page',
+  // The pool test batch, driven from the same header.
+  //
+  // The LABEL is deliberately short ("Test"), and the SCOPE lives in the tooltip
+  // and in the outcome line. Measured reason: the header is 222px wide inside a
+  // 248px popover, and "Test pool" + "Settings" + the title needed 229px — the
+  // settings pill overflowed its own header by 7px in English. A long label here
+  // does not wrap, it pushes a control off the row.
+  'composer.test': 'Test',
+  'composer.testHint': 'Test every account checked into this panel\'s pool, one at a time, and re-read the results',
+  'composer.testing': 'Testing…',
+  'composer.testDone': 'Pool tested: {ok} of {total} answered',
+  'composer.testFailed': 'Could not test the pool',
+  'composer.testTimedOut': 'Testing took too long and was given up on',
   'composer.refreshFailed': 'Could not refresh credits',
   'row.accountsRefreshed': 'Accounts refreshed: {count} found{selected}',
   'row.accountsSaved': 'bound to',
@@ -676,6 +689,12 @@ export const zh: Record<TraeSettingsKey, string> = {
   'composer.openSettings': '设置',
   'composer.openSettingsHint': '打开本插件的设置页',
   'composer.openSettingsFailed': '这个宿主没有通向插件设置页的入口',
+  'composer.test': '测速',
+  'composer.testHint': '逐个测试本面板账号池里勾选的账号，测完重新读一次结果',
+  'composer.testing': '测速中…',
+  'composer.testDone': '账号池已测：{total} 个里 {ok} 个可用',
+  'composer.testFailed': '账号池测速失败',
+  'composer.testTimedOut': '测速用时过长，已放弃',
   'composer.refreshFailed': '积分刷新失败',
   'row.accountsRefreshed': '已刷新账号：找到 {count} 个账号{selected}',
   'row.accountsSaved': '已绑定',

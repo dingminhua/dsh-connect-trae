@@ -786,7 +786,41 @@ export const COMPOSER_POINTS_CSS = `
    A wrapper rather than an auto margin on the button, because the button is NOT
    always rendered (a host with no route renders none) and a wrapper that is
    always present keeps the header layout identical either way. */
-.dsm-trae-composer-panel-actions{flex:none;margin-left:auto;display:flex;align-items:center}
+.dsm-trae-composer-panel-actions{flex:none;margin-left:auto;display:flex;align-items:center;gap:6px}
+/* THE POOL TEST BUTTON (m02091), sitting to the settings pill's left.
+   Same PILL geometry as that pill — one header, one shape language — but
+   deliberately NOT the brand tint: the fill is what marks an action as primary
+   in this product, and a batch that spends credits is not more primary than the
+   navigation beside it. Two identically-tinted pills in a 248px header would
+   also read as one segmented control instead of two different things.
+
+   Quiet-but-bordered, matching the card's own outline buttons (dsm-btn-outline)
+   at the popover's smaller type scale, because the two buttons that run this
+   batch should look like the same kind of control in both places. */
+.dsm-trae-composer-panel-test{
+  appearance:none;flex:none;
+  padding:3px 8px;
+  border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.34));
+  border-radius:999px;background:transparent;
+  color:var(--dsw-alias-label-secondary,#444);
+  font:inherit;font-size:11px;line-height:16px;
+  white-space:nowrap;cursor:pointer;
+  transition:background-color .12s ease,border-color .12s ease,color .12s ease;
+}
+.dsm-trae-composer-panel-test:hover:not(:disabled){
+  background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.10));
+  border-color:var(--dsw-alias-label-dimmed,rgba(127,127,127,.6));
+  color:var(--dsw-alias-label-primary,CanvasText);
+}
+.dsm-trae-composer-panel-test:active{background:rgba(127,127,127,.16)}
+.dsm-trae-composer-panel-test:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#5686fe);outline-offset:1px}
+.dsm-trae-composer-panel-test:disabled{opacity:.5;cursor:default}
+/* The batch's own outcome line: a NOTE (it succeeded but not everything
+   answered), not an error. Sized like the footer so it reads as a report. */
+.dsm-trae-composer-panel-note{
+  margin:8px 0 0;font-size:11px;line-height:16px;
+  color:var(--dsw-alias-label-secondary,#444);
+}
 /* PORTED VERBATIM IN SHAPE from the sibling dsh-connect-workbuddy
    (ComposerCredits), so the two connectors' popovers agree: a quiet tinted
    PILL, not a bordered button and not an underlined link.

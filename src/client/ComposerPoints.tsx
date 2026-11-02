@@ -52,6 +52,8 @@ import { formatDateTime } from './display.ts'
 import { expiryHeadlineKey, expiryNotice, expiryToneClass } from './expiry-ladder.ts'
 import { planText } from './plan-text.ts'
 import type { TraeWebAccountCredit, TraeWebAccountState, TraeWebCreditExpiry, TraeWebPayStatus, TraeWebUsage } from '../status-paths.ts'
+import { withTraePoolAction } from '../status-paths.ts'
+import { POOL_TEST_TIMEOUT_MS, applyTestLine, outcomeLabel, testLinesOf } from './pool-test.ts'
 import type { TraeRegion } from '../region.ts'
 import type { TraeSettingsKey } from './locales.ts'
 import type { TraeUsageCardInjected } from './TraeUsageCard.tsx'
@@ -230,6 +232,31 @@ export function ComposerPoints(props: ComposerPointsProps) {
    * and a shared flag would let one press erase the other's explanation.
    */
   const [settingsFailed, setSettingsFailed] = useState(false)
+  /**
+   * The account-pool test batch, driven from this panel's header.
+   *
+   * WHY IT LIVES HERE AT ALL: the rows below ARE the pool's members, and a row's
+   * mark is a MEASUREMENT (`被限流 · 约 6 小时后` is a probe result, not a
+   * setting). Re-reading the usage document cannot improve a stale measurement —
+   * only running it again can — so the question "which of these can serve right
+   * now?" had no answer from the place that asks it. The pool card can do this,
+   * but it is behind the settings page; the reader is already looking at these
+   * accounts.
+   *
+   * `testing` is separate from the panel's other busy states on purpose: this is
+   * a SERIAL batch against one account at a time with a gap (hitting the whole
+   * pool at once is how the upstream's volume limit gets tripped), so it can run
+   * for a minute while a credits read would be merely slow.
+   *
+   * `testFailed` is its own line for the same reason `settingsFailed` is: three
+   * different failures rendered into one slot would take turns overwriting each
+   * other. `testNote` carries the last outcome summary, which is what makes the
+   * press feel answered even when the table's marks are subtle.
+   */
+  const [testing, setTesting] = useState(false)
+  const [testFailed, setTestFailed] = useState<string | undefined>(undefined)
+  const [testNote, setTestNote] = useState<string | undefined>(undefined)
+  const testingRef = useRef(false)
   const [lastRefresh, setLastRefresh] = useState<number | undefined>(undefined)
   const [open, setOpen] = useState(false)
   const inFlight = useRef(false)
@@ -427,6 +454,84 @@ export function ComposerPoints(props: ComposerPointsProps) {
     setOpen(false)
   }
 
+  /**
+   * Run the pool's test batch, then re-read what it changed.
+   *
+   * The route is the SAME one the card's "测试勾选的账号" drives — it tests the
+   * pool's checked-in members, not every account listed in this panel — and the
+   * model comes from the Host's saved target rather than from here, so a press
+   * cannot spend credits on a model the user did not choose. Same for the
+   * outcome vocabulary and the NDJSON fold: both live in `./pool-test.ts` so the
+   * card and this header cannot answer one batch two ways.
+   *
+   * The re-read afterwards is not a courtesy. The probes live in the USAGE
+   * document (`usage.pool.accounts[].probe`), so the marks only move once that
+   * document is fetched again; without it the press would leave the table
+   * showing the state it just measured away.
+   *
+   * A failure keeps the previous measurements: nothing was learned about them,
+   * and blanking the marks would look like the addresses had become unusable.
+   */
+  const testAccounts = async (): Promise<void> => {
+    if (activeRegion === undefined || testingRef.current) return
+    testingRef.current = true
+    setTesting(true)
+    setTestFailed(undefined)
+    setTestNote(undefined)
+    const controller = new AbortController()
+    const timer = setTimeout(() => { controller.abort() }, POOL_TEST_TIMEOUT_MS)
+    try {
+      const response = await fetch(withTraePoolAction(activeRegion, 'test'), {
+        method: 'POST',
+        headers: { accept: 'application/json' },
+        credentials: 'same-origin',
+        signal: controller.signal,
+      })
+      let failure: string | undefined
+      let sawAny = false
+      /**
+       * Counted by ACCOUNT ID, not by line.
+       *
+       * The route streams one `{row}` per account and then a `{rows}` summary
+       * that repeats every one of them, so counting lines would report "4 / 2".
+       * The summary is what guarantees a client that only reads the last line
+       * still gets the whole batch, so it cannot simply be ignored.
+       */
+      const seen = new Map<string, string>()
+      // Streamed: each finished account lands while the rest still run, so a
+      // batch that takes a minute does not look like a dead button.
+      for await (const line of testLinesOf(response)) {
+        const used = applyTestLine(line, t, row => {
+          seen.set(row.accountId, row.outcome)
+        }, message => { failure = message })
+        if (used) sawAny = true
+      }
+      if (!mounted.current) return
+      if (failure !== undefined) {
+        setTestFailed(failure)
+        return
+      }
+      // A `200` that parsed into nothing would otherwise read as "all fine".
+      if (!sawAny) throw new Error(t('row.poolLogGeneric'))
+      const outcomes = [...seen.values()]
+      setTestNote(t('composer.testDone', {
+        ok: String(outcomes.filter(outcome => outcome === 'ok').length),
+        total: String(outcomes.length),
+      }))
+    } catch {
+      if (mounted.current && !controller.signal.aborted) setTestFailed(t('composer.testFailed'))
+      // An ABORT is the deadline, not a transport failure, and it is worth
+      // saying so: "跑太久放弃了" is actionable, "测试失败" is not.
+      else if (mounted.current) setTestFailed(t('composer.testTimedOut'))
+    } finally {
+      clearTimeout(timer)
+      testingRef.current = false
+      if (mounted.current) setTesting(false)
+      // Re-read AFTER the flags: the document is what carries the new marks.
+      await fetchUsage()
+    }
+  }
+
   // Not this plugin's model: render nothing at all, so the composer row is
   // untouched while another provider is in use.
   //
@@ -500,6 +605,15 @@ export function ComposerPoints(props: ComposerPointsProps) {
     return { ...row, generalAvailable: general }
   })
   const canSwitch = settingsScope !== undefined && settingsScope.getSnapshot().writable === true
+  /**
+   * This panel's account pool, when the Host reports one.
+   *
+   * A `pool` carrying no members is still a pool: the test button is drawn (the
+   * Host answers 409 `no-members` and the panel says so) rather than hidden, so
+   * the control's absence always means "this panel has no pool feature", never
+   * "you have not checked anybody in yet".
+   */
+  const pool = signedIn?.pool
 
   return (
     <span ref={rootRef} className="dsm-trae-composer-points">
@@ -539,6 +653,36 @@ export function ComposerPoints(props: ComposerPointsProps) {
                 back button follows. The WRAPPER stays either way, so the header
                 layout is identical with and without the button. */}
             <span className="dsm-trae-composer-panel-actions">
+              {/* THE POOL TEST BATCH, to the settings pill's LEFT (m02091).
+                  Placed before it deliberately: settings is navigation and
+                  belongs at the row's end, the way a dialog's close control
+                  does; the test is an action on the table below, so it sits
+                  nearer the figure it re-measures.
+
+                  Only drawn when this panel actually HAS a pool. `usage.pool` is
+                  absent on a Host that predates the feature, on an unconfigured
+                  panel, and on the enterprise tab — in every one of those cases
+                  the route answers 503/409 and the button could only ever
+                  produce an error, so it is not drawn (the same rule the
+                  settings pill follows for a host with no route).
+
+                  The label states the SCOPE, because "测试" alone would suggest
+                  it tests the rows on screen: it tests the pool's checked-in
+                  members, which is what the route does and what the card's own
+                  button words as 「测速勾选的账号」. */}
+              {pool === undefined
+                ? null
+                : (
+                  <button
+                    type="button"
+                    className="dsm-trae-composer-panel-test"
+                    title={t('composer.testHint')}
+                    disabled={testing || switchingId !== undefined}
+                    onClick={() => { void testAccounts() }}
+                  >
+                    {testing ? t('composer.testing') : t('composer.test')}
+                  </button>
+                )}
               {onOpenSettings === undefined
                 ? null
                 : (
@@ -660,6 +804,15 @@ export function ComposerPoints(props: ComposerPointsProps) {
           {settingsFailed
             ? <p className="dsm-trae-composer-panel-error" role="status">{t('composer.openSettingsFailed')}</p>
             : null}
+          {/* The batch's own two lines, kept apart from the read failure above
+              and from the settings failure: three different failures rendered
+              into one slot would take turns overwriting each other's reason. */}
+          {testNote === undefined
+            ? null
+            : <p className="dsm-trae-composer-panel-note" role="status">{testNote}</p>}
+          {testFailed === undefined
+            ? null
+            : <p className="dsm-trae-composer-panel-error" role="status">{testFailed}</p>}
         </div>,
         document.body,
       )}
