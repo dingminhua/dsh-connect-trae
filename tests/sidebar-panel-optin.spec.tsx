@@ -269,9 +269,14 @@ describe('the client entry registers the panel only when switched on', () => {
     // `sidebar.panellist` addresses `main` by list id, so the two registrations
     // must share it or the row would open nothing.
     expect(entry).toMatch(/const PANEL_ID = 'dsh-connect-trae'/u)
-    expect(entry).toContain("ctx.slots.inject('sidebar.panellist'")
     expect(entry).toMatch(/name: 'sidebar\.panellist',\s*\n\s*id: PANEL_ID/u)
     expect(entry).toMatch(/name: 'main',\s*\n\s*key: PANEL_ID/u)
+    // Both go through `registerSlotEntry` now (issue #74), which owns the
+    // dispose-before-register ordering and the in-callback catch. The seats are
+    // named by their slot key, so the two registrations are still visibly
+    // distinct entries rather than one conflated call.
+    expect(entry).toContain("registerSlotEntry(ctx, 'sidebar.panellist#dsh-connect-trae', 'sidebar.panellist'")
+    expect(entry).toMatch(/registerSlotEntry\(ctx, `main#\$\{PANEL_ID\}`, 'main'/u)
   })
 
   it('passes the page surface and the back action to the card', () => {

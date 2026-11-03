@@ -29,7 +29,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import { TraeUsageCard } from './TraeUsageCard.tsx'
 import { ComposerPointsGate } from './ComposerPointsGate.tsx'
 import type { ComposerPointsGateProps } from './ComposerPointsGate.tsx'
-import { TraeModelLabel } from './TraeModelLabel.tsx'
+import { MODEL_LABEL_PRIORITY, TraeModelLabel } from './TraeModelLabel.tsx'
 import type { TraeUsageCardInjected } from './TraeUsageCard.tsx'
 import type { TraeCreditPosition } from '../status-paths.ts'
 import { TRAE_USAGE_PATH, withTraeRegion } from '../status-paths.ts'
@@ -76,6 +76,131 @@ export const inject = ['slots', 'locale']
  * If you change the guarded body, the soft probe, or the per-slot
  * registration here, update that mirror too.
  */
+
+/**
+ * The slot entries this client currently holds, by the identity each claims.
+ *
+ * MODULE-LEVEL, and that is the whole point (issue #74). `apply()` can run a
+ * second time while the first run's registrations are still live — a reload or
+ * rebuild path applies the same client twice. A map closed over by ONE `apply`
+ * invocation cannot see the previous invocation's entries and therefore cannot
+ * release them, which is precisely the state that produced
+ *
+ *   single slot "conversation.input.model.label" already has a registration at
+ *   priority 0 (registered by dsh-connect-trae-client)
+ *
+ * — a plugin colliding with ITSELF, not with another plugin.
+ *
+ * Stale entries are harmless: every disposer in the registry is idempotent
+ * (`if (!rec.entries.includes(entry)) return`), so releasing one twice is a
+ * no-op and a leftover entry costs nothing but a map slot.
+ */
+/** One held seat: the entry itself, and the watcher that can re-create it. */
+interface SlotHold {
+  /** Disposes the registry ENTRY. Idempotent in the registry. */
+  disposeEntry?: () => void
+  /** Stops the `inject` watcher from running the callback again. */
+  disposeInject?: () => void
+}
+
+const liveSlotEntries = new Map<string, SlotHold>()
+
+/**
+ * Release this client's hold on `identity`, if it has one.
+ *
+ * `entryOnly` exists because of a subtle self-collision: the release is called
+ * from INSIDE the `inject` callback as well as from `apply`, and disposing the
+ * inject controller from within its own callback would tear down the effect
+ * that is currently executing. Inside the callback only the ENTRY is released;
+ * from `apply`, both.
+ */
+function releaseSlotEntry(identity: string, entryOnly = false): void {
+  const held = liveSlotEntries.get(identity)
+  if (held === undefined) return
+  liveSlotEntries.delete(identity)
+  if (held.disposeEntry !== undefined) {
+    try { held.disposeEntry() } catch { /* already disposed by the slot service */ }
+  }
+  if (!entryOnly && held.disposeInject !== undefined) {
+    try { held.disposeInject() } catch { /* already disposed */ }
+  }
+}
+
+/**
+ * Register one slot entry, surviving EVERY way the registry can refuse it.
+ *
+ * WHY THE CATCH IS INSIDE THE CALLBACK, which is the whole point of issue #74.
+ * `slots.inject()` does not necessarily run its callback now: when the slot is
+ * not declared yet it subscribes and runs the callback LATER. A later throw is
+ * re-thrown by the renderer's own `changed()` handler out of a `queueMicrotask`,
+ * where no call-site try/catch can reach it — the user gets a renderer error
+ * banner on the first paint after a restart, and a reload (which re-declares in
+ * a different order) clears it. Moving the catch inside the callback turns every
+ * refusal into a log line, matching this file's "degrade, never take the page
+ * down" contract.
+ *
+ * WHY THE RELEASE COMES FIRST. A `single` slot rejects a second live entry at
+ * the same priority. That refusal is OUR fault and we can fix it rather than
+ * report it, so each run releases whatever this identity already holds.
+ *
+ * @param ctx - The applying plugin's context (module scope has none).
+ * @param identity - Stable key for this seat.
+ * @param slotKey - The host slot to register into.
+ * @param register - Performs the registration, returning its disposer.
+ * @param describe - Names the seat in the failure log.
+ */
+function registerSlotEntry(
+  // Structural, not `ClientContext`: the helper is module-level and takes only
+  // the one fact it needs, so the spec can drive it without a full context.
+  ctx: { slots: { inject(key: never, callback: () => (() => void)): () => void } },
+  identity: string,
+  slotKey: string,
+  register: () => () => void,
+  describe: string,
+): void {
+  const hold: SlotHold = {}
+  const fail = (error: unknown): void => {
+    console.error(`[dsh-connect-trae] ${describe} failed to register (host provider unaffected):`, error)
+  }
+  const run = (): (() => void) => {
+    releaseSlotEntry(identity, true)
+    try {
+      const disposeEntry = register()
+      hold.disposeEntry = disposeEntry
+      // `liveSlotEntries` may have been cleared by a release while we ran (a
+      // concurrent re-declaration); re-seat the hold so the entry is reachable.
+      const current = liveSlotEntries.get(identity)
+      if (current === undefined) liveSlotEntries.set(identity, hold)
+      else current.disposeEntry = disposeEntry
+      return disposeEntry
+    } catch (error: unknown) {
+      fail(error)
+      return () => {}
+    }
+  }
+  try {
+    const result = ctx.slots.inject(slotKey as never, () => {
+      try {
+        return run()
+      } catch (error: unknown) {
+        // Only reachable if the release itself throws.
+        fail(error)
+        return () => {}
+      }
+    })
+    hold.disposeInject = result
+    // The callback may ALREADY have run (the slot was declared): `register()`
+    // is not called again here, only the hold is seated. Calling it twice would
+    // re-create the very duplicate this function exists to prevent.
+    const current = liveSlotEntries.get(identity)
+    if (current === undefined) liveSlotEntries.set(identity, hold)
+    else current.disposeInject = result
+  } catch (error: unknown) {
+    releaseSlotEntry(identity)
+    fail(error)
+  }
+}
+
 export function apply(ctx: ClientContext): void {
   try {
     const namespace = 'settings.trae'
@@ -172,26 +297,22 @@ export function apply(ctx: ClientContext): void {
     })()
 
     const registerCard = (slotName: string, key: string): void => {
-      try {
-        ctx.slots.inject(slotName as never, () => (ctx.slots as unknown as {
-          register(
-            options: { name: string; key: string; priority: number; inject: () => TraeUsageCardInjected },
-            component: unknown,
-          ): () => void
-        }).register({
-          name: slotName,
-          key,
-          priority: 30,
-          // The scope is always present (it is the re-binding proxy); a host
-          // with no settings surface leaves it permanently unbound, so the
-          // card renders read-only rather than not at all.
-          inject: () => ({ t, settingsScope }),
-        }, TraeUsageCard))
-      } catch (error: unknown) {
-        // Isolated per slot on purpose: a failed registration must never take
-        // the other slots down with it.
-        console.error(`[dsh-connect-trae] card slot "${slotName}" failed to register (host provider unaffected):`, error)
-      }
+      registerSlotEntry(ctx, `${slotName}#${key}`, slotName, () => (ctx.slots as unknown as {
+        register(
+          options: { name: string; key: string; priority: number; inject: () => TraeUsageCardInjected },
+          component: unknown,
+        ): () => void
+      }).register({
+        name: slotName,
+        key,
+        // `priority: 30` places this card AFTER the host's own configuration
+        // form (which registers at the default 0) instead of colliding with it.
+        priority: 30,
+        // The scope is always present (it is the re-binding proxy); a host
+        // with no settings surface leaves it permanently unbound, so the
+        // card renders read-only rather than not at all.
+        inject: () => ({ t, settingsScope }),
+      }, TraeUsageCard), `card slot "${slotName}"`)
     }
 
     registerCard('plugins.bundle.config', 'dsh-connect-trae')
@@ -229,34 +350,28 @@ export function apply(ctx: ClientContext): void {
       order: number,
       position: TraeCreditPosition,
     ): void => {
-      try {
-        ctx.slots.inject(slotName as never, () => (ctx.slots as unknown as {
-          register(
-            // The gate's OWN prop shape, not the card's: this registration
-            // injects `position` and `onOpenSettings` on top of the card's
-            // `t` / `settingsScope`. Spellling it `TraeUsageCardInjected` made
-            // the two extra props an excess-property surprise waiting for the
-            // next refactor to trip over.
-            options: { name: string; id: string; order: number; locale: string; inject: () => ComposerPointsGateProps },
-            component: unknown,
-          ): () => void
-        }).register({
-          name: slotName,
-          id,
-          order,
-          locale: namespace,
-          // `settingsScope` rides along so the gate can honor the card's
-          // "show credits in the composer" switch and its seat without a second
-          // writer; `position` is which seat THIS registration occupies;
-          // `onOpenSettings` is the panel header's route to this plugin's own
-          // page (see `settings-route.ts` for why it is probed at PRESS time).
-          inject: () => ({ t, settingsScope, position, onOpenSettings }),
-        }, ComposerPointsGate))
-      } catch (error: unknown) {
-        // Isolated per seat: a failed registration in one must never take the
-        // other down with it, and the host provider is unaffected either way.
-        console.error(`[dsh-connect-trae] points slot "${slotName}" failed to register (host provider unaffected):`, error)
-      }
+      registerSlotEntry(ctx, `${slotName}#${id}`, slotName, () => (ctx.slots as unknown as {
+        register(
+          // The gate's OWN prop shape, not the card's: this registration
+          // injects `position` and `onOpenSettings` on top of the card's
+          // `t` / `settingsScope`. Spellling it `TraeUsageCardInjected` made
+          // the two extra props an excess-property surprise waiting for the
+          // next refactor to trip over.
+          options: { name: string; id: string; order: number; locale: string; inject: () => ComposerPointsGateProps },
+          component: unknown,
+        ): () => void
+      }).register({
+        name: slotName,
+        id,
+        order,
+        locale: namespace,
+        // `settingsScope` rides along so the gate can honor the card's
+        // "show credits in the composer" switch and its seat without a second
+        // writer; `position` is which seat THIS registration occupies;
+        // `onOpenSettings` is the panel header's route to this plugin's own
+        // page (see `settings-route.ts` for why it is probed at PRESS time).
+        inject: () => ({ t, settingsScope, position, onOpenSettings }),
+      }, ComposerPointsGate), `points slot "${slotName}"`)
     }
 
     // The composer row: the default seat, and the closer, more glanceable one.
@@ -299,13 +414,17 @@ export function apply(ctx: ClientContext): void {
      * down with it.
      */
     const registerModelLabel = (): void => {
-      try {
-        return ctx.slots.inject('conversation.input.model.label' as never, () => (ctx.slots as unknown as {
-          register(options: { name: string }, component: unknown): () => void
-        }).register({ name: 'conversation.input.model.label' }, TraeModelLabel)) as unknown as void
-      } catch (error: unknown) {
-        console.error('[dsh-connect-trae] model label slot failed to register (host provider unaffected):', error)
-      }
+      registerSlotEntry(ctx, 'conversation.input.model.label', 'conversation.input.model.label', () => (ctx.slots as unknown as {
+        register(options: { name: string, priority: number }, component: unknown): () => void
+      }).register(
+        // The priority is not a detail (issue #74): `single` slots throw on a
+        // duplicate at the SAME priority, and 0 — the default, which this used
+        // to take — is the one value guaranteed to be contested, because it is
+        // what every other contributor also gets without asking. See
+        // `MODEL_LABEL_PRIORITY` for the live occupancy that chose this value.
+        { name: 'conversation.input.model.label', priority: MODEL_LABEL_PRIORITY },
+        TraeModelLabel,
+      ), 'model label slot')
     }
 
     registerModelLabel()
@@ -358,36 +477,34 @@ export function apply(ctx: ClientContext): void {
      */
     const PANEL_ID = 'dsh-connect-trae'
     const registerPanel = (): Array<() => void> => {
-      const disposers: Array<() => void> = []
-      try {
-        disposers.push(ctx.slots.inject('sidebar.panellist' as never, () => (ctx.slots as unknown as {
-          register(options: { name: string; id: string; order: number; label: () => string; locale: string }, component: unknown): () => void
-        }).register({
-          name: 'sidebar.panellist',
-          id: PANEL_ID,
-          // Below both shipped rows (the host's Plugins at 0 and the market at 1)
-          // and above Scheduled tasks (10): this is a usage readout, not a
-          // primary destination.
-          order: 2,
-          label: () => t('nav.panel'),
-          locale: namespace,
-        }, TraePanelIcon)))
-      } catch (error: unknown) {
-        console.error('[dsh-connect-trae] sidebar panel row failed to register (host provider unaffected):', error)
-      }
-      try {
-        disposers.push(ctx.slots.inject('main' as never, () => (ctx.slots as unknown as {
-          register(options: { name: string; key: string; locale: string; inject: () => TraeUsageCardInjected & { surface: 'page', backToConversation: () => void } }, component: unknown): () => void
-        }).register({
-          name: 'main',
-          key: PANEL_ID,
-          locale: namespace,
-          inject: () => ({ t, settingsScope, surface: 'page' as const, backToConversation }),
-        }, TraeUsageCard)))
-      } catch (error: unknown) {
-        console.error('[dsh-connect-trae] sidebar panel page failed to register (host provider unaffected):', error)
-      }
-      return disposers
+      registerSlotEntry(ctx, 'sidebar.panellist#dsh-connect-trae', 'sidebar.panellist', () => (ctx.slots as unknown as {
+        register(options: { name: string; id: string; order: number; label: () => string; locale: string }, component: unknown): () => void
+      }).register({
+        name: 'sidebar.panellist',
+        id: PANEL_ID,
+        // Below both shipped rows (the host's Plugins at 0 and the market at 1)
+        // and above Scheduled tasks (10): this is a usage readout, not a
+        // primary destination.
+        order: 2,
+        label: () => t('nav.panel'),
+        locale: namespace,
+      }, TraePanelIcon), 'sidebar panel row')
+      registerSlotEntry(ctx, `main#${PANEL_ID}`, 'main', () => (ctx.slots as unknown as {
+        register(options: { name: string; key: string; locale: string; inject: () => TraeUsageCardInjected & { surface: 'page', backToConversation: () => void } }, component: unknown): () => void
+      }).register({
+        name: 'main',
+        key: PANEL_ID,
+        locale: namespace,
+        inject: () => ({ t, settingsScope, surface: 'page' as const, backToConversation }),
+      }, TraeUsageCard), 'sidebar panel page')
+      // Returned for `syncPanelRegistration`'s dispose loop. `registerSlotEntry`
+      // owns the disposers in `liveSlotEntries`; handing its own release back
+      // keeps the existing "flip the switch disposes the row" behaviour without
+      // two competing owners of the same entry.
+      return [
+        () => { releaseSlotEntry('sidebar.panellist#dsh-connect-trae') },
+        () => { releaseSlotEntry(`main#${PANEL_ID}`) },
+      ]
     }
 
     /**

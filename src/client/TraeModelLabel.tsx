@@ -341,6 +341,48 @@ function PromoChip(props: { badge: TraePromoBadge, copy: Record<TraeSettingsKey,
  * @param props - The host's model identity and the placement of this label.
  * @returns The catalog name, followed by the promotion chip when one holds.
  */
+/**
+ * This plugin's seat in the HOST's model-label cell (issue #74).
+ *
+ * `conversation.input.model.label` is a `single` slot: `SlotCore.register()`
+ * THROWS when a second registration claims the same priority, with
+ * "single slot ... already has a registration at priority 0 ... register at a
+ * different priority to shadow it (lowest renders)". Priority 0 is the DEFAULT,
+ * so it is the one value that is guaranteed to be contested.
+ *
+ * WHY `-0.25` AND NOT 0. Measured on the live desktop host (0.2.1-rc.5) the
+ * cell is already shared:
+ *
+ *   dsh-connect-qoder-client     priority -1    (active — lowest renders)
+ *   dsh-connect-workbuddy-client priority -0.5
+ *   dsh-connect-trae-client      priority  0    (this plugin)
+ *
+ * -1 and -0.5 are the two sibling connectors' seats and must NOT be reused —
+ * two plugins on one priority collide for exactly the reason 0 did. `-0.25`
+ * sits between them, legal, and collides with neither. The value only has to be
+ * DISTINCT from whatever else claims the cell; it deliberately does not read the
+ * slot ledger or negotiate with other plugins (this repository's §零 invariant,
+ * and the host's own shipped README reaches the same conclusion — its documented
+ * remedy for a same-priority conflict is a configuration decision, not a runtime
+ * handshake).
+ *
+ * WHAT WINNING/HOLDING COSTS. This cell is `single`, so the other registrants'
+ * decorations on the rows this plugin claims are not composed. That is the
+ * documented, accepted trade-off, and it is why the component returns the plain
+ * catalog name for any provider that is not ours — the slot's own minimum.
+ *
+ * WHY A DISTINCT PRIORITY IS NOT ENOUGH ON ITS OWN. It removes the cross-plugin
+ * collision, but issue #74's error was a SECOND registration of THIS plugin
+ * against its own first one (the report's stack shows
+ * "registered by dsh-connect-trae-client" colliding with priority 0). That is
+ * the re-entrancy path `inject` allows: the callback runs again whenever the
+ * slot's declaration lifetime collapses and re-declares, so a callback that
+ * registers unconditionally double-registers. `index.tsx` therefore also
+ * disposes its previous entry before every attempt. Priority alone would have
+ * made the throw rarer and harder to read, not absent.
+ */
+export const MODEL_LABEL_PRIORITY = -0.25
+
 export function TraeModelLabel(props: {
   provider: { id: string, name: string }
   model: { id: string, name: string }

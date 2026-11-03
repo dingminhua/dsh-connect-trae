@@ -25,9 +25,12 @@ import { describe, expect, it, vi } from 'vitest'
  *
  * DRIFT WARNING: the `apply()` below is a manual mirror of the real
  * `apply()` in `src/client/index.tsx`. It is NOT the product code, so this
- * test only proves the fallback ideas work. If you change the real `apply()`'s
- * soft-probe shape, the re-binding proxy, the per-slot try/catch, or the
- * `console.error` messages, update the mirror here too.
+ * test only proves the fallback IDEAS work. The guard that issue #74 actually
+ * needed — catching inside the `inject` callback, because `inject` may defer it
+ * past any call-site try/catch — is NOT mirrored here; it is asserted against
+ * the real entry in `tests/client-activation.spec.tsx`. If you change the real
+ * `apply()`'s soft-probe shape, the re-binding proxy, the per-slot disposal, or
+ * the `console.error` messages, update the mirror here too.
  */
 
 /** Mirror of src/client/index.tsx apply() body. */
@@ -94,11 +97,17 @@ function apply(ctx: any): void {
     registerCard('plugins.row.config', 'dsh-connect-trae#dsh-connect-trae')
 
     // Mirror of the model-picker label registration: own try/catch, so a host
-    // that does not serve the slot cannot take the card down with it.
+    // that does not serve the slot cannot take the card down with it. The
+    // priority is mirrored too (issue #74): registering at the default 0 is
+    // what collided with the host's own badge and with this plugin's earlier
+    // run. The REAL guard lives in `registerSlotEntry` (the catch has to be
+    // inside the callback, because `inject` may defer it); this mirror keeps
+    // the shape recognisable rather than proving that guard, which
+    // `tests/client-activation.spec.tsx` does against the real `apply()`.
     const registerModelLabel = (): void => {
       try {
         ctx.slots.inject('conversation.input.model.label', () => ctx.slots.register(
-          { name: 'conversation.input.model.label' }, {},
+          { name: 'conversation.input.model.label', priority: -0.25 }, {},
         ))
       } catch (error: unknown) {
         console.error('[dsh-connect-trae] model label slot failed to register (host provider unaffected):', error)

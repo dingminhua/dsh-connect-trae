@@ -201,6 +201,108 @@ describe('client entry activation on 0.1.7', () => {
     await ctx.fiber.dispose()
   })
 
+  /**
+   * ISSUE #74: a duplicate registration must not escape as an uncaught error.
+   *
+   * The reporter's error was thrown from INSIDE the `inject` callback, on a
+   * later declaration pass, and surfaced as
+   *
+   *   Uncaught Error: single slot "conversation.input.model.label" already has
+   *   a registration at priority 0 (registered by dsh-connect-trae-client)
+   *
+   * — the plugin colliding with ITSELF. Two independent fixes are pinned here,
+   * because either one alone leaves the other failure mode reachable:
+   *
+   *  1. the entry is RELEASED before it is registered again, so the duplicate
+   *     never happens (the store-switch test above already exercises the
+   *     dispose path; this one exercises the re-`apply` path);
+   *  2. anything the registry DOES refuse is caught inside the callback, so it
+   *     becomes a log line instead of a renderer crash.
+   */
+  it('survives the same client being applied twice (issue #74 self-collision)', async () => {
+    const errors: unknown[] = []
+    const spy = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => { errors.push(args) })
+
+    const ctx = await boot([Slots, Locale, ConfigForms])
+    // TWO fibers running the SAME entry: the reload/rebuild shape that applies
+    // one client twice. `Context.plugin` returns a distinct fiber per callback,
+    // so this really is two `apply()` runs over one service instance.
+    const first = ctx.plugin(clientEntry as unknown as PluginShape)
+    await vi.waitFor(() => { expect(first.state).toBe(2) })
+    const second = ctx.plugin(clientEntry as unknown as PluginShape)
+    await vi.waitFor(() => { expect(second.state).toBe(2) })
+
+    const slots = ctx.get('slots') as unknown as Slots
+    // ONE entry per seat, not two. Before the fix the second `apply` added a
+    // duplicate and the double's `register` (like the real registry) would have
+    // thrown — which is exactly the reported error.
+    const names = slots.registrations.map(entry => entry.name).sort()
+    expect(names).toEqual([
+      'conversation.composer.dock',
+      'conversation.input.model.label',
+      'conversation.input.right',
+      'plugins.bundle.config',
+      'plugins.row.config',
+    ])
+    expect(errors).toHaveLength(0)
+
+    spy.mockRestore()
+    await ctx.fiber.dispose()
+  })
+
+  it('turns a registry refusal into a log line, never an uncaught throw (#74)', async () => {
+    const errors: unknown[] = []
+    const spy = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => { errors.push(args) })
+
+    // The REAL failure shape: `inject` runs its callback LATER, so the throw
+    // cannot be caught at the call site. This double defers the callback the
+    // way the renderer does for an undeclared slot — if the guard were only a
+    // try/catch around `inject`, the throw below would escape into the test.
+    class DeferredSlots extends Service {
+      readonly registrations: { name: string; key: string }[] = []
+      private readonly pending: Array<() => void> = []
+      constructor(owner: Context) { super(owner, 'slots') }
+      inject(_name: string, callback: () => void | (() => void)): () => void {
+        this.pending.push(() => { (callback as () => void)() })
+        return () => {}
+      }
+      /** Run every deferred callback — where a real re-declaration would. */
+      flush(): void { for (const run of this.pending.splice(0)) run() }
+      register(options: { name: string; key?: string; id?: string }): () => void {
+        // The registry's own rule for a `single` slot, which is what #74 hit.
+        if (options.name === 'conversation.input.model.label') {
+          throw new Error(`single slot "${options.name}" already has a registration at priority 0`)
+        }
+        const entry = { name: options.name, key: options.key ?? options.id ?? '' }
+        this.registrations.push(entry)
+        return () => {
+          const index = this.registrations.indexOf(entry)
+          if (index >= 0) this.registrations.splice(index, 1)
+        }
+      }
+    }
+
+    const ctx = await boot([DeferredSlots, Locale, ConfigForms])
+    const fiber = ctx.plugin(clientEntry as unknown as PluginShape)
+    await vi.waitFor(() => { expect(fiber.state).toBe(2) })
+    const slots = ctx.get('slots') as unknown as DeferredSlots
+
+    // Flushing is where the crash used to happen.
+    expect(() => { slots.flush() }).not.toThrow()
+    // The other seats still registered: one refused seat must not cost the rest.
+    expect(slots.registrations.map(entry => entry.name).sort()).toEqual([
+      'conversation.composer.dock',
+      'conversation.input.right',
+      'plugins.bundle.config',
+      'plugins.row.config',
+    ])
+    // And the refusal was REPORTED rather than swallowed silently.
+    expect(errors.some(args => String((args as unknown[])[0]).includes('model label slot failed to register'))).toBe(true)
+
+    spy.mockRestore()
+    await ctx.fiber.dispose()
+  })
+
   it('ACTIVATES even with no settings surface at all, degrading to read-only', async () => {
     const errors: unknown[] = []
     const spy = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => { errors.push(args) })
