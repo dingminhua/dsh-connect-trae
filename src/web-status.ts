@@ -1118,20 +1118,42 @@ export async function traeAccountCredits(
   if (accounts.length === 0) return []
   return Promise.all(accounts.map(async account => {
     let generalAvailable: number | undefined
-    if (account.selected) {
-      // The BOUND account goes through the shared client, the same path
-      // `traeWebUsage` uses, because its stored credential is normally EXPIRED:
-      // `resolve()` refreshes it on read. `creditsOfAccount` is a pure lookup by
-      // design and hands the stale token back as-is — which is fine for the
-      // alternatives, where `creditAlternatives` excludes the selected account
-      // for exactly this reason, but leaves this row with no figure.
-      try {
-        generalAvailable = toCredits(await deps.client(panel).snapshot()).generalAvailable
-      } catch { /* keep the row, without a figure */ }
-    } else if (deps.creditsOfAccount !== undefined) {
+    /**
+     * EVERY row goes through `creditsOfAccount`, INCLUDING the bound one.
+     *
+     * That is a correctness fix, not a simplification. The bound row used to
+     * take `deps.client(panel).snapshot()` — the shared client, which reads
+     * through `store.resolve()` and therefore whatever account is bound. The
+     * branch existed because the bound account's stored token is usually
+     * EXPIRED, and `creditsOfAccount` used to be a pure lookup that handed a
+     * stale token back as-is. `126faa9` removed that reason: `creditsOfAccount`
+     * now resolves each named account's credential, refreshing it first.
+     *
+     * What was left behind was a way to report the WRONG account's balance. The
+     * shared client answers for the binding, so if the store's binding moved
+     * between the `accounts()` read and the snapshot — or `resolve()` picked a
+     * different account than the `selected` flag names — this row carried the
+     * OTHER account's figure. The visible symptom was two rows showing the same
+     * number (issue #74 follow-up, 2026-11-03): both accounts read 644.29 while
+     * the upstream said 678.54 and 644.00.
+     *
+     * Reading by id is also what makes the rows independent: each request names
+     * its account, so no row can be answered by another row's credential.
+     */
+    if (deps.creditsOfAccount !== undefined) {
       try {
         const credits = await deps.creditsOfAccount(panel, account.id)
         generalAvailable = credits?.generalAvailable
+      } catch { /* keep the row, without a figure */ }
+    } else if (account.selected) {
+      // A host with no per-account lookup at all can still quote the BOUND
+      // account, because the shared client necessarily reads the binding — so
+      // for this one row the old path is not a lie, it is the only source. It
+      // stays a FALLBACK rather than the rule: wherever `creditsOfAccount`
+      // exists, reading by id is both fresher and free of the wrong-account
+      // hazard documented above.
+      try {
+        generalAvailable = toCredits(await deps.client(panel).snapshot()).generalAvailable
       } catch { /* keep the row, without a figure */ }
     }
     return { id: account.id, accountName: account.accountName, selected: account.selected, ...generalAvailable === undefined ? {} : { generalAvailable } }

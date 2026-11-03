@@ -993,11 +993,16 @@ describe('traeAccountCredits: the composer panel table', () => {
     // (they are the alternatives you would switch TO). The table is a list of
     // what exists, so neither exclusion applies.
     const deps = twoAccounts()
-    // The bound account reads through the client (its stored token is the
-    // expired one); the other two go through the per-account lookup.
+    // EVERY row — the bound one included — is read BY ID through the
+    // per-account lookup. The shared client is present here on purpose: before
+    // the fix the bound row went through it and therefore reported whatever
+    // account the store was bound to, which is how two rows came to show one
+    // account's figure.
     deps.client = () => clientWith(3392)
     deps.creditsOfAccount = async (_region, accountId) =>
-      accountId === 'account-2' ? balance(1777) : balance(0)
+      accountId === 'account-2'
+        ? balance(1777)
+        : accountId === 'account-1' ? balance(3392) : balance(0)
 
     const rows = await traeAccountCredits(deps, 'cn')
     expect(rows.map(row => row.accountName)).toEqual(['LaoDing', 'Backup', 'Empty'])
@@ -1006,40 +1011,60 @@ describe('traeAccountCredits: the composer panel table', () => {
     expect(rows[1]?.selected).toBe(false)
   })
 
-  it('reads the BOUND account through the refreshing client, not the pure lookup', async () => {
-    // The live failure behind "a credit figure is missing": a bound account's
-    // STORED token is normally expired (its own usage read refreshes it), and
-    // `creditsOfAccount` hands stale tokens back as-is by design — which is why
-    // `creditAlternatives` excludes the selected account. The table does not
-    // exclude it, so it must take the other path.
+  it('reads the bound account BY ID, never through the shared client', async () => {
+    // The bug this pins (2026-11-03): the bound row used to call
+    // `deps.client(panel).snapshot()`, which reads through `store.resolve()` —
+    // i.e. whichever account is BOUND, not whichever account this row is. Two
+    // accounts then reported one figure (both 644.29 while upstream said 678.54
+    // and 644.00).
+    //
+    // The old branch existed because `creditsOfAccount` used to be a pure lookup
+    // that handed a stale token back as-is; `126faa9` made it refresh first, so
+    // the reason is gone and the hazard is not worth its remaining benefit.
     const deps = twoAccounts()
+    let sharedClientReads = 0
+    deps.client = () => ({
+      snapshot: async () => {
+        sharedClientReads += 1
+        return { summary: { totalAmount: 0, consumedAmount: 0 }, packs: [] }
+      },
+    }) as unknown as ReturnType<TraeUsageRouteOptions['client']>
     deps.creditsOfAccount = async (_region, accountId) => {
-      if (accountId === 'account-1') throw new Error('token expired')
+      if (accountId === 'account-1') return balance(3392)
       return accountId === 'account-2' ? balance(1777) : balance(0)
     }
-    deps.client = () => ({
-      snapshot: async () => ({
-        summary: { totalAmount: 3392, consumedAmount: 0 },
-        packs: [{ displayDesc: 'monthly', availableEndpoint: 0, consumedCredits: 0, creditsLimit: 3392 }],
-      }),
-    }) as unknown as ReturnType<TraeUsageRouteOptions['client']>
 
     const rows = await traeAccountCredits(deps, 'cn')
     expect(rows[0]).toEqual({
       id: 'account-1', accountName: 'LaoDing', selected: true, generalAvailable: 3392,
     })
-    // ...and the others still take the per-account lookup.
     expect(rows[1]?.generalAvailable).toBe(1777)
+    // The shared client must not be consulted at all: one call to it is one
+    // chance to attribute the binding's figure to some other row.
+    expect(sharedClientReads).toBe(0)
+  })
+
+  it('quotes the BOUND account from the shared client only when no per-account lookup exists', async () => {
+    // A host that exposes no `creditsOfAccount` still gets a figure for the row
+    // it can honestly answer: the shared client necessarily reads the binding,
+    // so for THAT one row it is the same account. It stays a fallback.
+    const deps = twoAccounts()
+    delete deps.creditsOfAccount
+    deps.client = () => clientWith(3392)
+
+    const rows = await traeAccountCredits(deps, 'cn')
+    expect(rows[0]?.generalAvailable).toBe(3392)
+    expect(rows[1]?.generalAvailable).toBeUndefined()
   })
 
   it('keeps an account whose balance read fails, without a figure', async () => {
     // A stale token on one account must not remove it from the table: the whole
     // point of the panel is to SEE which accounts exist and switch to one.
     const deps = twoAccounts()
-    deps.client = () => clientWith(3392)
+    deps.client = () => clientWith(9999)
     deps.creditsOfAccount = async (_region, accountId) => {
       if (accountId === 'account-2') throw new Error('token expired')
-      return balance(0)
+      return balance(accountId === 'account-1' ? 3392 : 0)
     }
 
     const rows = await traeAccountCredits(deps, 'cn')
