@@ -2297,8 +2297,6 @@ export function TraeUsageCard({ t, settingsScope, view, surface, backToConversat
                             <span>{t('row.modelContext', { context: formatCapacity(model.maxContextWindow ?? model.contextWindow, t('row.modelUnknown')) })}</span>
                             {model.maxTokens === undefined ? null
                               : <span>{t('row.modelOutput', { output: formatCapacity(model.maxTokens, t('row.modelUnknown')) })}</span>}
-                            {model.reasoning === undefined ? null
-                              : <span>{t('row.modelReasoning', { efforts: model.reasoning.supported.join(' / ') })}</span>}
                             {/* The thinking-level choice, kept on the meta row
                                 rather than in the options row: it is a standing
                                 preference about HOW the model runs, not a

@@ -306,7 +306,6 @@ export const en = {
   'row.modelImage': 'Image',
   'row.modelImageAuto': 'Enabled automatically: Trae marks this model multimodal.',
   'row.modelRate': '{rate}x credits',
-  'row.modelReasoning': 'Reasoning: {efforts}',
   'row.modelReasoningSupported': 'Reasoning: supported',
   'row.modelReasoningLabel': 'Reasoning',
   'row.modelReasoningFollowUpstream': 'Default',
@@ -755,7 +754,6 @@ export const zh: Record<TraeSettingsKey, string> = {
   'row.modelImage': '图片',
   'row.modelImageAuto': '已自动开启：Trae 把该模型标为多模态。',
   'row.modelRate': '积分 {rate}x',
-  'row.modelReasoning': '推理强度：{efforts}',
   'row.modelReasoningSupported': '推理：支持',
   // 「跟随默认」是这一列最要紧的一项：它必须点明这个模型**实际**会跑哪一档，
   // 否则用户看不出自己在覆盖什么（此前 DSH 的选择器只能说 Default）。
