@@ -308,6 +308,9 @@ export const en = {
   'row.modelRate': '{rate}x credits',
   'row.modelReasoning': 'Reasoning: {efforts}',
   'row.modelReasoningSupported': 'Reasoning: supported',
+  'row.modelReasoningLabel': 'Reasoning',
+  'row.modelReasoningFollowUpstream': 'Default',
+  'row.modelReasoningFollowUpstreamNamed': 'Default ({effort})',
   'row.modelUnknown': 'Unknown',
   'row.modelCapabilityPending': 'Image input follows Trae\'s own multimodal flag, plus anything you tick yourself.',
   // The account pool (per-panel billing pool).
@@ -754,6 +757,11 @@ export const zh: Record<TraeSettingsKey, string> = {
   'row.modelRate': '积分 {rate}x',
   'row.modelReasoning': '推理强度：{efforts}',
   'row.modelReasoningSupported': '推理：支持',
+  // 「跟随默认」是这一列最要紧的一项：它必须点明这个模型**实际**会跑哪一档，
+  // 否则用户看不出自己在覆盖什么（此前 DSH 的选择器只能说 Default）。
+  'row.modelReasoningLabel': '思考强度',
+  'row.modelReasoningFollowUpstream': '默认',
+  'row.modelReasoningFollowUpstreamNamed': '默认（{effort}）',
   'row.modelUnknown': '未知',
   'row.modelCapabilityPending': '图片输入跟随 Trae 自身的多模态标注，并叠加你手动勾选的模型。',
   // 账号池（按面板的计费池）。

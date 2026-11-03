@@ -1,12 +1,14 @@
 import { createProvider } from '@earendil-works/pi-ai'
 import type { Api, AuthContext, Context, CredentialStore, Message, Model, Provider, ProviderStreams, Tool } from '@earendil-works/pi-ai'
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy'
-import { resolveRetryPolicy } from '@deepseek-ai/dsh-llm'
+import { ReasoningEffortId, resolveRetryPolicy } from '@deepseek-ai/dsh-llm'
+import type { LlmResolvedModelInfo, PreparedAdapterCall } from '@deepseek-ai/dsh-llm'
 import { PiAiAdapter } from '@deepseek-ai/dsh-llm-pi-ai'
 import type { ResolvedPiAiProviderProfile } from '@deepseek-ai/dsh-llm-pi-ai'
 import type { AttachmentStore } from '@deepseek-ai/dsh-attachment'
 import { FALLBACK_CONTEXT_WINDOW, servedContextWindow, traeInputModalities, traeModelDisplayName, type TraeCatalog, type TraeModelInfo } from './catalog.ts'
 import { piAiRuntimeInfo, type PiAiGeneration } from './pi-ai-runtime.ts'
+import { defaultEffortFor } from './default-effort.ts'
 import type { TraeShim } from './shim.ts'
 import type { TraeRegion } from './region.ts'
 
@@ -406,9 +408,81 @@ export function withContextAdaptation(api: ProviderStreams, generation: PiAiGene
   }
 }
 
+/**
+ * The adapter, with the level each model runs at reported upward.
+ *
+ * WHY THIS SUBCLASS EXISTS. The kernel asks the adapter for a model's reasoning
+ * metadata and materialises `reasoning.defaultEffort` into every request that
+ * names no level (`dsh-llm` `resolveCallWithInfo`), and DSH's model picker reads
+ * the same field to say which level is current. This plugin knows the answer —
+ * Trae publishes a per-model default and the user may override it — but the
+ * hand-built provider cannot express a per-model default through pi-ai's `Model`
+ * (its shape has one `reasoning: boolean` for the whole row). Reporting it here,
+ * at the seam the kernel actually consults, is what makes the picker name a
+ * level instead of `Default`. See `default-effort.ts` for the precedence.
+ *
+ * The override is deliberately narrow: it rewrites ONE field of an object the
+ * parent just built, and only when the model genuinely declares that level.
+ */
+class DefaultEffortAdapter extends PiAiAdapter {
+  /**
+   * The level one model should run at; `undefined` means it offers no reasoning.
+   *
+   * Read on every resolution rather than captured once, so a catalog refresh or
+   * a settings change reaches the very next request without a restart.
+   */
+  private readonly defaultEffort: (model: string) => string | undefined
+
+  constructor(
+    config: ConstructorParameters<typeof PiAiAdapter>[0],
+    defaultEffort: (model: string) => string | undefined = () => undefined,
+  ) {
+    super(config)
+    this.defaultEffort = defaultEffort
+  }
+
+  override resolveModel(provider: string, model: string, signal?: AbortSignal): Promise<LlmResolvedModelInfo> {
+    return super.resolveModel(provider, model, signal).then(info => this.advertiseDefaultEffort(info))
+  }
+
+  override prepareCall(provider: string, model: string, signal?: AbortSignal): Promise<PreparedAdapterCall> {
+    return super.prepareCall(provider, model, signal).then(call => ({
+      ...call,
+      model: this.advertiseDefaultEffort(call.model),
+    }))
+  }
+
+  /**
+   * Write the level into the model metadata.
+   *
+   * It must NEVER contradict the tier list: reporting a level the model does not
+   * offer makes the kernel reject the request outright with
+   * `INVALID_MODEL_REASONING` — far worse than the picker saying `Default`.
+   */
+  private advertiseDefaultEffort(info: LlmResolvedModelInfo): LlmResolvedModelInfo {
+    if (info.reasoning === undefined) return info
+    const effort = this.defaultEffort(info.id)
+    if (effort === undefined) return info
+    if (!info.reasoning.efforts.some(level => level.id === effort)) return info
+    if (info.reasoning.defaultEffort === effort) return info
+    return {
+      ...info,
+      reasoning: { ...info.reasoning, defaultEffort: ReasoningEffortId(effort) },
+    }
+  }
+}
+
 export interface TraeAdapterOptions {
   shim: TraeShim
   catalog: TraeCatalog
+  /**
+   * The user's saved per-model level choices, region-scoped (model id -> level).
+   *
+   * Read lazily on every resolution so a settings save is picked up without
+   * rebuilding the adapter. Absent means "no overrides", which still leaves the
+   * upstream's own default in force — the feature is useful with zero choices.
+   */
+  defaultEfforts?: () => Readonly<Record<string, string | undefined>>
   /** Provider route id this instance serves; defaults to the CN route. */
   provider?: string
   /** pi-ai provider name and profile display name; defaults to the CN name. */
@@ -501,12 +575,28 @@ export function createTraeAdapter(options: TraeAdapterOptions): TraeAdapter {
   // Replacing (not mutating) the map is what `invalidate` uses to force the
   // adapter's next profiles read to rebuild its snapshot.
   let profiles = new Map<string, ResolvedPiAiProviderProfile>([[providerId, profile]])
-  const adapter = new PiAiAdapter({
+  /**
+   * The level one model should run at, resolved from the LIVE catalog.
+   *
+   * The catalog, not the saved `lastCatalog`, because `catalog.current()` is
+   * what the provider serves and what `toPiModel` sized the tier list from —
+   * answering from a different source could name a level that row does not
+   * offer, which the kernel rejects.
+   */
+  const resolveDefaultEffort = (model: string): string | undefined => {
+    const info = options.catalog.current().find(entry => entry.id === model)
+    if (info === undefined || info.reasoning === undefined) return undefined
+    return defaultEffortFor(
+      { id: info.id, supported: info.reasoning.supported, defaultEffort: info.reasoning.defaultEffort },
+      options.defaultEfforts?.() ?? {},
+    )
+  }
+  const adapter = new DefaultEffortAdapter({
     profiles: () => profiles,
     auth: INERT_AUTH,
     resolveApiKey: async () => options.secret ?? options.shim.token(),
     ...options.resolveAttachments === undefined ? {} : { resolveAttachments: options.resolveAttachments },
-  })
+  }, resolveDefaultEffort)
 
   return {
     adapter,

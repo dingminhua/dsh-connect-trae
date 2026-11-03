@@ -56,6 +56,15 @@ function catalog(): Record<string, unknown>[] {
       maxTokens: 8_192,
       ...index % 5 === 0 ? { creditMultiplier: 0.4 } : index % 3 === 0 ? { creditMultiplier: 1 } : {},
       ...index % 7 === 0 ? { multimodal: true } : {},
+      // The thinking-level picker lives on the meta row, so a fixture without a
+      // single reasoning model would photograph a card that never shows it.
+      // Two ladder shapes are represented because the real catalog has both:
+      // `low / high / xhigh` (most CN models) and `low / high` (Doubao, step).
+      ...index % 3 === 0
+        ? { reasoningSupported: true, reasoning: { supported: ['low', 'high', 'xhigh'], defaultEffort: index % 2 === 0 ? 'high' : 'xhigh' } }
+        : index % 3 === 1
+          ? { reasoningSupported: true, reasoning: { supported: ['low', 'high'], defaultEffort: 'high' } }
+          : {},
     }
   })
 }

@@ -6,7 +6,7 @@
  */
 
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
-import type { ReactNode } from 'react'
+import type { ReactElement, ReactNode } from 'react'
 import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client'
 import {
   configuredAccountsOf,
@@ -32,6 +32,7 @@ import type { TraeModelProbeVerdict, TraeModelsTestResponse, TraeWebAccount, Tra
 import type { TraeCreditPosition } from '../status-paths.ts'
 import { providerOfPanel, regionOfPanel, type TraePanel } from '../region.ts'
 import { contextBudgetOptions, TRAE_CONTEXT_BUDGET_MID } from '../context-budget.ts'
+import { defaultEffortFor } from '../default-effort.ts'
 import { filterTraeModels, groupTraeModels, orderTraeModels, scopeTraeModels, type TraeModelView } from '../model-order.ts'
 import { selectTraePromoBadge, type TraePromoKind } from '../promo.ts'
 import { TRAE_PLUGIN_ICON } from './icon.ts'
@@ -121,6 +122,7 @@ interface TraeDraft {
   enabledIds: Set<string>
   imageIds: Set<string>
   contextBudgets: Record<string, number>
+  thinkingEfforts: Record<string, string>
 }
 
 /**
@@ -1272,6 +1274,19 @@ export function TraeUsageCard({ t, settingsScope, view, surface, backToConversat
     ? (settingsValue as { contextBudgets: Record<string, number> }).contextBudgets
     : undefined
   const savedContextBudgets = slotContextBudgets ?? legacyContextBudgets ?? {}
+  /**
+   * The saved thinking-level choice per model for this panel.
+   *
+   * A missing key is a real statement — "follow this model's own default" — so
+   * it is preserved everywhere below as an absent entry rather than being
+   * filled in with the level the model would run at anyway. Writing that level
+   * here would freeze today's upstream default into the config, and the model
+   * would then ignore upstream when it changed its mind.
+   */
+  const savedThinkingEfforts = typeof regionSlot?.thinkingEfforts === 'object' && regionSlot.thinkingEfforts !== null
+    ? Object.fromEntries(Object.entries(regionSlot.thinkingEfforts as Record<string, unknown>)
+      .filter((entry): entry is [string, string] => typeof entry[1] === 'string' && entry[1] !== ''))
+    : {}
   const slotImageIds = Array.isArray(regionSlot?.imageModelIds)
     ? regionSlot.imageModelIds.filter((id): id is string => typeof id === 'string')
     : undefined
@@ -1407,6 +1422,7 @@ export function TraeUsageCard({ t, settingsScope, view, surface, backToConversat
    * the single surface.
    */
   const activeContextBudgets = draft?.contextBudgets ?? savedContextBudgets
+  const activeThinkingEfforts = draft?.thinkingEfforts ?? savedThinkingEfforts
   const dirty = draft !== undefined
 
   /** Apply an edit to the ACTIVE tab's draft, seeding it from the current view. */
@@ -1418,6 +1434,7 @@ export function TraeUsageCard({ t, settingsScope, view, surface, backToConversat
         enabledIds: new Set(activeEnabledIds),
         imageIds: new Set(activeImageIds),
         contextBudgets: { ...activeContextBudgets },
+        thinkingEfforts: { ...activeThinkingEfforts },
       }),
     }))
   }
@@ -1444,6 +1461,23 @@ export function TraeUsageCard({ t, settingsScope, view, surface, backToConversat
       if (budget === undefined) delete next[modelId]
       else next[modelId] = budget
       return { ...current, contextBudgets: next }
+    })
+  }
+
+  /**
+   * Record one model's thinking level; an empty value means "follow the
+   * upstream default" and therefore DELETES the key.
+   *
+   * Deletion is the point. Keeping the level that happens to equal today's
+   * default would look identical on screen while quietly pinning it — the model
+   * would stop following upstream the moment Trae changed its own default.
+   */
+  const setThinkingEffort = (modelId: string, effort: string): void => {
+    editDraft(current => {
+      const next = { ...current.thinkingEfforts }
+      if (effort === '') delete next[modelId]
+      else next[modelId] = effort
+      return { ...current, thinkingEfforts: next }
     })
   }
 
@@ -1556,16 +1590,30 @@ export function TraeUsageCard({ t, settingsScope, view, surface, backToConversat
         enabledModelIds: [...activeEnabledIds],
         imageModelIds: [...activeImageIds].filter(id => activeEnabledIds.has(id)),
         contextBudgets: activeContextBudgets,
+        // Carried explicitly for the same reason as `pool` and `creditPosition`
+        // above: this write replaces the WHOLE region slot, so a field not named
+        // here is dropped. Losing the level choices would look like the picker
+        // resetting itself the next time the user saved the model list.
+        thinkingEfforts: activeThinkingEfforts,
       }
       await writeSettingsField(settingsScope, 'regions',
         nextRegionDirectory(configuredRegions, activeRegion, nextSlot),
         readBack => {
           // A shallow "is anything there?" check would pass a truncated write;
           // compare the selection that was actually saved.
-          const slot = regionSlotsOf(readBack)[activeRegion] as { enabledModelIds?: unknown } | undefined
+          const slot = regionSlotsOf(readBack)[activeRegion] as { enabledModelIds?: unknown; thinkingEfforts?: unknown } | undefined
           const ids = slot?.enabledModelIds
-          return Array.isArray(ids) && ids.length === nextSlot.enabledModelIds.length
-            && nextSlot.enabledModelIds.every(id => (ids as unknown[]).includes(id))
+          if (!Array.isArray(ids) || ids.length !== nextSlot.enabledModelIds.length
+            || !nextSlot.enabledModelIds.every(id => (ids as unknown[]).includes(id))) return false
+          // The level choices ride the same write, so they are confirmed with it
+          // rather than trusted: a schema that had dropped them would still
+          // report this write as landed. Compared as a set of keys, because the
+          // statement being verified is "these models have a chosen level".
+          const savedLevels = slot?.thinkingEfforts
+          const levels = typeof savedLevels === 'object' && savedLevels !== null
+            ? Object.keys(savedLevels as Record<string, unknown>).filter(id => activeThinkingEfforts[id] !== undefined)
+            : []
+          return levels.length === Object.keys(activeThinkingEfforts).length
         })
       discardModels()
       await refreshUsage(activeRegion)
@@ -1574,6 +1622,57 @@ export function TraeUsageCard({ t, settingsScope, view, surface, backToConversat
     } finally {
       if (mounted.current) setSaving(false)
     }
+  }
+
+  /**
+   * The thinking-level picker for one model row, or nothing when Trae published
+   * no tier list for it.
+   *
+   * The first option is deliberately the interesting one: it names the level
+   * this model will actually run at with no choice made. A picker that only
+   * listed tiers would leave "nothing chosen" unlabelled, so the reader cannot
+   * tell what they are overriding — and the previous UI could not state it at
+   * all, which is why DSH's own picker said `Default`.
+   *
+   * Options are the model's OWN tiers, unlocalised: `low / high / xhigh` need no
+   * translation, and a shared ladder across models would list levels that cannot
+   * be selected.
+   */
+  // A const arrow, not a hoisted `function`: the `t` guard above narrows the
+  // destructured parameter only for closures created after it, and a hoisted
+  // declaration could run before the guard.
+  const effortPicker = (model: TraeWebModel): ReactElement | null => {
+    const efforts = model.reasoning?.supported ?? []
+    if (efforts.length === 0) return null
+    const chosen = activeThinkingEfforts[model.id] ?? ''
+    const upstream = model.reasoning?.defaultEffort
+    // The level the request would really run at, which is what the empty option
+    // promises. `defaultEffortFor` is the same function the adapter reports the
+    // default from, so the sentence here and the behaviour in DSH cannot drift.
+    const effective = defaultEffortFor({ id: model.id, supported: efforts, defaultEffort: upstream }, activeThinkingEfforts)
+    return (
+      <span className="dsm-trae-model-effort">
+        <label>
+          <span>{t('row.modelReasoningLabel')}</span>
+          <select
+            className="dsm-trae-model-effort-select"
+            disabled={settingsScope?.getSnapshot().writable !== true || saving}
+            value={chosen}
+            onChange={(event) => { setThinkingEffort(model.id, event.target.value) }}
+          >
+            {/* Named only when a level is actually resolvable: a model whose
+                tiers are all withdrawn would otherwise be promised a level it
+                cannot run at. */}
+            <option value="">
+              {effective === undefined
+                ? t('row.modelReasoningFollowUpstream')
+                : t('row.modelReasoningFollowUpstreamNamed', { effort: effective })}
+            </option>
+            {efforts.map(effort => <option key={effort} value={effort}>{effort}</option>)}
+          </select>
+        </label>
+      </span>
+    )
   }
 
   const title = t('row.title')
@@ -2200,6 +2299,17 @@ export function TraeUsageCard({ t, settingsScope, view, surface, backToConversat
                               : <span>{t('row.modelOutput', { output: formatCapacity(model.maxTokens, t('row.modelUnknown')) })}</span>}
                             {model.reasoning === undefined ? null
                               : <span>{t('row.modelReasoning', { efforts: model.reasoning.supported.join(' / ') })}</span>}
+                            {/* The thinking-level choice, kept on the meta row
+                                rather than in the options row: it is a standing
+                                preference about HOW the model runs, not a
+                                per-request input like the image checkbox. The
+                                empty option is the meaningful default — it says
+                                which level this model will run at when nothing
+                                is chosen, which is the fact the old static
+                                「思考强度 low / high / xhigh」 text could not
+                                state (issue: the picker read "Default" because
+                                the adapter never reported this). */}
+                            {effortPicker(model)}
                           </div>
                         </div>
                       ))}

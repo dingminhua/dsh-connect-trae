@@ -254,3 +254,34 @@
   断言：加了 `gap` 之后，把整条声明串原样匹配的写法会无意义地失败。
 - 全仓 **100 个文件 / 1297 例**通过；两个 tsconfig 分别 typecheck 通过；构建通过
   （`lib/client.js` 474.48 kB）。
+
+### 新增
+
+- **每个模型的思考强度可以自己选了，而且默认档不再显示成 `Default`**
+  （用户要求，2026-11-03：「需要一个默认的思考强度设置，整体做法学习 qoder」）。
+  - **原来的问题**：Trae 的目录一直在发布每个模型自己的默认档
+    （`reasoning_effort_config.default_level`，实测 `deepseek-v4.1-flash` 是 `high`、
+    `glm-5.3` 是 `xhigh`），插件也一直把它解析进了目录 —— 但**适配器从未把它报给
+    宿主**。于是 DSH 的模型选择器只能说 `Default`：既不知道这个模型会跑哪一档，
+    也没法固定成别的档。
+  - **现在**：适配器把默认档作为 `reasoning.defaultEffort` 报上去，宿主会把它
+    **物化进每一个没有指名档位的请求**，DSH 的选择器也从同一份元数据取「当前档位」。
+    卡片上每个声明了档位的模型多一个下拉：第一项写的是**它实际会跑的档**（例如
+    「默认（high）」），其余是该模型自己声明的档位。
+  - **取值优先级**：用户显式选过的档 > 上游声明的默认档 > 该模型自己声明的中档。
+    选「默认」是**删除**这个键，而不是存一个恰好等于今天默认值的档 —— 后者看起来
+    一样，却把选择钉死了，上游改默认时这个模型就不再跟随。
+  - **绝不与档位表矛盾**：保存的档位若已不在该模型当前的档位表里（目录刷新会撤回
+    档位），它会被忽略而不是发出去 —— 发出去会被宿主以
+    `UNSUPPORTED_REASONING_EFFORT` 拒掉，那比「显示 Default」糟得多。
+  - 这是**纯增量**的：不选任何东西时行为与之前完全一致（请求仍跑上游默认档），
+    只是界面上第一次能看见它是哪一档。
+  - 涉及：新增 `src/default-effort.ts`；`src/adapter.ts` 的 `DefaultEffortAdapter` 与
+    `defaultEfforts` 选项；`src/index.ts` 的 `thinkingEfforts` 配置项、
+    `thinkingEffortsOf()` 读取函数与接线；`src/client/TraeUsageCard.tsx` 的
+    `effortPicker`、草稿与保存载荷；`src/client/locales.ts` 三条文案；
+    `src/client/styles.ts` 的 `.dsm-trae-model-effort*`。
+  - 测试：`tests/default-effort.spec.ts`（20 例，含**真实目录行形状**的适配器验证与
+    三条变异验证：换回普通 `PiAiAdapter` → 5 条红；删掉 schema 声明 → 类型校验失效）
+    与 `tests/card-thinking-effort.spec.tsx`（7 例，含「选回默认必须删除键」与
+    「档位要穿过保存」两条，变异验证：从保存载荷里删掉字段 → 2 条红）。

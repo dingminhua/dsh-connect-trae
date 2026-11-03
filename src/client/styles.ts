@@ -440,6 +440,16 @@ export const TRAE_CARD_CSS = `
 .dsm-trae-model-promo-offPeak{color:var(--dsw-alias-brand-primary,#5686fe);border-color:color-mix(in srgb,var(--dsw-alias-brand-primary,#5686fe) 40%,transparent);background:color-mix(in srgb,var(--dsw-alias-brand-primary,#5686fe) 10%,transparent)}
 .dsm-trae-model-meta{display:flex;align-items:center;gap:7px 12px;flex-wrap:wrap;color:var(--dsw-alias-label-tertiary,#999);font-size:11px;line-height:16px}
 .dsm-trae-model-options{display:flex;align-items:center;justify-content:flex-end;gap:12px;flex:none}
+/* The thinking-level picker, on the meta row. Deliberately shaped like the
+   quiet meta text beside it (11px, secondary label) rather than like the
+   options row: it edits a standing preference, and a control that shouts
+   would read as a per-request input the way the image checkbox is. */
+.dsm-trae-model-effort{display:inline-flex;align-items:center;min-width:0}
+.dsm-trae-model-effort label{display:inline-flex;align-items:center;gap:4px;cursor:pointer}
+.dsm-trae-model-effort-select{max-width:112px;padding:0 2px;border:1px solid transparent;border-radius:4px;background:transparent;color:var(--dsw-alias-label-secondary,#c6c9d0);font:inherit;cursor:pointer}
+.dsm-trae-model-effort-select:hover{border-color:var(--dsw-alias-border-l2,#36373b)}
+.dsm-trae-model-effort-select:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#5686fe);outline-offset:1px}
+.dsm-trae-model-effort-select:disabled{opacity:.6;cursor:not-allowed}
 .dsm-trae-model-image{display:inline-flex;align-items:center;gap:4px;color:var(--dsw-alias-label-secondary,#c6c9d0);font-size:11px;line-height:16px;cursor:pointer}
 .dsm-trae-model-image input{margin:0;accent-color:var(--dsw-alias-brand-primary,#5686fe)}
 .dsm-trae-context-budget{display:flex;align-items:center;justify-content:flex-end;gap:12px;flex:none;margin:0;padding:0;border:0;color:var(--dsw-alias-label-secondary,#c6c9d0);font-size:11px;line-height:16px}

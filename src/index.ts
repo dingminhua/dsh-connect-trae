@@ -247,6 +247,21 @@ export interface TraeRegionState {
   /** Local DSH context budget per model in this region. */
   contextBudgets?: Record<string, number>
   /**
+   * The user's own thinking-level choice per model, for this panel (model id ->
+   * DSH level).
+   *
+   * OPT-IN by nature: a missing key means "use whatever this model's own
+   * default is" (`reasoning.defaultEffort`, which Trae's directory publishes),
+   * i.e. the behaviour the plugin had before this field existed. Choosing a
+   * level here overrides that for good, and it is what the kernel materialises
+   * into every request that names no level — see `src/default-effort.ts`.
+   *
+   * A key can go STALE: a directory refresh may withdraw a tier, and a level the
+   * model no longer offers is then ignored rather than sent (sending it would be
+   * rejected with `UNSUPPORTED_REASONING_EFFORT`).
+   */
+  thinkingEfforts?: Record<string, string>
+  /**
    * WHERE this region's credit readout sits (learned from dsh-connect-workbuddy
    * issue #62).
    *
@@ -418,6 +433,29 @@ export function creditPosition(config: Config, region: TraeRegion): TraeCreditPo
 }
 
 /**
+ * The user's thinking-level choices for one panel (model id -> DSH level).
+ *
+ * Read through `regionStateOf` so the region split, the legacy CN fallback and
+ * the volatile unwrap all apply exactly once, in one place. Values are filtered
+ * to non-empty strings: an empty string is not a level, and passing one on would
+ * make the model report a default the kernel cannot name.
+ *
+ * A saved level is NOT validated against the model's current tier list here —
+ * that belongs where the tiers are known (`default-effort.ts`
+ * `defaultEffortFor`), which is also where a withdrawn tier is dropped instead
+ * of being sent.
+ */
+export function thinkingEffortsOf(config: Config, region: TraePanel): Record<string, string> {
+  const raw = regionStateOf(config, region).thinkingEfforts
+  if (raw === undefined || raw === null || typeof raw !== 'object') return {}
+  const out: Record<string, string> = {}
+  for (const [id, level] of Object.entries(raw)) {
+    if (typeof level === 'string' && level !== '') out[id] = level
+  }
+  return out
+}
+
+/**
  * Whether the OPTIONAL sidebar row is switched on (`Config.sidebarPanel`).
  *
  * `=== true` on purpose, exactly like the sibling workbuddy reader: the row
@@ -514,6 +552,20 @@ const regionStateConfig = z.object({
   // undeclared field is dropped on every save of the settings form.
   drawImageEnabled: z.boolean().default(false).description('Allow the model to generate images with trae_draw_image on this panel (consumes credits; default off)'),
   contextBudgets: z.dict(z.number().step(1).min(1)).default({}),
+  // The user's thinking-level choice per model (model id -> DSH level).
+  //
+  // Declared for TYPE enforcement, not retention: this schemastery keeps keys it
+  // does not recognise (measured), so an undeclared map would survive a save
+  // untouched. What the declaration buys is a refusal — a level that is not a
+  // string is rejected at write time instead of being filtered out silently by
+  // `thinkingEffortsOf`, which would leave the picker showing a choice nobody
+  // made. The retention risk the neighbouring fields describe is real but comes
+  // from readers that rebuild the slot field-by-field, not from this schema.
+  //
+  // Defaults to `{}` (no overrides) rather than a materialised tier list: the
+  // absence of a key is the statement "this model uses its own default", and
+  // writing a tier here would freeze today's upstream default into the config.
+  thinkingEfforts: z.dict(z.string()).default({}).description('每个模型的思考强度（模型 id → 档位）。留空 = 跟随该模型自己的默认档。'),
   // WHERE this region's credit readout sits (learned from workbuddy #62).
   // Defaults to `composer` because that is the seat that already existed, so an
   // upgrade moves nothing on screen; `stats` is what a user reaches for when
@@ -2262,6 +2314,10 @@ export function apply(ctx: Context, config: Config): void {
           displayName: displayNameOfTraeProvider(provider),
           secret: entry.secret,
           resolveAttachments: () => ctx.get('attachments'),
+          // Read lazily on every resolution (not captured here): a settings
+          // save must reach the very next request, and the config document it
+          // reads is rebuilt by the loader on each volatile update.
+          defaultEfforts: () => thinkingEffortsOf(current(), panel),
         })
         stack.invalidateAdapter = () => { trae.invalidate() }
         // Always register the route first: an empty INITIAL registration is
