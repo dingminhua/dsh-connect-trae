@@ -16,6 +16,7 @@ export default defineConfig({
       'tools/promo-shot.tsx',
       'tools/panels-shot.tsx',
       'tools/page-shot.tsx',
+      'tools/section-shot.tsx',
       'tools/composer-shot.tsx',
     ],
     environment: 'node',

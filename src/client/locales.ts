@@ -229,9 +229,6 @@ export const en = {
   // It REPLACED the refresh button — the balance already re-reads when the
   // panel opens, on every account switch and every five minutes, while "where
   // do I change this?" had no answer from inside the popover.
-  'composer.openSettings': 'Settings',
-  'composer.openSettingsHint': 'Open this plugin\'s settings page',
-  'composer.openSettingsFailed': 'This host has no route to the plugin settings page',
   // The pool test batch, driven from the same header. The label says "Refresh"
   // at the owner's request; the TOOLTIP and the outcome line carry the meaning,
   // because this press spends credits (one minimal ping per pool member) and a
@@ -240,6 +237,9 @@ export const en = {
   // The LABEL is kept as short as that name allows for a measured reason: the
   // header is 222px wide inside a 248px popover, and a longer label does not
   // wrap — it pushes the settings pill off its own row.
+  'composer.openSettings': 'Settings',
+  'composer.openSettingsHint': 'Open this plugin\'s settings page',
+  'composer.openSettingsFailed': 'This host has no route to the plugin settings page',
   'composer.test': 'Refresh',
   'composer.testHint': 'Refresh every account checked into this panel\'s pool — probes each one in turn (spends a small amount of credits, can take a minute)',
   'composer.testing': 'Refreshing…',

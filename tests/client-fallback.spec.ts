@@ -20,8 +20,8 @@ import { describe, expect, it, vi } from 'vitest'
  *   changes. A card whose entry appeared after the mirror's first load (this
  *   plugin, added to a running profile) would otherwise be stuck on the
  *   declared fallback `trae` and every write would be refused.
- * - Each `registerCard` carries its own try/catch: a failed registration must
- *   not take the other slots down.
+ * - Each slot contribution carries its own try/catch: a failed registration
+ *   must not take the other slots down.
  *
  * DRIFT WARNING: the `apply()` below is a manual mirror of the real
  * `apply()` in `src/client/index.tsx`. It is NOT the product code, so this
@@ -80,21 +80,39 @@ function apply(ctx: any): void {
       return scope
     })()
 
-    const registerCard = (slotName: string, key: string): void => {
+    // The configuration page is a `settings.section` entry now, registered from
+    // ONE callback together with its nav glyph (see the real entry for why the
+    // pairing is structural). The mirror keeps that shape so the per-slot
+    // isolation it exercises is the shape the product has.
+    const registerSettingsPage = (): void => {
       try {
-        ctx.slots.inject(slotName, () => ctx.slots.register({
-          name: slotName,
-          key,
-          priority: 30,
-          inject: () => ({ t, settingsScope }),
-        }, {}))
+        ctx.slots.inject('settings.section', () => {
+          const disposers: Array<() => void> = []
+          disposers.push(ctx.slots.register({
+            name: 'settings.section',
+            id: 'dsh-connect-trae',
+            order: 30,
+            label: () => 'Trae',
+            locale: namespace,
+            inject: () => ({ t, settingsScope, surface: 'section' }),
+          }, {}))
+          try {
+            disposers.push(ctx.slots.inject('settings.section.icon', () => ctx.slots.register({
+              name: 'settings.section.icon',
+              id: 'dsh-connect-trae',
+              locale: namespace,
+            }, {})))
+          } catch (error: unknown) {
+            console.error('[dsh-connect-trae] settings nav icon failed to register (page unaffected):', error)
+          }
+          return () => { for (const dispose of disposers) dispose() }
+        })
       } catch (error: unknown) {
-        console.error(`[dsh-connect-trae] card slot "${slotName}" failed to register (host provider unaffected):`, error)
+        console.error('[dsh-connect-trae] settings section page failed to register (host provider unaffected):', error)
       }
     }
 
-    registerCard('plugins.bundle.config', 'dsh-connect-trae')
-    registerCard('plugins.row.config', 'dsh-connect-trae#dsh-connect-trae')
+    registerSettingsPage()
 
     // Mirror of the model-picker label registration: own try/catch, so a host
     // that does not serve the slot cannot take the card down with it. The
@@ -133,8 +151,8 @@ describe('client card fallback', () => {
       get: () => undefined,
       slots: {
         inject: (slotName: string) => {
-          if (slotName === 'plugins.row.config') {
-            throw new Error('keyed slot "plugins.row.config" already has an entry with id "x"')
+          if (slotName === 'settings.section') {
+            throw new Error('slot "settings.section" is already declared by another bundle')
           }
           registered.push(slotName)
         },
@@ -143,11 +161,12 @@ describe('client card fallback', () => {
     }
 
     expect(() => apply(fakeCtx)).not.toThrow()
-    // The broken slot is logged per-slot; the others still registered.
-    expect(registered).toEqual(['plugins.bundle.config', 'conversation.input.model.label'])
+    // The broken slot is logged per-slot; the others still registered — and in
+    // particular the model-picker label, which is on an unrelated seam.
+    expect(registered).toEqual(['conversation.input.model.label'])
     expect(errors).toHaveLength(1)
-    expect(String(errors[0])).toContain('plugins.row.config')
-    expect(String(errors[0])).toContain('already has an entry')
+    expect(String(errors[0])).toContain('settings.section')
+    expect(String(errors[0])).toContain('already declared')
 
     spy.mockRestore()
   })
@@ -171,7 +190,11 @@ describe('client card fallback', () => {
     }
 
     expect(() => apply(fakeCtx)).not.toThrow()
-    expect(registered).toHaveLength(3)
+    // Two injects happen at APPLY time: the settings page and the model-picker
+    // label. The nav glyph's `inject` lives INSIDE the page's callback, and this
+    // double never runs callbacks (the slot is treated as undeclared), which is
+    // exactly the deferred case — so it must not appear here either.
+    expect(registered).toEqual(['settings.section', 'conversation.input.model.label'])
     expect(errors).toHaveLength(0)
 
     spy.mockRestore()

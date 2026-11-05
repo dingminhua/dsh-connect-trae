@@ -94,18 +94,27 @@ export type TraeUsageCardProps = Partial<TraeUsageCardInjected> & {
   /**
    * Which SURFACE this card is drawn on.
    *
-   * `card` (the default, and every settings-page registration) is the
-   * collapsible `<li>` the Plugins page renders. `page` is the full-page body
-   * behind the OPTIONAL sidebar row (`sidebar.panellist` + `main`): a page has
-   * no card chrome to collapse, so it always renders expanded and draws its own
-   * header instead.
+   * `card` (the default) is the collapsible `<li>` the Plugins page renders.
+   * `page` is the full-page body behind the OPTIONAL sidebar row
+   * (`sidebar.panellist` + `main`): a page has no card chrome to collapse, so
+   * it always renders expanded and draws its own header instead.
    *
-   * The distinction is a prop rather than two components because the body must
-   * stay ONE tree: the region tabs, the polling, the drafts and the pool log
-   * are identical on both surfaces, and a second component would be a copy that
-   * drifts.
+   * `section` is the `settings.section` page — the configuration entry this
+   * plugin now ships. It is a THIRD surface, not a reuse of `page`, because the
+   * settings shell already owns the chrome a page has to draw for itself: it
+   * paints the panel, the nav row, the close control and the scroll column, and
+   * hands the section only `{ close }`. Drawing the page's "back to
+   * conversation" header there would offer a second, competing way out of a
+   * modal that is not a centre-column panel. What a section still wants is to
+   * say what it is, which `section` does with a heading and the one-line
+   * description instead of a back button.
+   *
+   * The distinction is a prop rather than three components because the body
+   * must stay ONE tree: the region tabs, the polling, the drafts and the pool
+   * log are identical on every surface, and a second component would be a copy
+   * that drifts.
    */
-  surface?: 'card' | 'page'
+  surface?: 'card' | 'page' | 'section'
   /** Back to the conversation, offered by the page header. Supplied by the
    * browser entry (it soft-probes the host's `layout` service); absent on a
    * host that does not declare one, and the affordance is then omitted rather
@@ -321,17 +330,20 @@ function promoBadge(
 export function TraeUsageCard({ t, settingsScope, view, surface, backToConversation }: TraeUsageCardProps) {
   if (t === undefined) throw new Error('Trae usage card requires its translation function')
   /**
-   * A PAGE surface (the optional sidebar row's `main` panel) has no card chrome
-   * to collapse: it is always expanded, and the collapse button is not rendered,
-   * so `setOpen` is simply unused there. Keeping ONE `open` value lets every
-   * polling effect below stay untouched.
+   * The two FULL-BODY surfaces (the sidebar row's `main` panel and the
+   * `settings.section` page) have no card chrome to collapse: they are always
+   * expanded, and the collapse button is not rendered, so `setOpen` is simply
+   * unused there. Keeping ONE `open` value lets every polling effect below stay
+   * untouched.
    */
   const pageSurface = surface === 'page'
+  const sectionSurface = surface === 'section'
+  const fullSurface = pageSurface || sectionSurface
   // The plugin manager opens the card as a full page (its own save control)
   // when it asks for `view: 'page'`; absent a view, start collapsed so a
   // summary row stays a one-liner.
   const [cardOpen, setCardOpen] = useState(view === 'page')
-  const open = pageSurface || cardOpen
+  const open = fullSurface || cardOpen
   /** The region whose tab is on screen; each tab is its own provider stack. */
   const [activeRegion, setActiveRegion] = useState<TraePanel>('cn')
   /**
@@ -2669,11 +2681,50 @@ export function TraeUsageCard({ t, settingsScope, view, surface, backToConversat
       )
     : null
 
+  /**
+   * The section head, drawn only by the `settings.section` page.
+   *
+   * Deliberately NOT {@link pageHead} minus a button: the settings shell already
+   * paints the nav row (which carries the icon registered into
+   * `settings.section.icon`), the close control and the scroll column, so a
+   * second 40px brand mark and a second title here would say the same thing
+   * twice in one dialog. What the shell does NOT supply is a statement of what
+   * the page is for, which is this heading plus the one-line description.
+   *
+   * No back control: the shell's close button is the way out of a modal, and a
+   * "back to conversation" in here would either duplicate it or — worse — move
+   * the centre column behind an open dialog.
+   */
+  const sectionHead = sectionSurface
+    ? (
+        <div className="dsm-trae-section-head">
+          <h2 className="dsm-trae-section-title">{title}</h2>
+          <p className="dsm-trae-section-desc">{t('row.desc')}</p>
+        </div>
+      )
+    : null
+
   if (pageSurface) {
     return (
       <div className="dsm-trae-page">
         {pageHead}
         <div className="dsm-trae-page-body">{cardBody}</div>
+        <BusyOverlay
+          visible={saving || savingSettings}
+          message={t('row.veilSaving')}
+        />
+      </div>
+    )
+  }
+
+  if (sectionSurface) {
+    // No `<li>` and no collapse control: the shell owns the panel's chrome. The
+    // body is the SAME `cardBody` the card draws, for the reason the prop's
+    // note gives — one tree, three surfaces.
+    return (
+      <div className="dsm-trae-section">
+        {sectionHead}
+        {cardBody}
         <BusyOverlay
           visible={saving || savingSettings}
           message={t('row.veilSaving')}

@@ -132,11 +132,12 @@ describe('the composer readout injects its own stylesheet', () => {
     expect(missing).toEqual([])
   })
 
-  it('every class the SETTINGS control renders has a rule too', async () => {
-    // The case above renders WITHOUT a route, so the settings button — and its
+  it('every class the ACTION ROW renders has a rule too', async () => {
+    // The case above renders WITHOUT a route, so the settings pill — and its
     // wrapper, icon and label classes — never mount, and the coverage guard
     // silently skips the newest markup. That is the same shape of hole this whole
-    // file exists to close, so the button gets its own pass.
+    // file exists to close, so the button gets its own pass, mounted WITH a route
+    // so the pill is actually on screen.
     stubRoute()
     const { container } = render(
       <ComposerPoints t={t} provider="trae" region="cn" onOpenSettings={() => true} />,
@@ -154,8 +155,8 @@ describe('the composer readout injects its own stylesheet', () => {
     expect(names).toContain('dsm-trae-composer-panel-settings-icon')
     expect(names).toContain('dsm-trae-composer-panel-settings-label')
     expect(names).toContain('dsm-trae-composer-panel-actions')
-    // The test pill and its icon/label came later and have their own pass below;
-    // asserting them here keeps the guard honest about what is on screen.
+    // The test pill and its icon/label have their own pass below; asserting them
+    // here keeps the guard honest about what is on screen.
     expect(names).toContain('dsm-trae-composer-panel-test')
     expect(names).toContain('dsm-trae-composer-panel-test-icon')
     expect(names).toContain('dsm-trae-composer-panel-test-label')

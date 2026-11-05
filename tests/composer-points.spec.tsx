@@ -467,19 +467,23 @@ describe('ComposerPoints readout', () => {
     expect(trigger?.getAttribute('aria-haspopup')).toBe('dialog')
     // The only button in the row is the trigger itself.
     expect(container.querySelectorAll('button')).toHaveLength(1)
+    // No route was injected here, so the panel draws no settings pill (see
+    // `composer-settings-route.spec.tsx` for the cases that DO inject one).
     expect(screen.queryByText(/composer\.openSettings/)).toBeNull()
 
-    // Clicking opens the panel, which carries the account table. No
-    // `onOpenSettings` was passed here, so it draws NO settings button: a
-    // control that cannot do anything must not be drawn.
+    // Clicking opens the panel, which carries the account table.
     fireEvent.click(trigger as HTMLButtonElement)
     await waitFor(() => { expect(screen.getByText(/composer\.panelTitle/)).toBeTruthy() })
     expect(screen.getByText(/composer\.account/)).toBeTruthy()
     expect(screen.getByText(/composer\.generalCredits/)).toBeTruthy()
+    // Still absent inside the panel: the pill is drawn only when a caller
+    // supplies a route.
     expect(screen.queryByText(/composer\.openSettings/)).toBeNull()
     // The refresh button is GONE, not renamed: the balance re-reads on open, on
     // every account switch and every five minutes, so it had no work of its own
-    // left (m01198).
+    // left (m01198). The settings pill is NOT it under another class — it lives
+    // behind `.dsm-trae-composer-panel-settings` and needs a route to exist.
+    expect(document.querySelector('.dsm-trae-composer-panel-settings')).toBeNull()
     expect(document.querySelector('.dsm-trae-composer-panel-refresh')).toBeNull()
     // The panel is a TABLE of accounts, not a property list: every account in
     // the region gets a row, and the one figure per row is the general balance.

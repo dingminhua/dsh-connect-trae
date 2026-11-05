@@ -130,9 +130,6 @@ function stubRoutes(options: {
 const testButton = (): HTMLButtonElement | null =>
   document.body.querySelector<HTMLButtonElement>('button.dsm-trae-composer-panel-test')
 
-const settingsButton = (): HTMLButtonElement | null =>
-  document.body.querySelector<HTMLButtonElement>('button.dsm-trae-composer-panel-settings')
-
 /** Open the popover and wait for the panel. */
 async function openPanel(container: HTMLElement): Promise<void> {
   await waitFor(() => { expect(screen.getByText(/composer\.points/)).toBeTruthy() })
@@ -141,24 +138,25 @@ async function openPanel(container: HTMLElement): Promise<void> {
 }
 
 describe('the pool test button in the panel header', () => {
-  it('is drawn when the panel has a pool, to the LEFT of the settings pill', async () => {
+  it('is drawn when the panel has a pool, and is the header’s ONLY control', async () => {
     stubRoutes()
     const { container } = render(
-      <ComposerPoints t={t} provider="trae" region="cn" onOpenSettings={() => true} />,
+      <ComposerPoints t={t} provider="trae" region="cn" />,
     )
     await openPanel(container)
 
     const test = testButton()
     expect(test).not.toBeNull()
     expect(test?.textContent).toBe('composer.test')
-    // POSITION IS THE REQUEST (m02091: "设置左侧"). Compared through the DOM
-    // order of the shared wrapper, so a CSS-only reordering cannot satisfy it.
+    // It used to sit to the LEFT of a settings pill (m02091's 「设置左侧」). That
+    // pill is gone with the route it drove — the configuration moved to its own
+    // `settings.section` page, and no client service opens the Settings dialog on
+    // a section — so the test batch is now the whole action row.
     const order = Array.from(
       document.querySelectorAll('.dsm-trae-composer-panel-actions button'),
     ).map(button => button.className)
-    expect(order).toEqual(['dsm-trae-composer-panel-test', 'dsm-trae-composer-panel-settings'])
-    // Both are in the same right-aligned wrapper, so they share one baseline.
-    expect(test?.parentElement).toBe(settingsButton()?.parentElement)
+    expect(order).toEqual(['dsm-trae-composer-panel-test'])
+    expect(document.querySelector('button.dsm-trae-composer-panel-settings')).toBeNull()
   })
 
   it('is NOT drawn when the Host reports no pool for this panel', async () => {
@@ -167,14 +165,14 @@ describe('the pool test button in the panel header', () => {
     // route answers 503/409, so the button is not drawn at all.
     stubRoutes({ withoutPool: true })
     const { container } = render(
-      <ComposerPoints t={t} provider="trae" region="cn" onOpenSettings={() => true} />,
+      <ComposerPoints t={t} provider="trae" region="cn" />,
     )
     await openPanel(container)
 
     expect(testButton()).toBeNull()
-    // The settings pill is still there: the absence is about the pool, not the
-    // whole header.
-    expect(settingsButton()).not.toBeNull()
+    // The wrapper stays, so the header layout does not depend on whether a
+    // control happened to render.
+    expect(document.querySelector('.dsm-trae-composer-panel-actions')).not.toBeNull()
   })
 
   it('drives the pool TEST route for this panel, by POST', async () => {

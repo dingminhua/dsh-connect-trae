@@ -14,12 +14,15 @@
  * per account in the region and that account's general balance, where a row
  * click switches to it.
  *
- * The panel's header carries a SETTINGS button, not a refresh button: the
- * question a reader actually has at this panel is "where do I change this?", and
- * the answer used to require closing the popover, finding the Plugins row and
- * clicking the bundle. Refreshing is not lost — the readout polls every five
- * minutes and every account switch re-reads — but it no longer needs a button of
- * its own. One press now lands on this plugin's own page (`./settings-route.ts`).
+ * The panel's header carries the account-pool test batch, labelled 「刷新」, and
+ * a SETTINGS pill that opens this plugin's own page in the wide Settings dialog
+ * (`./settings-route.ts`).
+ *
+ * The pill was briefly removed, on the belief that no host seam could open the
+ * dialog on a given section. That belief was wrong — the settings shell
+ * publishes its state as the `sidebar.settings` store seat, whose `openSection(id)`
+ * is exactly that seam — so the pill is back and now lands on this plugin's own
+ * `settings.section` page. The route module records the finding.
  *
  * Two deliberate choices in that panel:
  *
@@ -248,9 +251,8 @@ export function ComposerPoints(props: ComposerPointsProps) {
    * pool at once is how the upstream's volume limit gets tripped), so it can run
    * for a minute while a credits read would be merely slow.
    *
-   * `testFailed` is its own line for the same reason `settingsFailed` is: three
-   * different failures rendered into one slot would take turns overwriting each
-   * other. `testNote` carries the last outcome summary, which is what makes the
+   * `testFailed` is its own line so the two failures cannot take turns
+   * overwriting each other in one slot. `testNote` carries the last outcome summary, which is what makes the
    * press feel answered even when the table's marks are subtle.
    */
   const [testing, setTesting] = useState(false)
@@ -451,8 +453,8 @@ export function ComposerPoints(props: ComposerPointsProps) {
    * The header's settings control: open this plugin's page, then close.
    *
    * CLOSING IS PART OF THE JOB. The panel is portaled to `document.body` and
-   * floats over the composer; navigating the centre column does not remove it,
-   * so leaving it open would park a credits table on top of the page the user
+   * floats over the composer; opening the Settings dialog does not remove it, so
+   * leaving it open would park a credits table on top of the dialog the user
    * just asked for. It is not reopened on return — a popover that comes back by
    * itself after navigation is a popover the user cannot get rid of.
    *
@@ -663,8 +665,8 @@ export function ComposerPoints(props: ComposerPointsProps) {
                 `dsh-connect-workbuddy` styles its own — the same pill so the two
                 connectors' popovers agree (m01930).
                 The reader looking at this panel has a question — "where do I
-                change this?" — and answering it used to mean closing the
-                popover, finding the Plugins row and clicking the bundle. The
+                change this?" — and the answer should not require knowing that
+                this plugin's page lives inside the wide Settings dialog. The
                 balance itself no longer needs a button: it polls every five
                 minutes, every account switch re-reads, and OPENING this panel
                 re-reads too (see the open effect above), so the affordance the
@@ -674,7 +676,7 @@ export function ComposerPoints(props: ComposerPointsProps) {
                 back button follows. The WRAPPER stays either way, so the header
                 layout is identical with and without the button. */}
             <span className="dsm-trae-composer-panel-actions">
-              {/* THE POOL TEST BATCH, to the settings pill's LEFT (m02091).
+              {/* THE POOL TEST BATCH (m02091), to the settings pill's LEFT.
                   Placed before it deliberately: settings is navigation and
                   belongs at the row's end, the way a dialog's close control
                   does; the test is an action on the table below, so it sits

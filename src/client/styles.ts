@@ -52,7 +52,16 @@ export const TRAE_CARD_CSS = `
    differs, so it sits inside the tab cell without crowding the label. */
 .dsm-trae-tab-switch{flex:none;margin-left:auto;padding-left:10px;border-left:1px solid var(--dsw-alias-border-l1,rgba(127,127,127,.24))}
 .dsm-trae-tab-dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:7px;vertical-align:baseline}
-.dsm-trae-tab-hint{margin:0;padding:0 2px;color:var(--dsw-alias-label-tertiary,#999);font-size:12px;line-height:18px}
+/* 供应商行的说明：视觉隐藏，读屏仍在（learned from workbuddy 5.19.0 的窄列实践）。
+ *
+ * 这一行是三个芯片的注解（「企业版与国内版共用同一份 Trae CN 登录」），原本独占
+ * 一整行 36px，把账号池往下推。在 564px 的列里，纵向空间是稀缺资源，而这句话
+ * 只在「同时启用两个供应商」时才有用——那个场景下用户已经在看两个芯片了。
+ *
+ * 用 clip 而不是 display:none：display:none 会把它从无障碍树里摘掉，读屏用户
+ * 就永远拿不到这条例外说明。视觉隐藏保留了它，且不占布局高度。
+ * 完整文案仍可通过芯片行的 title 悬停看到（见 TraeUsageCard 的 tabSwitchHint）。 */
+.dsm-trae-tab-hint{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap;border:0}
 /* SECTION TABS: the card's own top-level split (account / models / diagnostics).
  *
  * Deliberately NOT the boxed chips above. Those are the REGION scope — a
@@ -67,7 +76,20 @@ export const TRAE_CARD_CSS = `
  * inactive panel out of the accessibility tree, which is exactly what
  * role="tabpanel" wants — unlike display:none reached by a CSS class, the user
  * agent's own rule for [hidden] cannot be overridden by a later declaration. */
-.dsm-trae-panels{display:flex;align-items:stretch;gap:2px;margin:4px 0 0;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(127,127,127,.24))}
+/* 分栏条钉在外壳的滚动列顶部（STICKY, not a second scroller）。
+ *
+ * 站点：本插件**不**接管滚动。设置面板的 .options 列本来就负责滚动（它自己的
+ * CSS 注释写明了这一点），在里面再套一层 overflow:auto 就是两根滚动条，滚轮
+ * 会在两者之间来回跳。所以这里既不写 height:100%，也不写 overflow。
+ *
+ * 但「不接管滚动」不等于「分栏条可以滚走」：账号池在折叠线以下，滚到那里时
+ * 「模型 / 诊断」已经跟着滚出了视野，想切分栏只能先把整页滚回顶部。sticky 让它
+ * 在任何滚动位置都留在顶部，代价只是 z-index 与一层不透明底色——否则滚上来的
+ * 账号卡片会从字缝里透出来（外壳的 layer-2 正是这一列自己的底色）。
+ *
+ * top:-1px 而不是 0：分栏条自己的 border-bottom 画在盒子外侧，写成 0 会在它上方
+ * 留一条 1px 的缝，滚动的行会从这条缝里露出来。 */
+.dsm-trae-panels{position:sticky;top:-1px;z-index:2;display:flex;align-items:stretch;gap:2px;margin:4px 0 0;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(127,127,127,.24));background:var(--dsw-alias-bg-layer-2,#24262c)}
 .dsm-trae-panel-tab{appearance:none;font:inherit;cursor:pointer;border:0;background:transparent;padding:7px 11px;margin-bottom:-1px;border-bottom:2px solid transparent;color:var(--dsw-alias-label-tertiary,#999);font-size:13px;font-weight:600;line-height:20px;white-space:nowrap;transition:color .15s,border-color .15s}
 .dsm-trae-panel-tab:hover:not(.dsm-trae-panel-tab-active){color:var(--dsw-alias-label-primary,#e6e6e6)}
 .dsm-trae-panel-tab:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#5686fe);outline-offset:1px}
@@ -630,7 +652,25 @@ export const TRAE_CARD_CSS = `
 .dsm-trae-pool-subnote{margin:2px 0 0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#9aa0a8)}
 .dsm-trae-pool-select-actions{display:flex;flex:none;gap:6px}
 .dsm-trae-pool-select-actions .dsm-btn,.dsm-trae-pool-row-actions .dsm-btn{padding:4px 10px;font-size:12px;line-height:1.4}
-.dsm-trae-pool-table{--dsm-trae-pool-cols:minmax(0,1.4fr) 128px minmax(0,1.2fr) 96px 128px;display:flex;flex-direction:column;border:1px solid var(--dsw-alias-border-l2,#3a3d45);border-radius:var(--dsm-trae-pool-radius);overflow:hidden;background:var(--dsw-alias-bg-layer-2,#24262c)}
+/* CONTAINMENT ROOT（learned from workbuddy 5.19.0 的同一次迁移）。
+ *
+ * 这张卡同时画在三处，宽度与窗口毫无关系：输入框卡片、整页版（上限 860px）、
+ * 以及设置面板的内容列（1400px 屏上是 564px）。本文件里所有 @media 断点测的
+ * 都是**视口**，所以在设置面板里它们永远不触发——564px 的列拿到了五列桌面表格，
+ * 每个单元格都在截断（实测账号列被压到 76px，「用户7520607992」只剩「用户75」）。
+ *
+ * container-type:inline-size 让下面的断点改测**这张表**的宽度，那才是行真正要
+ * 塞进去的宽度。
+ *
+ * 特意放在表格上而不是祖先上：container-type 会让这个元素成为 position:fixed
+ * 后代的包含块。忙碌遮罩 .dsm-trae-veil 与账号导入对话框都是这张表的兄弟节点
+ * （挂在 .dsm-trae-pool 或 cardBody 上，不在表格里），放在表格上就让它们继续
+ * 相对视口定位——全屏遮罩本来该在那里。表格内部只有表头与成员行，没有 fixed 后代。
+ *
+ * overflow:hidden 与 container-type 冲突：容器查询要求这个盒子能被"测量"，而
+ * overflow 会改变它的块格式化上下文。这里原本就有 overflow:hidden（用来裁圆角），
+ * 二者在本例中兼容——表格自身不滚动，只是裁掉子元素的直角。 */
+.dsm-trae-pool-table{--dsm-trae-pool-cols:minmax(0,1.4fr) 128px minmax(0,1.2fr) 96px 128px;container-type:inline-size;display:flex;flex-direction:column;border:1px solid var(--dsw-alias-border-l2,#3a3d45);border-radius:var(--dsm-trae-pool-radius);overflow:hidden;background:var(--dsw-alias-bg-layer-2,#24262c)}
 .dsm-trae-pool-table-no-checkin{--dsm-trae-pool-cols:minmax(0,1.4fr) 128px minmax(0,1.2fr) 128px}
 .dsm-trae-pool-row{display:grid;grid-template-columns:var(--dsm-trae-pool-cols);align-items:start;gap:10px;padding:var(--dsm-trae-pool-pad-y) var(--dsm-trae-pool-pad-x);border-top:1px solid var(--dsw-alias-border-l1,rgba(127,127,127,.18))}
 .dsm-trae-pool-row:first-child{border-top:0}
@@ -698,6 +738,59 @@ export const TRAE_CARD_CSS = `
 .dsm-trae-pool-save-row{display:flex;align-items:center;justify-content:space-between;gap:12px;border-top:1px solid var(--dsw-alias-border-l2,#36373b);padding-top:12px;position:sticky;bottom:0;z-index:2;padding-bottom:8px;background:var(--dsw-alias-bg-layer-3,#2a2c33)}
 .dsm-trae-pool-save-buttons{display:flex;align-items:center;justify-content:flex-end;gap:8px}
 .dsm-trae-pool-save-row .dsm-btn{padding:5px 14px;font-size:13px;line-height:1.5}
+
+/* THE TABLE'S NARROW FORM — measured against the table, not the window
+ * (learned from workbuddy 5.19.0, which hit the identical bug in the identical
+ * move from a plugin card to a settings.section page).
+ *
+ * 上面的 @media 断点测的都是视口。这张卡现在画在设置面板的内容列里（564px），
+ * 视口媒体查询在那里永远不触发：五列表格被塞进 564px，固定轨道 128+96+128 加
+ * 四条 10px 间隙与两倍 14px 内边距之后，留给账号名与探针两条弹性轨道的只剩
+ * ~144px，实测账号名列 = 76px。
+ *
+ * 一个阈值，不是两个。中间再插一档「稍微窄一点就少一列」是没有价值的分支：
+ * 设置面板那一列正好落在中档里，用户会拿到一个表头对不上的 2×2 网格。表格没有
+ * 「稍微窄」的形态值得保留——要么放得下这些列，要么放不下。
+ *
+ * 放不下的时候，每行变成一张**堆叠卡片**：同样是那五个事实，宽的时候从左往右
+ * 读，现在从上往下读。这是让窄行可读而不只是能塞下的关键。
+ *
+ * 三行，不是五行：整体 flex-direction:column 会把每个单元格推成独立一行，行高翻
+ * 倍、读起来像表单而不是一个账号。账号与操作各占满一整行（最需要辨认的一端与
+ * 最需要操作的一端），中间三个事实共享中间一行，只有真的放不下时才在自己之间换行。
+ *
+ * .dsm-trae-pool-row-head 隐藏：它的标签描述的是已经不存在的轨道。 */
+@container (max-width:700px){
+  .dsm-trae-pool-row{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px;padding:var(--dsm-trae-pool-pad-y) 12px}
+  .dsm-trae-pool-row-head{display:none}
+  .dsm-trae-pool-account{flex:1 1 100%;align-items:center}
+  .dsm-trae-pool-credit{flex:0 1 auto;flex-direction:row;flex-wrap:wrap;align-items:baseline;gap:2px 8px}
+  .dsm-trae-pool-probe{flex:1 1 auto}
+  .dsm-trae-pool-checkin{flex:none}
+  .dsm-trae-pool-row-actions{flex:1 1 100%;justify-content:flex-start;padding-top:4px}
+  /* THE PROBE CELL'S OWN COLUMN, collapsed to one line.
+   *
+   * 这一条是最容易漏掉的：.dsm-trae-pool-probe 只是个 min-width:0 的外层包装，
+   * 真正竖排的是它内部的 .dsm-trae-pool-probe-cell（flex-direction:column）。
+   * 只改外层包装的话，状态列仍然一句一行，被挤成「正常 / 测得 3 天前 / 来自测速 /
+   * upstream answered」四行——旁边只有 12px 间距，整行高度就被这一格撑到 100px
+   * 以上，账号名也跟着被压窄（实测截成「LaoDin」「用户7」）。
+   *
+   * 改成横排并允许在自己内部换行：这四个事实读起来本来就是一句话
+   * （「正常 · 测得 3 天前 · 来自测速 · upstream answered」），宽时从左排到右，
+   * 窄时在它们自己之间折行，而不是各自独占一行。 */
+  .dsm-trae-pool-probe-cell{flex-direction:row;flex-wrap:wrap;align-items:baseline;gap:2px 8px}
+  /* THE ACCOUNT CELL'S OWN GRID, collapsed the same way.
+   *
+   * 宽的时候它是个三行网格（名字 / 标签 / 探针时间），第一列固定给勾选框。
+   * 在窄列里这三行没有理由继续各占一行——它们本来就是一句话
+   * （「LaoDing · 已在池中 · 测试于 11/03, 06:35」），横排后名字与这两条短事实
+   * 共享一行，只有真的放不下时才折行。勾选框仍然排在最前，并保持垂直居中对齐
+   * 到第一行基线（align-self:baseline 会让它沉到行底）。 */
+  .dsm-trae-pool-account{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 8px}
+  .dsm-trae-pool-account-name,.dsm-trae-pool-account-tags,.dsm-trae-pool-account-note{grid-column:auto;grid-row:auto}
+  .dsm-trae-pool-check{align-self:center}
+}
 .dsm-trae-pool-dirty{padding:0 6px;border-radius:999px;background:var(--dsw-alias-state-warn-tertiary,#fef3c7);color:var(--dsw-alias-state-warn-primary,#b45309);font-size:10px;line-height:16px}
 .dsm-trae-pool-save-error{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-state-error-primary,#d92d20)}
 .dsm-trae-pool-target{display:flex;flex-direction:column;gap:6px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#c6c9d0)}
@@ -736,6 +829,24 @@ export const TRAE_CARD_CSS = `
 .dsm-trae-page-title{margin:0;font-size:20px;font-weight:600;line-height:1.4}
 .dsm-trae-page-desc{margin:0;font-size:13px;line-height:1.5;color:var(--dsw-alias-label-tertiary,#999)}
 .dsm-trae-page-body .dsm-trae-usage{padding:20px 20px 8px;border:1px solid var(--dsw-alias-border-l2,#36373b);background:var(--dsw-alias-bg-layer-3,#202126);border-radius:12px}
+/* The settings.section page. The shell already owns the panel, the nav row and
+ * the scrolling .options column (which brings its own 24px side padding), so
+ * this surface adds NO frame of its own: no second border, no second card, and
+ * deliberately no negative margins to "reclaim" the shell's padding. It is a
+ * plain column so the sections below stack the same way they do in the card. */
+.dsm-trae-section{display:flex;flex-direction:column;gap:14px;color:var(--dsw-alias-label-primary,#e6e6e6)}
+/* 页头两行：标题一行，简介一行（learned from workbuddy 5.19.0）。
+ *
+ * 原来是 18px/600 的大标题加一行 13px 说明，在 564px 的列里要占 70px。压到
+ * 15px/22px 的标题加 12px/18px 的说明后是 60px，省下的 10px 直接给了账号池——
+ * 而面板本身已有一层标题栏，「设置」已经写在最上面，这里再喊一遍大标题是本插件
+ * 自己的第二层标题，不是外壳的。
+ *
+ * 用 grid 而不是两个 flex 子项：标题和说明各自成行，中间不留 flex gap，行距由
+ * row-gap:2px 精确控制（flex 的 gap 会同时作用在两者之间，量出来是 6px）。 */
+.dsm-trae-section-head{display:grid;grid-template-columns:minmax(0,1fr);row-gap:2px;align-items:start}
+.dsm-trae-section-title{margin:0;font-size:15px;font-weight:600;line-height:22px}
+.dsm-trae-section-desc{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#999)}
 .dsm-trae-panel-icon{display:block;border-radius:4px;flex:none}
 `
 

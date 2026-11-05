@@ -29,6 +29,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import { TraeUsageCard } from './TraeUsageCard.tsx'
 import { ComposerPointsGate } from './ComposerPointsGate.tsx'
 import type { ComposerPointsGateProps } from './ComposerPointsGate.tsx'
+import { TRAE_SETTINGS_ID, openPluginSettingsPage } from './settings-route.ts'
 import { MODEL_LABEL_PRIORITY, TraeModelLabel } from './TraeModelLabel.tsx'
 import type { TraeUsageCardInjected } from './TraeUsageCard.tsx'
 import type { TraeCreditPosition } from '../status-paths.ts'
@@ -39,7 +40,6 @@ import { TRAE_PLUGIN_ICON } from './icon.ts'
 import {
   setSidebarPanelWanted, sidebarPanelWanted, subscribeSidebarPanelWanted,
 } from './panel-switch.ts'
-import { openPluginSettingsPage } from './settings-route.ts'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
@@ -217,11 +217,11 @@ export function apply(ctx: ClientContext): void {
     /**
      * The composer panel's route to this plugin's own settings page.
      *
-     * Wrapped in a closure, not resolved here: `pluginNavigation` belongs to the
-     * Plugins bundle and its apply order is not ours to assume, so probing once
-     * at `apply` could capture `undefined` permanently. The decision itself (and
-     * its `layout` fallback) lives in `settings-route.ts`, where the spec can
-     * exercise the real chain instead of a mirror.
+     * Deliberately a CLOSURE over `softGet` rather than a resolved service: the
+     * seam it uses (the settings shell's `sidebar.settings` store seat) belongs
+     * to another bundle whose apply order is not ours to assume, so the probe
+     * happens on every press and a shell that appears later is still found. See
+     * `settings-route.ts` for the finding that established which seam this is.
      */
     const onOpenSettings = (): boolean => openPluginSettingsPage(softGet)
 
@@ -296,27 +296,109 @@ export function apply(ctx: ClientContext): void {
       return scope
     })()
 
-    const registerCard = (slotName: string, key: string): void => {
-      registerSlotEntry(ctx, `${slotName}#${key}`, slotName, () => (ctx.slots as unknown as {
-        register(
-          options: { name: string; key: string; priority: number; inject: () => TraeUsageCardInjected },
-          component: unknown,
-        ): () => void
-      }).register({
-        name: slotName,
-        key,
-        // `priority: 30` places this card AFTER the host's own configuration
-        // form (which registers at the default 0) instead of colliding with it.
-        priority: 30,
-        // The scope is always present (it is the re-binding proxy); a host
-        // with no settings surface leaves it permanently unbound, so the
-        // card renders read-only rather than not at all.
-        inject: () => ({ t, settingsScope }),
-      }, TraeUsageCard), `card slot "${slotName}"`)
+    /**
+     * The configuration card, now drawn as its own `settings.section` page.
+     *
+     * WHY THE SEAT MOVED. It used to register into the Plugins page's
+     * `plugins.bundle.config` / `plugins.row.config` slots, which put the whole
+     * configuration inside the plugin's market detail page, below its README.
+     * That page's job is to describe and install a package; a page that both
+     * advertises and configures makes the user scroll past marketing to reach a
+     * checkbox. `settings.section` is the shell's seat for "this plugin owns a
+     * settings page", addressed by the same id the nav row uses.
+     *
+     * WHY `id` AND `order: 30`. The id is this plugin's package name, and it is
+     * the SAME string the nav glyph below registers under, because the shell
+     * renders `settings.section.icon` filtered by `{ only: section.id }` — an
+     * icon whose id does not match never appears and the shell's default glyph
+     * silently stays. `order: 30` places this page after the shipped sections
+     * (account -10, general 0, models 10, plugins 15, agent-presets 20) and
+     * alongside the other third-party pages, without colliding with a built-in.
+     *
+     * WHY NO CAPABILITY PROBE. `slots.inject()` already IS the probe: it runs
+     * the callback now when the slot is declared and subscribes otherwise,
+     * doing nothing at all on a host that never declares `settings.section`.
+     * Wrapping it in a `typeof` test on some accessor is how a page ends up
+     * never registering anywhere, silently — the failure mode this plugin's
+     * sibling shipped twice. Let the host answer.
+     *
+     * The page and its glyph are registered from ONE `inject` callback and both
+     * disposers are returned as a pair: the glyph is only meaningful while the
+     * page's id exists, so the pairing is structural rather than a convention,
+     * and Cordis disposes both with this fiber.
+     */
+    // One spelling, shared with the composer pill's route (`settings-route.ts`):
+    // an id the nav row and `openSection(id)` disagree on opens the dialog on
+    // the shell's fallback section instead, silently.
+    const traeSettingsId = TRAE_SETTINGS_ID
+    const registerSettingsPage = (): void => {
+      registerSlotEntry(ctx, 'settings.section#dsh-connect-trae', 'settings.section', () => {
+        const disposers: Array<() => void> = []
+        try {
+          disposers.push((ctx.slots as unknown as {
+            register(
+              options: {
+                name: string
+                id: string
+                order: number
+                label: () => string
+                locale: string
+                inject: () => TraeUsageCardInjected & { surface: 'section' }
+              },
+              component: unknown,
+            ): () => void
+          }).register({
+            name: 'settings.section',
+            id: traeSettingsId,
+            order: 30,
+            // A THUNK, re-read on every projection: the shell never subscribes
+            // locale state, so a fixed string would leave the nav row in the
+            // language that happened to be active at registration.
+            label: () => t('nav.panel'),
+            locale: namespace,
+            inject: () => ({ t, settingsScope, surface: 'section' as const }),
+          }, TraeUsageCard))
+
+          /**
+           * The nav glyph, addressed by the SAME id as the page.
+           *
+           * The host renders this cell with `{ size, active }` inside its own
+           * button and label, so only the picture belongs here. Same shape as
+           * the sidebar row's glyph (a brand-mark `<img>`), because it is the
+           * same identity in a second place.
+           *
+           * Its own `inject`: `settings.section.icon` is a SEPARATE slot that a
+           * host line may not declare, and the page must still appear when only
+           * `settings.section` exists. A missing glyph is the shell's default
+           * gear — a degraded look, not a missing page.
+           */
+          try {
+            disposers.push(ctx.slots.inject('settings.section.icon' as never, () => (ctx.slots as unknown as {
+              register(options: { name: string, id: string, locale: string }, component: unknown): () => void
+            }).register({
+              name: 'settings.section.icon',
+              id: traeSettingsId,
+              locale: namespace,
+            }, SettingsSectionIcon)))
+          } catch (error: unknown) {
+            // A host without the icon slot is not a failure: the page stands.
+            console.error('[dsh-connect-trae] settings nav icon failed to register (page unaffected):', error)
+          }
+        } catch (error: unknown) {
+          for (const dispose of disposers) {
+            try { dispose() } catch { /* already disposed by the slot service */ }
+          }
+          throw error
+        }
+        return () => {
+          for (const dispose of disposers) {
+            try { dispose() } catch { /* already disposed by the slot service */ }
+          }
+        }
+      }, 'settings section page')
     }
 
-    registerCard('plugins.bundle.config', 'dsh-connect-trae')
-    registerCard('plugins.row.config', 'dsh-connect-trae#dsh-connect-trae')
+    registerSettingsPage()
 
     /**
      * Credit readout in the composer row (`conversation.input.right`, a
@@ -353,10 +435,10 @@ export function apply(ctx: ClientContext): void {
       registerSlotEntry(ctx, `${slotName}#${id}`, slotName, () => (ctx.slots as unknown as {
         register(
           // The gate's OWN prop shape, not the card's: this registration
-          // injects `position` and `onOpenSettings` on top of the card's
-          // `t` / `settingsScope`. Spellling it `TraeUsageCardInjected` made
-          // the two extra props an excess-property surprise waiting for the
-          // next refactor to trip over.
+          // injects `position` on top of the card's `t` / `settingsScope`.
+          // Spellling it `TraeUsageCardInjected` made the extra prop an
+          // excess-property surprise waiting for the next refactor to trip
+          // over.
           options: { name: string; id: string; order: number; locale: string; inject: () => ComposerPointsGateProps },
           component: unknown,
         ): () => void
@@ -367,9 +449,7 @@ export function apply(ctx: ClientContext): void {
         locale: namespace,
         // `settingsScope` rides along so the gate can honor the card's
         // "show credits in the composer" switch and its seat without a second
-        // writer; `position` is which seat THIS registration occupies;
-        // `onOpenSettings` is the panel header's route to this plugin's own
-        // page (see `settings-route.ts` for why it is probed at PRESS time).
+        // writer; `position` is which seat THIS registration occupies.
         inject: () => ({ t, settingsScope, position, onOpenSettings }),
       }, ComposerPointsGate), `points slot "${slotName}"`)
     }
@@ -445,6 +525,36 @@ export function apply(ctx: ClientContext): void {
         alt: '',
         width: edge,
         height: edge,
+        'aria-hidden': 'true',
+      })
+    }
+
+    /**
+     * The nav glyph for the `settings.section` page.
+     *
+     * A separate component from {@link TraePanelIcon} even though it draws the
+     * same picture, because the two slots pass DIFFERENT owner props and a shared
+     * component would have to paper over that: `sidebar.panellist` sends
+     * `{ size, active }` on a row the shell paints, `settings.section.icon` sends
+     * `{ size, active }` inside the shell's own nav button, and the second one
+     * also has to survive `size` being absent (the shell always sends it, but a
+     * host line that renames the prop must degrade to the default rather than
+     * divide by `undefined`).
+     *
+     * `active` is applied as a slight opacity step instead of a colour: the
+     * brand PNG carries its own colours, and recolouring someone else's mark to
+     * show selection would misrepresent the product. The shell already paints
+     * the selected row.
+     */
+    function SettingsSectionIcon(props: { size?: number, active?: boolean }): JSX.Element {
+      const edge = typeof props.size === 'number' && props.size > 0 ? props.size : 16
+      return h('img', {
+        className: 'dsm-trae-section-icon',
+        src: TRAE_PLUGIN_ICON,
+        alt: '',
+        width: edge,
+        height: edge,
+        style: { opacity: props.active === false ? 0.75 : 1 },
         'aria-hidden': 'true',
       })
     }

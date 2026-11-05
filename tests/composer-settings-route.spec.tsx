@@ -1,19 +1,23 @@
 // @vitest-environment jsdom
 /**
- * The credit popover's route to this plugin's settings page (m01198).
+ * The credit popover's route to this plugin's settings page (m01198, restored
+ * m02517).
  *
- * The reported request: the panel header carried a "refresh credits" button,
- * which asked an upstream the panel already re-reads on open, on every account
- * switch and every five minutes. What a reader actually needs from that header
- * is the way to the plugin's own settings — which used to mean closing the
- * popover, finding the Plugins row and clicking the bundle.
+ * WHAT CHANGED AND WHY THIS FILE WAS REWRITTEN: the 4.9.0 line removed the pill
+ * on the claim that "no client service opens the Settings dialog on a section".
+ * The owner corrected that — clicking through the sidebar DOES open the wide
+ * settings — so the pill came back on a different route. The old route probed
+ * `pluginNavigation.openBundle` and fell back to `layout.selectPanel('plugins')`;
+ * both address the **Plugins** page, which stopped holding this plugin's
+ * configuration when it moved to its own `settings.section`. The new route
+ * drives the settings shell's own store seat. The old two-route cases therefore
+ * do not describe the shipped code any more and are replaced, not patched.
  *
  * Two halves, pinned separately because they fail differently:
  *
- *  - `settings-route.ts` (pure) decides WHICH host route is taken. It is the one
- *    place that knows a plugin's settings live on the Plugins page rather than in
- *    Settings, and it must probe at PRESS time — the service it uses belongs to
- *    another bundle whose apply order is not ours to assume.
+ *  - `settings-route.ts` (pure) decides WHICH seam is used, and must probe at
+ *    PRESS time: the shell is another bundle whose apply order is not ours to
+ *    assume, and `entries()` answers `[]` until it has registered.
  *  - `ComposerPoints` owns the button: that it is drawn only when a route
  *    exists, that a press closes the popover, and that a host with no route says
  *    so instead of leaving a button that does nothing.
@@ -22,8 +26,8 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
-  PLUGINS_PANEL_ID,
-  TRAE_PACKAGE_NAME,
+  SETTINGS_SLOT,
+  TRAE_SETTINGS_ID,
   openPluginSettingsPage,
 } from '../src/client/settings-route.ts'
 import { ComposerPoints } from '../src/client/ComposerPoints.tsx'
@@ -71,73 +75,112 @@ async function openPanel(container: HTMLElement): Promise<void> {
   await waitFor(() => { expect(document.querySelector('[role="dialog"]')).not.toBeNull() })
 }
 
-describe('openPluginSettingsPage: which host route is taken', () => {
-  it('opens the bundle page through pluginNavigation, by EXACT package name', () => {
-    // Exact equality is the contract: the Plugins inventory compares `pkg.name`,
-    // and a Loader entry id (`include:dsh-connect-trae`) would never match.
-    const openBundle = vi.fn()
-    const selectPanel = vi.fn()
-    const opened = openPluginSettingsPage(name => ({
-      pluginNavigation: { openBundle },
-      layout: { selectPanel },
-    })[name as 'pluginNavigation' | 'layout'])
+/**
+ * A stand-in for the settings shell's published store seat.
+ *
+ * Mirrors the shape the shell actually registers — `create()` returning the one
+ * live instance whose `actions` hold `openSection` — so the route is exercised
+ * against the real contract rather than a bare `vi.fn`.
+ */
+function shellSeat(): { openSection: ReturnType<typeof vi.fn>; open: ReturnType<typeof vi.fn>; entries: ReturnType<typeof vi.fn> } {
+  const openSection = vi.fn()
+  const open = vi.fn()
+  const instance = { actions: { openSection, open } }
+  const entries = vi.fn((key: string) => (key === SETTINGS_SLOT
+    ? [{ store: { create: () => instance } }]
+    : []))
+  return { openSection, open, entries }
+}
+
+/** A `get` probe serving the slots service described by `seat`. */
+const probe = (seat: { entries: unknown } | undefined) =>
+  (name: string): unknown => (name === 'slots' ? seat : undefined)
+
+describe('openPluginSettingsPage: which host seam is used', () => {
+  it('opens THIS plugin\'s section through the shell store seat', () => {
+    // The finding the module records: the shell pins `create: () => shellInstance`
+    // onto its `sidebar.settings` registration precisely so a reader of the seat
+    // gets the live dialog. `openSection(id)` sets `activeId` and `open` at once,
+    // which is the whole job of this button.
+    const seat = shellSeat()
+    const opened = openPluginSettingsPage(probe(seat))
 
     expect(opened).toBe(true)
-    expect(openBundle).toHaveBeenCalledWith(TRAE_PACKAGE_NAME)
-    // The published route wins; the layout fallback must NOT also fire, or the
-    // user would land on the plugin LIST instead of this bundle's page.
-    expect(selectPanel).not.toHaveBeenCalled()
+    expect(seat.openSection).toHaveBeenCalledWith(TRAE_SETTINGS_ID)
+    // The id must be the SAME string the page registers under, or the dialog
+    // opens on the shell's fallback section and no error says so.
+    expect(TRAE_SETTINGS_ID).toBe('dsh-connect-trae')
+    // `open` alone would land on whatever section was last active; `openSection`
+    // is the specific seam and must not be bypassed by the fallback.
+    expect(seat.open).not.toHaveBeenCalled()
   })
 
-  it('falls back to the Plugins main panel when pluginNavigation is absent', () => {
-    // A profile composed without the plugin-manager bundle still has the page
-    // itself; landing on it is one click from the bundle row.
-    const selectPanel = vi.fn()
-    const opened = openPluginSettingsPage(name =>
-      (name === 'layout' ? { selectPanel } : undefined))
+  it('reads the SEAT for this slot, not some other slot', () => {
+    const seat = shellSeat()
+    openPluginSettingsPage(probe(seat))
+    expect(seat.entries).toHaveBeenCalledWith(SETTINGS_SLOT)
+    expect(SETTINGS_SLOT).toBe('sidebar.settings')
+  })
+
+  it('falls back to a bare open() on a shell whose store predates openSection', () => {
+    // An older shell line can still open the dialog; it just cannot preselect.
+    // That puts the nav row in front of the user — one click from the page, which
+    // beats a press that does nothing.
+    const open = vi.fn()
+    const opened = openPluginSettingsPage(probe({
+      entries: () => [{ store: { create: () => ({ actions: { open } }) } }],
+    }))
 
     expect(opened).toBe(true)
-    expect(selectPanel).toHaveBeenCalledWith(PLUGINS_PANEL_ID)
+    expect(open).toHaveBeenCalledTimes(1)
   })
 
-  it('reports FALSE when neither route exists, instead of throwing', () => {
+  it('reports FALSE when the slots service is absent, instead of throwing', () => {
     // The caller is a click handler on a user's machine: "cannot" must not
     // become an exception there.
     expect(openPluginSettingsPage(() => undefined)).toBe(false)
   })
 
-  it('falls through to layout when openBundle THROWS', () => {
-    // `openBundle` refuses when the inventory does not list the package. The
-    // Plugins page itself is still a better landing spot than nothing.
-    const selectPanel = vi.fn()
-    const opened = openPluginSettingsPage(name => (name === 'pluginNavigation'
-      ? { openBundle: () => { throw new Error('no such bundle') } }
-      : { selectPanel }))
-
-    expect(opened).toBe(true)
-    expect(selectPanel).toHaveBeenCalledWith(PLUGINS_PANEL_ID)
+  it('reports FALSE when the shell has not registered the slot yet', () => {
+    // `entries()` answers `[]` until the shell's `whenAccess('settings/describe')`
+    // gate passes and it registers. That is a host state, not an error.
+    expect(openPluginSettingsPage(probe({ entries: () => [] }))).toBe(false)
   })
 
-  it('reports FALSE when BOTH routes throw, swallowing neither into a crash', () => {
-    const opened = openPluginSettingsPage(name => (name === 'pluginNavigation'
-      ? { openBundle: () => { throw new Error('refused') } }
-      : { selectPanel: () => { throw new Error('unregistered key') } }))
-
-    expect(opened).toBe(false)
+  it('reports FALSE when the seat carries no store', () => {
+    // A `sidebar.settings` registration that declared no store seat. Both
+    // `undefined` and a non-object must land here rather than being called.
+    expect(openPluginSettingsPage(probe({ entries: () => [{ }] }))).toBe(false)
+    expect(openPluginSettingsPage(probe({ entries: () => [{ store: null }] }))).toBe(false)
   })
 
-  it('probes the services on EVERY call, so one that appears later is found', () => {
-    // `pluginNavigation` is provided by the Plugins bundle, whose apply order is
-    // not ours to assume. Probing once in `apply` would capture `undefined`
-    // permanently and leave the button dead for the whole session.
-    const openBundle = vi.fn()
+  it('reports FALSE when the seat declares a store but no create()', () => {
+    expect(openPluginSettingsPage(probe({ entries: () => [{ store: {} }] }))).toBe(false)
+  })
+
+  it('reports FALSE when create() or a baked action THROWS', () => {
+    // Another bundle's code. A composed profile can replace `slots` with
+    // something that refuses, and the press must survive it.
+    expect(openPluginSettingsPage(probe({
+      entries: () => [{ store: { create: () => { throw new Error('refused') } } }],
+    }))).toBe(false)
+    expect(openPluginSettingsPage(probe({
+      entries: () => [{ store: { create: () => ({ actions: { openSection: () => { throw new Error('no') } } }) } }],
+    }))).toBe(false)
+  })
+
+  it('probes the service on EVERY call, so a shell that appears later is found', () => {
+    // The shell is provided by another bundle whose apply order is not ours to
+    // assume. Probing once in `apply` would capture `undefined` permanently and
+    // leave the button dead for the whole session.
     let served: unknown
-    const get = (name: string): unknown => (name === 'pluginNavigation' ? served : undefined)
+    const get = (name: string): unknown => (name === 'slots' ? served : undefined)
 
     expect(openPluginSettingsPage(get)).toBe(false)
-    served = { openBundle }
+    const seat = shellSeat()
+    served = seat
     expect(openPluginSettingsPage(get)).toBe(true)
-    expect(openBundle).toHaveBeenCalledTimes(1)
+    expect(seat.openSection).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -157,8 +200,8 @@ describe('the panel header carries a SETTINGS button', () => {
 
     expect(onOpenSettings).toHaveBeenCalledTimes(1)
     // CLOSING IS PART OF THE JOB: the panel is portaled to `document.body`, so
-    // navigating the centre column does not remove it — leaving it open would
-    // park a credits table on top of the page the user just asked for.
+    // opening the dialog does not remove it — leaving it open would park a
+    // credits table on top of the page the user just asked for.
     await waitFor(() => { expect(document.querySelector('[role="dialog"]')).toBeNull() })
   })
 
@@ -168,23 +211,19 @@ describe('the panel header carries a SETTINGS button', () => {
     // header is shared, but "shared" is an assumption a test should hold: the two
     // regions already diverge in the table (a plan column, a different fetch
     // route), so a future edit could easily make the button CN-only by accident.
-    const calls: string[] = []
-    vi.stubGlobal('fetch', async (input: string | URL | Request) => {
-      calls.push(String(input))
-      return new Response(JSON.stringify({
-        status: 'signed-in',
-        accountId: 'ai-1',
-        accountName: 'dingminhua',
-        tokenExpiresAtMs: Date.now() + 3_600_000,
-        region: 'ai',
-        accounts: [
-          { id: 'ai-1', accountName: 'dingminhua', edition: 'sg', region: 'ai', source: 'desktop', tokenExpiresAtMs: Date.now() + 3_600_000, selected: true },
-        ],
-        models: [],
-        enabledModelIds: [],
-        payStatus: { isDollarUsageBilling: true, hasPackage: false, inTrial: false, trialEndTimeMs: 0, payIdentity: 5, payIdentityStr: 'Free' },
-      }), { status: 200 })
-    })
+    vi.stubGlobal('fetch', async () => new Response(JSON.stringify({
+      status: 'signed-in',
+      accountId: 'ai-1',
+      accountName: 'dingminhua',
+      tokenExpiresAtMs: Date.now() + 3_600_000,
+      region: 'ai',
+      accounts: [
+        { id: 'ai-1', accountName: 'dingminhua', edition: 'sg', region: 'ai', source: 'desktop', tokenExpiresAtMs: Date.now() + 3_600_000, selected: true },
+      ],
+      models: [],
+      enabledModelIds: [],
+      payStatus: { isDollarUsageBilling: true, hasPackage: false, inTrial: false, trialEndTimeMs: 0, payIdentity: 5, payIdentityStr: 'Free' },
+    }), { status: 200 }))
     const onOpenSettings = vi.fn(() => true)
     const { container } = render(
       <ComposerPoints t={t} provider="trae-global" region="ai" onOpenSettings={onOpenSettings} />,
@@ -267,21 +306,22 @@ describe('the panel header carries a SETTINGS button', () => {
   })
 })
 
-describe('the replacement left nothing behind', () => {
-  it('drops the refresh keys from BOTH dictionaries', () => {
-    // The button is gone, so its copy must be too. Two dead locale entries are
-    // how "we removed the feature" turns into "we removed its rendering".
-    for (const table of [en, zh]) {
-      expect(Object.keys(table).filter(key => /^composer\.refresh(ing)?$/.test(key))).toEqual([])
-    }
+describe('the restored pill kept its shape', () => {
+  it('restores the settings keys in BOTH dictionaries', () => {
+    // The pill is back, so its copy must be too — and in both languages: the zh
+    // bundle is first-class here, not a translation bolted on afterwards.
     expect(zh['composer.openSettings']).toBe('设置')
     expect(en['composer.openSettings']).toBe('Settings')
+    expect(zh['composer.openSettingsHint']).toBe('打开本插件的设置页')
+    expect(en['composer.openSettingsHint']).toBe('Open this plugin\'s settings page')
+    expect(zh['composer.openSettingsFailed']).toBe('这个宿主没有通向插件设置页的入口')
+    expect(en['composer.openSettingsFailed']).toBe('This host has no route to the plugin settings page')
   })
 
-  it('styles the new class and leaves no rule for the removed one', () => {
+  it('styles the restored class and keeps the old refresh rule out', () => {
     // `composer-styles.spec.tsx` asserts every rendered class HAS a rule; this
-    // asserts the reverse — that the old rule went with the old button, so a
-    // future reader does not mistake it for something still in use.
+    // asserts the other direction — the removed refresh control left no rule
+    // behind for a future reader to mistake for something still in use.
     expect(COMPOSER_POINTS_CSS).toContain('.dsm-trae-composer-panel-settings{')
     expect(COMPOSER_POINTS_CSS).not.toContain('.dsm-trae-composer-panel-refresh')
   })

@@ -152,8 +152,8 @@ describe('client entry activation on 0.1.7', () => {
         'conversation.composer.dock',
         'conversation.input.model.label',
         'conversation.input.right',
-        'plugins.bundle.config',
-        'plugins.row.config',
+        'settings.section',
+        'settings.section.icon',
       ])
     // The two SEATS must have DISTINCT slot ids: two registrations sharing one
     // id would have the second silently replace the first, leaving the setting
@@ -241,8 +241,8 @@ describe('client entry activation on 0.1.7', () => {
       'conversation.composer.dock',
       'conversation.input.model.label',
       'conversation.input.right',
-      'plugins.bundle.config',
-      'plugins.row.config',
+      'settings.section',
+      'settings.section.icon',
     ])
     expect(errors).toHaveLength(0)
 
@@ -290,11 +290,14 @@ describe('client entry activation on 0.1.7', () => {
     // Flushing is where the crash used to happen.
     expect(() => { slots.flush() }).not.toThrow()
     // The other seats still registered: one refused seat must not cost the rest.
+    // The nav glyph is NOT here: it is injected from INSIDE the settings page's
+    // callback, and this double defers every callback without running its effect
+    // tree, so that nested `inject` is still pending at flush time — the same
+    // deferral the page itself went through one frame earlier.
     expect(slots.registrations.map(entry => entry.name).sort()).toEqual([
       'conversation.composer.dock',
       'conversation.input.right',
-      'plugins.bundle.config',
-      'plugins.row.config',
+      'settings.section',
     ])
     // And the refusal was REPORTED rather than swallowed silently.
     expect(errors.some(args => String((args as unknown[])[0]).includes('model label slot failed to register'))).toBe(true)
