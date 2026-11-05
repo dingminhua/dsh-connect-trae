@@ -48,8 +48,9 @@
  *
  * WHY THE HOST STILL OWNS THE NAME. The contract says to keep `model.name` as
  * the text and render the addition beside it, so this component returns the name
- * first — it never replaces it — and it renders nothing extra for a provider
- * that is not ours.
+ * first — it never replaces it. For a provider that is not ours it reproduces
+ * the host's own label: the catalog name and, since 0.2.2, that model's optional
+ * `badge` (see {@link HostModelBadge}).
  *
  * @module dsh-connect-trae/client/TraeModelLabel
  */
@@ -368,8 +369,9 @@ function PromoChip(props: { badge: TraePromoBadge, copy: Record<TraeSettingsKey,
  *
  * WHAT WINNING/HOLDING COSTS. This cell is `single`, so the other registrants'
  * decorations on the rows this plugin claims are not composed. That is the
- * documented, accepted trade-off, and it is why the component returns the plain
- * catalog name for any provider that is not ours — the slot's own minimum.
+ * documented, accepted trade-off, and it is why the component reproduces the
+ * host's own presentation — catalog name plus that model's optional badge — for
+ * any provider that is not ours.
  *
  * WHY A DISTINCT PRIORITY IS NOT ENOUGH ON ITS OWN. It removes the cross-plugin
  * collision, but issue #74's error was a SECOND registration of THIS plugin
@@ -383,17 +385,92 @@ function PromoChip(props: { badge: TraePromoBadge, copy: Record<TraeSettingsKey,
  */
 export const MODEL_LABEL_PRIORITY = -0.25
 
+/**
+ * One selector badge, as DSH 0.2.2 publishes it on `LlmModelInfo.badge`.
+ *
+ * `text` is a literal or translations keyed by lowercase language id with a
+ * required English entry, and `tone` is the emphasis the host's own label
+ * paints. This plugin never advertises one of these itself, but it must not
+ * DELETE another provider's: `conversation.input.model.label` is a `single`
+ * slot, so whichever component holds it replaces the host's built-in
+ * name+badge rendering for every provider, not just its own.
+ */
+interface HostModelBadge {
+  text: string | Record<string, string>
+  tone: 'neutral' | 'info' | 'success' | 'warning'
+}
+
+/** The tone colours, mapped onto the same theme tokens the host's Tag paints. */
+const HOST_BADGE_TONES: Record<HostModelBadge['tone'], { color: string, background: string, border: string }> = {
+  neutral: { color: 'var(--dsw-alias-label-secondary)', background: 'var(--dsw-alias-bg-layer-2)', border: 'var(--dsw-alias-border-l2)' },
+  info: { color: 'var(--dsw-alias-brand-primary)', background: 'var(--dsw-alias-bg-layer-2)', border: 'var(--dsw-alias-border-l2)' },
+  success: { color: 'var(--dsw-alias-state-success-primary)', background: 'var(--dsw-alias-bg-layer-2)', border: 'var(--dsw-alias-border-l2)' },
+  warning: { color: 'var(--dsw-alias-state-warn-secondary)', background: 'var(--dsw-alias-bg-layer-2)', border: 'var(--dsw-alias-border-l2)' },
+}
+
+/**
+ * The one line a badge shows, in the reader's language.
+ *
+ * The host contract requires an English entry, so that is the last resort; the
+ * active language and its base tag (`de-DE` → `de`) come first, matching what
+ * the host's own resolver does. An empty string is treated as absent — a blank
+ * chip would be a decoration that says nothing.
+ */
+function resolveHostBadgeText(text: string | Record<string, string>): string | undefined {
+  if (typeof text === 'string') return text.trim() === '' ? undefined : text
+  const language = uiLanguage().toLowerCase()
+  const base = language.split('-')[0] ?? ''
+  const picked = text[language] ?? (base === '' ? undefined : text[base]) ?? text.en
+  return picked === undefined || picked.trim() === '' ? undefined : picked
+}
+
+/** One provider-authored selector badge, drawn where the host's own label draws it. */
+function HostBadge(props: { badge: HostModelBadge, label: string }): ReactElement {
+  const tone = HOST_BADGE_TONES[props.badge.tone] ?? HOST_BADGE_TONES.neutral
+  return (
+    <span
+      className="dsm-trae-model-label-host-badge"
+      style={{
+        flex: 'none',
+        borderRadius: '999px',
+        padding: '0 6px',
+        fontSize: '10px',
+        fontWeight: 500,
+        lineHeight: '15px',
+        whiteSpace: 'nowrap',
+        border: `1px solid ${tone.border}`,
+        color: tone.color,
+        background: tone.background,
+        maxWidth: '8em',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+      }}
+    >
+      {props.label}
+    </span>
+  )
+}
+
 export function TraeModelLabel(props: {
   provider: { id: string, name: string }
-  model: { id: string, name: string }
+  model: { id: string, name: string, badge?: HostModelBadge }
   placement: 'trigger' | 'menu' | 'option'
   selected: boolean
 }): ReactElement {
   const { provider, model } = props
   const panel = panelOfProvider(provider.id)
   if (panel === undefined) {
-    // Another provider's model: the host renders the plain name.
-    return <span>{model.name}</span>
+    // Another provider's model: the host's built-in label is replaced by this
+    // component, so it has to reproduce what that label would have shown — the
+    // catalog name and, since 0.2.2, the model's optional badge. The host puts
+    // the badge BEFORE the name in the composer trigger and AFTER it in menus.
+    const badgeInfo = model.badge
+    const label = badgeInfo === undefined ? undefined : resolveHostBadgeText(badgeInfo.text)
+    if (badgeInfo === undefined || label === undefined) return <span>{model.name}</span>
+    const badge = <HostBadge badge={badgeInfo} label={label} />
+    return props.placement === 'trigger'
+      ? <span>{badge} {model.name}</span>
+      : <span>{model.name} {badge}</span>
   }
   return <TraeModelLabelInner modelId={model.id} name={model.name} panel={panel} />
 }

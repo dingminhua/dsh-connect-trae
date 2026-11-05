@@ -86,11 +86,17 @@ const NO_PRICE = rule({
 })
 
 /** The host's props for one row in the picker. */
-function props(providerId: string, name: string, modelId = 'model-a'): Parameters<typeof TraeModelLabel>[0] {
+function props(
+  providerId: string,
+  name: string,
+  modelId = 'model-a',
+  badge?: { text: string | Record<string, string>, tone: 'neutral' | 'info' | 'success' | 'warning' },
+  placement: 'trigger' | 'menu' | 'option' = 'menu',
+): Parameters<typeof TraeModelLabel>[0] {
   return {
     provider: { id: providerId, name: providerId },
-    model: { id: modelId, name },
-    placement: 'menu',
+    model: { id: modelId, name, ...badge === undefined ? {} : { badge } },
+    placement,
     selected: false,
   }
 }
@@ -252,5 +258,45 @@ describe('the model label in the host picker', () => {
 
     expect(container.textContent).toBe('Their Model')
     expect(calls).toHaveLength(0)
+  })
+
+  /**
+   * 0.2.2 grew the host's built-in label into `name` + `model.badge`. This
+   * component HOLDS the `single` label slot, so the host's built-in label never
+   * renders while this plugin is active — dropping the badge here would delete
+   * another provider's decoration. It must draw it where the host draws it:
+   * before the name in the composer trigger, after it in menus/options.
+   */
+  it('keeps another provider\'s catalog badge visible, in the host\'s order', () => {
+    vi.stubGlobal('fetch', async () => {
+      throw new Error('a foreign model must never trigger this plugin\'s fetch')
+    })
+    const badge = { text: 'New', tone: 'success' as const }
+
+    const menu = render(<TraeModelLabel {...props('someone-else', 'Their Model', 'm1', badge)} />)
+    expect(menu.container.textContent).toBe('Their Model New')
+    menu.unmount()
+
+    const trigger = render(<TraeModelLabel {...props('someone-else', 'Their Model', 'm1', badge, 'trigger')} />)
+    expect(trigger.container.textContent).toBe('New Their Model')
+    expect(trigger.container.querySelector('.dsm-trae-model-label-host-badge')).not.toBeNull()
+  })
+
+  it('picks the badge text in the reader\'s language, falling back to English', () => {
+    const badge = { text: { en: 'New', zh: '新' }, tone: 'info' as const }
+    try {
+      Object.defineProperty(navigator, 'language', { value: 'zh-CN', configurable: true })
+      const zh = render(<TraeModelLabel {...props('someone-else', 'Their Model', 'm1', badge)} />)
+      expect(zh.container.textContent).toContain('新')
+      zh.unmount()
+
+      // The host requires an `en` entry; a language the badge does not name
+      // (the host ships ja/es/fr/de/ru/pt, this plugin does not) lands there.
+      Object.defineProperty(navigator, 'language', { value: 'de-DE', configurable: true })
+      const de = render(<TraeModelLabel {...props('someone-else', 'Their Model', 'm1', badge)} />)
+      expect(de.container.textContent).toContain('New')
+    } finally {
+      Object.defineProperty(navigator, 'language', { value: 'en-US', configurable: true })
+    }
   })
 })

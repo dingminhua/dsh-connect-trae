@@ -1,5 +1,33 @@
 # Changelog
 
+## 4.8.1 (2026-11-05)
+
+### 适配
+
+- **DSH 0.2.2-rc.1 同步**。宿主这一版随包换代到 `cordis@4.1.0`、`schemastery@3.19.0`、
+  `@earendil-works/pi-ai@1.3.0`，插件消费的 13 个宿主包里有 8 个带实质变化。
+  - **唯一的契约破坏**：`ResolvedPiAiProviderProfile` 新增两个必填字段
+    `maxRequestImages` / `imageOffloadCountQuantum`。本插件从实时目录手工构造这个 profile，
+    升级依赖后 `pnpm typecheck` 报 `TS2739`；已在 `REQUEST_IMAGE_BUDGETS` 补上宿主默认值
+    `50 / 10`（旧宿主忽略多余键，0.2.1 线仍类型通过）。
+  - **运行期无需适配**：4.8.0 在 0.2.2-rc.1 上照常工作——宿主只在配置解析路径给这两个字段
+    兜底，手写 profile 传 `undefined` 时 0.2.2 走「不限制张数」分支（本机实测：usage 路由
+    200、已登录）。本版把这两个字段显式声明，图像张数超限的流程才跟着宿主一起生效。
+  - **目录变化公告**：区域目录变化时按 provider 发一次 `llm/models-updated`（0.2.2 新增）。
+    `llm/adapters-updated` 只在路由拓扑变化时发，覆盖不到「同一路由换了 roster」；签名去重
+    保证一次设置写入重建出相同行时不会惊动选择器。旧宿主上这是无人监听的未知事件。
+  - **模型标签补回别人的 badge**：`conversation.input.model.label` 是 `single` 槽，本插件
+    占住后宿主的「名字 + `model.badge`」内置渲染对所有 provider 都不再生效。现在非 Trae 行
+    按宿主顺序补回 badge（trigger 在前、菜单在后）并做语言回退；本插件自己的行行为不变。
+  - 不采纳：新语言 ja/es/fr/de/ru/pt（只维护 zh/en）、`settings.section.icon`（不拥有
+    `settings.section`）、`llm-pi-ai/request-headers`、`supportsMidConvoEffort`。
+  - 三大价值（双区域供应商 / 用量积分 / 每日签到）不受影响，对应测试全绿。
+- **开发树同步**：13 个 `@deepseek-ai/dsh-*` devDependency → `0.2.2-rc.1`，`cordis` →
+  `^4.1.0`，`schemastery` → `3.19.0`（含 `pnpm-workspace.yaml` override），`pi-ai` →
+  `1.3.0`；`pnpm-lock.yaml` 重新生成。peerDependencies 零改动。
+- `tests/dsh-peer-range.spec.ts` 的 `MUST_ADMIT` 补入 `0.2.2-rc.1`；新增目录公告与
+  badge 渲染用例（103 文件 / 1335 用例全绿）。
+
 ## 4.8.0 (2026-11-05)
 
 > **从 npm 升级的用户，这一版把 v4.7.0 也一起带上了。** v4.7.0 的 tag 与 GitHub

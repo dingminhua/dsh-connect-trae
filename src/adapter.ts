@@ -108,10 +108,33 @@ const INERT_AUTH: { credentials: CredentialStore; authContext: AuthContext } = {
   },
 }
 
+/**
+ * The image-request policy this hand-built profile hands to `dsh-llm-pi-ai`.
+ *
+ * WHY THIS OBJECT IS SPELLED OUT. DSH's own config resolution (`resolveProfiles`
+ * in `dsh-llm-pi-ai`) defaults every route-level image bound. This plugin never
+ * runs that path: it builds `ResolvedPiAiProviderProfile` by hand from a live
+ * Trae catalog, so every field the host expects has to be named here or the
+ * bound silently does not apply.
+ *
+ * `maxRequestImages` / `imageOffloadCountQuantum` joined that contract in DSH
+ * 0.2.2-rc.1 (the required fields on `ResolvedPiAiProviderProfile`). The count
+ * bound is what turns a request carrying more images than a route accepts into
+ * the host's `IMAGE_OFFLOAD_REQUIRED` flow instead of an upstream rejection, and
+ * the quantum is how many of the oldest occurrences that flow offloads at once.
+ * Without them the host treats the route as count-unbounded — the pre-0.2.2
+ * behaviour, which is why 4.8.0 kept working — but the type contract no longer
+ * compiles, so they are declared here with the host's own defaults (50 / 10).
+ *
+ * `imageOffloadCountQuantum` must be a positive integer no greater than
+ * `maxRequestImages`; 10 ≤ 50 keeps the host's default ratio.
+ */
 const REQUEST_IMAGE_BUDGETS = {
   maxRequestImageBytes: 20_971_520,
   requestImagePixelBudget: 4_194_304,
   requestImageMaxBytes: 1_048_576,
+  maxRequestImages: 50,
+  imageOffloadCountQuantum: 10,
 } as const
 
 function toPiModel(info: TraeModelInfo, baseUrl: string, providerId: string, withRate = true): Model<Api> {

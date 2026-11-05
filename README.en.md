@@ -197,7 +197,7 @@ Restart the DSH process after install/update/uninstall.
 ## DSH version compatibility
 
 **Requires DSH 0.1.7-rc.1 and up** (since 2.3.0 the plugin no longer targets hosts older than 0.1.7; the peer dependency ranges are narrowed accordingly).
-**The peer upper bound is `<0.3.0-0`, so both the 0.1.7 and the 0.2 line are supported (including 0.2.1-rc.5, verified).**
+**The peer upper bound is `<0.3.0-0`, so both the 0.1.7 and the 0.2 line are supported (including 0.2.2-rc.1, verified).**
 
 ### Both pi-ai context generations are supported (since 3.4.2)
 
@@ -256,6 +256,22 @@ For **this plugin**:
 - The peer range **needs no change**: both `0.2.1-rc.4` and `0.2.1-rc.5` are admitted by `>=0.1.7-rc.1 <0.3.0-0`.
 
 Details: [section 11 of `docs/DSH_0.2.1_RC1_SYNC.md`](https://github.com/dingminhua/dsh-connect-trae/blob/main/docs/DSH_0.2.1_RC1_SYNC.md).
+
+### `0.2.2-rc.1` sync (since 4.8.1)
+
+The host moved to `0.2.2-rc.1`. This release is **not just version bumps**: the bundled dependencies move as a set (`cordis` 4.0.5 → **4.1.0**, `schemastery` 3.18.5 → **3.19.0**, `@earendil-works/pi-ai` 1.1.0 → **1.3.0**), and **8 of the 13 host packages** this plugin consumes carry real changes.
+
+For **this plugin**:
+
+- **One contract break**: `dsh-llm-pi-ai` added two **required** fields to `ResolvedPiAiProviderProfile` — `maxRequestImages` and `imageOffloadCountQuantum`. This plugin builds that profile **by hand** from the live catalog (it bypasses the host's config resolution), so `pnpm typecheck` fails with `TS2739` after the bump. Both are now declared in `REQUEST_IMAGE_BUDGETS` with the host's own defaults, `50 / 10`.
+- **Runtime was never broken**: the host only defaults those fields on its config-resolution path; a hand-built profile that omits them takes the "image count unchecked" branch on 0.2.2. That is why 4.8.0 keeps working there (verified on the desktop host: `GET /plugins/dsh-connect-trae/usage` → 200, `signed-in`).
+- **New capabilities adopted where they matter**: the plugin now emits `llm/models-updated(provider)` when a region's catalog changes (deduplicated by a signature, so a settings write that rebuilds identical rows does not wake every consumer). And because `conversation.input.model.label` is a `single` slot, holding it suppresses the host's built-in "name + `model.badge`" label for **every** provider — so the component now renders another provider's `model.badge` (with language fallback) instead of dropping it. Its own rows are unchanged.
+- **Deliberately not adopted**: the six new UI languages (this plugin keeps zh/en and falls back to English), `settings.section.icon` (it owns plugin cards, not a `settings.section`), `llm-pi-ai/request-headers` (no custom inference headers), `supportsMidConvoEffort` (not on the openai-completions route).
+- **The three core values are unaffected**: dual-region providers, usage/credits overview, daily check-in. Their tests are green; this change only touches the image budget, catalog announcements, and the model label.
+- The other six changed packages (`dsh-host-webserver` resource routes, `dsh-attachment` admission variants, the new languages in `dsh-client-locale` / `dsh-client-ui-settings-plugins`, the `dsh-client-ui-settings` icon slot, `dsh-client-ui-primitives` additions) are **additive**; this plugin either does not use them or already has an equivalent. The five unchanged packages (`dsh-atomic-write`, `dsh-client-ui-renderer`, `dsh-client-ui-slots`, `dsh-home-paths`, `dsh-settings`) are **byte-for-byte identical**, so every slot contract this plugin registers is unchanged.
+- The peer range **needs no change**: `0.2.2-rc.1` is admitted by `>=0.1.7-rc.1 <0.3.0-0`, and `MUST_ADMIT` in `tests/dsh-peer-range.spec.ts` now includes it.
+
+Details: [`docs/DSH_0.2.2_RC1_SYNC.md`](https://github.com/dingminhua/dsh-connect-trae/blob/main/docs/DSH_0.2.2_RC1_SYNC.md).
 
 
 ### Why the upper bound is not `<0.2.0`

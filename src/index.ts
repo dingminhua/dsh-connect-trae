@@ -2049,6 +2049,67 @@ export function apply(ctx: Context, config: Config): void {
   }
 
   /**
+   * The last catalog announced to the host, per region.
+   *
+   * DSH 0.2.2-rc.1 added `llm/models-updated(provider)`: "a provider's advertised
+   * models or display metadata changed; consumers reload `listModels()`". The
+   * model picker listens for it next to the payload-free `llm/adapters-updated`
+   * — and the latter only fires when a route's TOPOLOGY changes, which is not
+   * the same event as "the models behind an unchanged route changed". The live
+   * directory this plugin refreshes from upstream is exactly the second kind:
+   * the same provider, a different roster.
+   *
+   * The map is the dedupe ledger. Every settings write rebuilds the catalog
+   * object even when the served rows are identical, so an unconditional emit
+   * would make every picker (and every other consumer) re-read the catalog on
+   * each card keystroke.
+   */
+  const announcedCatalog = new Map<TraePanel, string>()
+
+  /**
+   * What a picker can tell apart about one catalog.
+   *
+   * Must cover every field the host exposes for a model — id, display name,
+   * context window, output cap, input modalities, reasoning tiers, and the
+   * credit multiplier the display name is derived from — or a refresh that
+   * changed only one of them would stay stale in the picker. Order and
+   * omission are both meaningful, so `null` marks an absent key instead of it
+   * collapsing into the empty string.
+   */
+  function catalogSignature(models: readonly TraeModelInfo[]): string {
+    return models.map(model => JSON.stringify([
+      model.id,
+      model.name,
+      model.contextWindow ?? null,
+      model.maxTokens ?? null,
+      model.input ?? null,
+      model.reasoningEfforts ?? null,
+      model.creditMultiplier ?? null,
+    ])).join('\n')
+  }
+
+  /**
+   * Tell the host that one region's catalog changed, once per change.
+   *
+   * Called from `invalidateAdapter` — the single seam every `catalog.set` path
+   * already ends with (a settings write through `applySelection`, and the
+   * startup discovery) — so a new catalog-set path cannot forget to announce.
+   * A switched-off region advertises nothing: its route is withdrawn and
+   * `syncRegionRegistration` announces that topology change itself, so this
+   * only records the signature.
+   *
+   * Emitting on a host older than 0.2.2 is deliberately harmless: cordis
+   * dispatches events by name and simply has no listener for this one.
+   */
+  function announceCatalog(panel: TraePanel): void {
+    const signature = catalogSignature(stacks[panel].catalog.current())
+    if (announcedCatalog.get(panel) === signature) return
+    announcedCatalog.set(panel, signature)
+    if (!regionEnabled(current(), panel)) return
+    ctx.emit('llm/models-updated', providerOfPanel(panel))
+  }
+
+  /**
    * Publish each region's on/off state to the harness (issue #11). Both swaps
    * are single synchronous sections, so no request can observe a half-applied
    * state, and `replace` announces itself through `llm/adapters-updated`, which
@@ -2319,7 +2380,13 @@ export function apply(ctx: Context, config: Config): void {
           // reads is rebuilt by the loader on each volatile update.
           defaultEfforts: () => thinkingEffortsOf(current(), panel),
         })
-        stack.invalidateAdapter = () => { trae.invalidate() }
+        stack.invalidateAdapter = () => {
+          trae.invalidate()
+          // The adapter rebuild and the host's catalog view are two sides of
+          // the same refresh: `invalidate()` makes the NEXT read service the new
+          // rows, and this tells the picker there is a reason to read at all.
+          announceCatalog(panel)
+        }
         // Always register the route first: an empty INITIAL registration is
         // invalid (`INVALID_ADAPTER`), while `replace([])` on a live one is
         // explicitly legal. `syncRegionRegistration` below then withdraws the

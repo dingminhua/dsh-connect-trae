@@ -216,7 +216,7 @@ npm install dsh-connect-trae
 ## DSH 版本兼容
 
 **要求 DSH 0.1.7-rc.1 及以上**（2.3.0 起不再支持 0.1.7 之前的宿主；peer 依赖范围已按此收窄）。
-**peer 上界为 `<0.3.0-0`：0.1.7 与 0.2 两条线均受支持（含 0.2.1-rc.5，已实测）。**
+**peer 上界为 `<0.3.0-0`：0.1.7 与 0.2 两条线均受支持（含 0.2.2-rc.1，已实测）。**
 
 ### 同时支持 pi-ai 的两代上下文（3.4.2 起）
 
@@ -316,6 +316,40 @@ stderr、View 标签的 tooltip 只在文字溢出时显示、More 菜单 toolti
 
 细节见 [`docs/DSH_0.2.1_RC1_SYNC.md`](https://github.com/dingminhua/dsh-connect-trae/blob/main/docs/DSH_0.2.1_RC1_SYNC.md) 第十一节。
 
+
+### `0.2.2-rc.1` 同步结论（4.8.1 起）
+
+宿主推进到 `0.2.2-rc.1`。这一版**不只是版本号**：随包依赖整体换代（`cordis` 4.0.5 →
+**4.1.0**、`schemastery` 3.18.5 → **3.19.0**、`@earendil-works/pi-ai` 1.1.0 → **1.3.0**），
+插件消费的 13 个宿主包里 **8 个有实质变化**。
+
+对**本插件**而言：
+
+- **唯一的契约破坏**：`dsh-llm-pi-ai` 给 `ResolvedPiAiProviderProfile` 新增了两个**必填**
+  字段 `maxRequestImages` / `imageOffloadCountQuantum`。本插件从实时目录**手工构造**这个
+  profile（不走宿主的配置解析），所以升级依赖后 `pnpm typecheck` 报 `TS2739`。已在
+  `REQUEST_IMAGE_BUDGETS` 补上宿主默认值 `50 / 10`。
+- **运行期原本就没坏**：宿主只在配置解析路径里给这两个字段兜底，手写 profile 传
+  `undefined` 时 0.2.2 走「不限制张数」，因此 4.8.0 在 0.2.2 上照常工作（本机实测：桌面端
+  0.2.2-rc.1 + 插件 4.8.0，`GET /plugins/dsh-connect-trae/usage` 返回 200 且 `signed-in`）。
+- **新增能力按需采纳**：目录变化时按 provider 发 `llm/models-updated`（签名去重，避免每次
+  设置写入都惊动选择器）；`conversation.input.model.label` 是 `single` 槽，本插件占住后会
+  压掉宿主的「名字 + `model.badge`」内置渲染，因此对**别的 provider** 的模型补回了 badge
+  （含语言回退），本插件自己的行行为不变。
+- **明确不采纳**：新语言 ja / es / fr / de / ru / pt（只维护 zh / en，其余回退英文）、
+  `settings.section.icon`（插件不拥有 `settings.section`）、`llm-pi-ai/request-headers`
+  （不需要额外请求头）、`supportsMidConvoEffort`（openai-completions 路线用不到）。
+- **三大价值不受影响**：双区域供应商、用量与积分概览、每日签到领取——对应测试全绿，本次
+  只碰图像预算、目录公告与模型标签三处。
+- 其余 6 个有变化的包（`dsh-host-webserver` 的资源路由、`dsh-attachment` 的准入类型扩展、
+  `dsh-client-locale` / `dsh-client-ui-settings-plugins` 的新语言、`dsh-client-ui-settings`
+  的 icon 槽位、`dsh-client-ui-primitives` 的新增属性）**全部是新增**，本插件未使用或已有
+  等价实现；`dsh-atomic-write` / `dsh-client-ui-renderer` / `dsh-client-ui-slots` /
+  `dsh-home-paths` / `dsh-settings` 这 5 个包**逐字节未变**，槽位契约不变。
+- peer 范围**无需改动**：`0.2.2-rc.1` 已被 `>=0.1.7-rc.1 <0.3.0-0` 放行，
+  `tests/dsh-peer-range.spec.ts` 的 `MUST_ADMIT` 已补入。
+
+细节见 [`docs/DSH_0.2.2_RC1_SYNC.md`](https://github.com/dingminhua/dsh-connect-trae/blob/main/docs/DSH_0.2.2_RC1_SYNC.md)。
 
 ### peer 上界为什么不写 `<0.2.0`
 

@@ -518,6 +518,49 @@ describe('per-region model slots', () => {
   })
 })
 
+/**
+ * DSH 0.2.2 added `llm/models-updated(provider)` as the channel for "this
+ * provider's advertised models changed". The host's model picker listens for it
+ * next to the payload-free `llm/adapters-updated`, which only fires on a route
+ * TOPOLOGY change — not on the same route serving a different roster.
+ *
+ * This plugin's catalog changes exactly the second way (a settings write
+ * rebuilding the rows, the startup discovery replacing them with the live
+ * directory), so the event must come from the same seam every `catalog.set`
+ * ends with. Two properties are pinned: the right provider is named, and an
+ * unchanged rebuild stays silent (every settings write rebuilds the object).
+ */
+describe('catalog announcements (DSH 0.2.2)', () => {
+  it('announces a changed catalog once, for the provider whose rows changed', async () => {
+    const ctx = new Context()
+    context = ctx
+    await ctx.plugin(LlmRuntime)
+    await ctx.plugin(MemorySettings)
+    const restore = await isolatedPlugin(ctx)
+    try {
+      await expect.poll(() => ctx.llm.listProviders().map(provider => provider.id)).toContain('trae-global')
+
+      const announced: string[] = []
+      ctx.on('llm/models-updated', (provider: string) => { announced.push(provider) })
+
+      // The startup discovery has no credential here, so it falls back to the
+      // configured rows and announces both enabled panes (cn + ai; enterprise
+      // defaults off). Wait for that burst to land, then measure only writes.
+      await expect.poll(() => announced.length, { timeout: 5_000 }).toBeGreaterThanOrEqual(2)
+      announced.length = 0
+
+      const savedCatalog = [{ id: 'glm-5.2', name: 'GLM-5.2', input: ['text'] }]
+      const patch = { regions: { cn: { lastCatalog: savedCatalog, enabledModelIds: ['glm-5.2'] } } }
+      await ctx.settings.update(Trae.TRAE_SETTINGS_NS, patch)
+      expect(announced).toEqual(['trae'])
+
+      // A write that rebuilds the SAME rows must not wake the picker.
+      await ctx.settings.update(Trae.TRAE_SETTINGS_NS, patch)
+      expect(announced).toEqual(['trae'])
+    } finally { await restore() }
+  })
+})
+
 describe('settingsNamespaceOf', () => {
   it('uses the Loader entry id when the host provides one', () => {
     expect(Trae.settingsNamespaceOf({ fiber: { entry: { options: { id: 'include:dsh-connect-trae' } } } }))
