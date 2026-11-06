@@ -247,11 +247,19 @@ describe('the section surface', () => {
     // "models / diagnostics" become unreachable until the user scrolls back to
     // the top. sticky is the whole point; an opaque fill is part of it, or the
     // rows scrolling underneath show through the labels.
-    const body = /\.dsm-trae-panels\{([^}]*)\}/.exec(TRAE_CARD_CSS)?.[1] ?? ''
+    //
+    // SCOPED to .dsm-trae-section. The strip element is shared by three
+    // surfaces; an unscoped sticky shipped in 4.9.0 and, on the card (which has
+    // no scrolling ancestor), laid down a layer-2 band over a layer-3 card.
+    const body = /\.dsm-trae-section \.dsm-trae-panels\{([^}]*)\}/.exec(TRAE_CARD_CSS)?.[1] ?? ''
     expect(body).toContain('position:sticky')
     expect(body).toMatch(/top:-?\d/u)
     expect(body).toMatch(/z-index:\s*\d/u)
     expect(body).toMatch(/background:/u)
+    // ...and the unscoped rule must carry NO positioning, or it leaks back.
+    const base = /^[^\n]*\.dsm-trae-panels\{([^}]*)\}/mu.exec(TRAE_CARD_CSS)?.[1] ?? ''
+    expect(base, 'base .dsm-trae-panels').not.toContain('position:sticky')
+    expect(base, 'base .dsm-trae-panels').not.toMatch(/background:/u)
   })
 
   it('hides the region hint visually but keeps it for screen readers', () => {
@@ -259,11 +267,18 @@ describe('the section surface', () => {
     // and that sentence is the only place the "CN and enterprise share one
     // login" exception is stated. clip keeps it readable; the 1px box keeps it
     // out of the layout, which is where the 36px came from.
-    const body = /\.dsm-trae-tab-hint\{([^}]*)\}/.exec(TRAE_CARD_CSS)?.[1] ?? ''
+    //
+    // SCOPED for the same reason as the strip above: the card has no height
+    // pressure and lost a sentence it had no reason to lose.
+    const body = /\.dsm-trae-section \.dsm-trae-tab-hint\{([^}]*)\}/.exec(TRAE_CARD_CSS)?.[1] ?? ''
     expect(body).toContain('clip')
     expect(body).not.toContain('display:none')
     expect(body).not.toMatch(/opacity:\s*0/u)
     expect(body).toContain('width:1px')
+    // The unscoped rule must stay visible text.
+    const base = /^[^\n]*\.dsm-trae-tab-hint\{([^}]*)\}/mu.exec(TRAE_CARD_CSS)?.[1] ?? ''
+    expect(base, 'base .dsm-trae-tab-hint').not.toContain('clip')
+    expect(base, 'base .dsm-trae-tab-hint').not.toContain('width:1px')
   })
 
   it('reflows the pool table on the TABLE width, not the viewport', () => {

@@ -52,16 +52,22 @@ export const TRAE_CARD_CSS = `
    differs, so it sits inside the tab cell without crowding the label. */
 .dsm-trae-tab-switch{flex:none;margin-left:auto;padding-left:10px;border-left:1px solid var(--dsw-alias-border-l1,rgba(127,127,127,.24))}
 .dsm-trae-tab-dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:7px;vertical-align:baseline}
-/* 供应商行的说明：视觉隐藏，读屏仍在（learned from workbuddy 5.19.0 的窄列实践）。
+.dsm-trae-tab-hint{margin:0;padding:0 2px;color:var(--dsw-alias-label-tertiary,#999);font-size:12px;line-height:18px}
+/* THE TWO SETTINGS-SURFACE TWEAKS, SCOPED (learned the hard way, post-release).
  *
- * 这一行是三个芯片的注解（「企业版与国内版共用同一份 Trae CN 登录」），原本独占
- * 一整行 36px，把账号池往下推。在 564px 的列里，纵向空间是稀缺资源，而这句话
- * 只在「同时启用两个供应商」时才有用——那个场景下用户已经在看两个芯片了。
+ * 下面两条原本是**无作用域**的：一条把供应商说明行视觉隐藏，一条把分栏条改成
+ * sticky 并加一层底色。它们写的时候只想到设置面板那一列（564px、外壳自带滚动），
+ * 但那两处 DOM 是**三个界面共用的**——卡片、整页、设置页画的是同一棵树。
  *
- * 用 clip 而不是 display:none：display:none 会把它从无障碍树里摘掉，读屏用户
- * 就永远拿不到这条例外说明。视觉隐藏保留了它，且不占布局高度。
- * 完整文案仍可通过芯片行的 title 悬停看到（见 TraeUsageCard 的 tabSwitchHint）。 */
-.dsm-trae-tab-hint{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap;border:0}
+ * 结果在卡片上是两个回归（实测）：说明行在卡片里也消失了（卡片有自己的宽度、
+ * 有自己的节奏，那里根本没有纵向空间压力），分栏条拿到 position:sticky 却没有
+ * 滚动祖先，且底色取了 layer-2 而卡片本身是 layer-3，于是在卡片上压出一条
+ * 比周围更浅的色带。
+ *
+ * 所以两条都挪到 .dsm-trae-section 之下——那是"只在设置面板里生效"的结构标记，
+ * 也是这些改动的唯一理由所在（外壳的滚动列与 564px 的宽度）。卡片与整页保持
+ * 原样：它们没有面板外壳，也就没有这些约束。 */
+.dsm-trae-section .dsm-trae-tab-hint{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap;border:0}
 /* SECTION TABS: the card's own top-level split (account / models / diagnostics).
  *
  * Deliberately NOT the boxed chips above. Those are the REGION scope — a
@@ -89,7 +95,12 @@ export const TRAE_CARD_CSS = `
  *
  * top:-1px 而不是 0：分栏条自己的 border-bottom 画在盒子外侧，写成 0 会在它上方
  * 留一条 1px 的缝，滚动的行会从这条缝里露出来。 */
-.dsm-trae-panels{position:sticky;top:-1px;z-index:2;display:flex;align-items:stretch;gap:2px;margin:4px 0 0;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(127,127,127,.24));background:var(--dsw-alias-bg-layer-2,#24262c)}
+.dsm-trae-panels{display:flex;align-items:stretch;gap:2px;margin:4px 0 0;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(127,127,127,.24))}
+/* 分栏条只在设置面板里钉住（见上方 .dsm-trae-tab-hint 的长注释：这两条原本无
+ * 作用域，在卡片上留下两个回归）。卡片与整页没有"外壳的滚动列"，那里的分栏条
+ * 跟着内容正常滚走即可；sticky 在没有滚动祖先时不会生效，却会把底色带进来——
+ * 而底色取 layer-2，卡片本身是 layer-3，色差在卡片上就成了一条浅色带。 */
+.dsm-trae-section .dsm-trae-panels{position:sticky;top:-1px;z-index:2;background:var(--dsw-alias-bg-layer-2,#24262c)}
 .dsm-trae-panel-tab{appearance:none;font:inherit;cursor:pointer;border:0;background:transparent;padding:7px 11px;margin-bottom:-1px;border-bottom:2px solid transparent;color:var(--dsw-alias-label-tertiary,#999);font-size:13px;font-weight:600;line-height:20px;white-space:nowrap;transition:color .15s,border-color .15s}
 .dsm-trae-panel-tab:hover:not(.dsm-trae-panel-tab-active){color:var(--dsw-alias-label-primary,#e6e6e6)}
 .dsm-trae-panel-tab:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#5686fe);outline-offset:1px}
