@@ -228,11 +228,23 @@ describe('privacy: shot fixtures are publication material', () => {
       // LICENSE / package.json / README* carry the copyright holder's name by
       // design; they are checked for that attribution in another test.
       if (ATTRIBUTION_EXEMPT.includes(file)) continue
-      // This file necessarily discusses the patterns (and its own demo constants
-      // appear in the shape test); the hash set it carries is not a leak.
-      // Compare on the basename: `trackedTextFiles` yields platform separators.
-      if (file.replace(/\\/g, '/').endsWith('tests/privacy.spec.ts')) continue
-      const scrubbed = withoutCopyrightPhrases(withoutAllowedForms(text))
+      /**
+       * This file is scanned like any other — it is NOT skipped.
+       *
+       * It used to be, on the reasoning that "the hash set it carries is not a
+       * leak". That was half right and cost us: the hashes are safe, but the
+       * PROSE around them was not, and a real id sat in a comment explaining how
+       * the two-granularity split works. A guard that exempts itself is
+       * unguarded exactly where it is most likely to slip — right next to the
+       * list of values it must keep out. Now only the hash literals are removed
+       * before scanning, so a comment that quotes a real value is caught.
+       *
+       * Compare on the basename: `trackedTextFiles` yields platform separators.
+       */
+      const scanned = file.replace(/\\/g, '/').endsWith('tests/privacy.spec.ts')
+        ? text.replace(/'[a-f0-9]{64}'/g, "''")
+        : text
+      const scrubbed = withoutCopyrightPhrases(withoutAllowedForms(scanned))
       if (offendingSegments(scrubbed).length > 0) offenders.push(`${file}: leaked identifier`)
       for (const match of text.matchAll(PATH_LEAK)) {
         const segment = match[1] as string
