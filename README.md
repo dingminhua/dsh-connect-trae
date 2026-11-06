@@ -452,6 +452,10 @@ pnpm run check   # typecheck + test + build
 dsh plugin --profile desktop add /path/to/dsh-connect-trae
 ```
 
+**动手前先读 [AGENTS.md](AGENTS.md)**：它列了本仓库的两条硬约束——什么不能进入仓库
+与发布物（细节见 [SECURITY.md](SECURITY.md)）、以及改完怎么验证。新增或替换
+`docs/assets/` 下的截图前尤其要看，马赛克不算脱敏。
+
 ## 致谢
 
 - [Wang-JQ77/dsh-trae-api](https://github.com/Wang-JQ77/dsh-trae-api)（MIT）— Trae 认证、会话和模型协议研究的参照实现。

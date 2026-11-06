@@ -53,6 +53,14 @@ const FORBIDDEN_HASHES = new Set([
   '4ce713c505b2544b3114740501040247b426d77b16ddade1d00e79eb97e39e86', // the truncation seen in a bug screenshot
   '412dcd2c163c865448ef8b4b90f4ed3aa5c503c706c77b3d4f47d932c1e7af70', // personal mailbox, local part
   '6d132a06f944cbe2661ee36d45e756fdfd76496046f557e324dc0926bef64220', // the holder's real personal name
+  // The same name in ROMANIZED form. Independent review caught a Windows home
+  // path using it, which the CJK-only entry above could never match: transliteration
+  // is the one spelling of a real name that hashing the original cannot see.
+  // Only the capitalized form is listed — the all-lowercase spelling is the
+  // maintainer's PUBLIC GitHub user name and appears in every repository URL,
+  // so denylisting it would fail the whole repo (the same trap as the npm
+  // account name below).
+  'f65a845df6497afa319f6f3f0d0afe7acb1d895068b1d5eb63fd9668589b5c91', // the holder's real name, romanized
   // The npm account name is deliberately NOT here: `npm whoami` docs have to be
   // able to state what a correct answer looks like, and the name is public on
   // the registry. What must not appear is that name as a *local user path*,
@@ -62,16 +70,19 @@ const FORBIDDEN_HASHES = new Set([
 /**
  * Candidate strings to hash, at TWO granularities.
  *
- * Comparing whole tokens was not enough: OCR and prose glue neighbours on, so
- * `AP7520607992`, `用户7520607992的` and `(LaoDing)` all sailed past it even
- * though the identifier was right there. Splitting `<letters><digits>` apart
- * turns `AP7520607992` into `7520607992`, and splitting CJK from Latin turns
- * `LaoDing的` back into `LaoDing`.
+ * Comparing whole tokens was not enough: OCR and prose glue neighbours on, so a
+ * digit id with an ASCII prefix or a trailing CJK particle, and a name wrapped
+ * in parentheses or hyphenated, all sailed past it even though the identifier
+ * was right there. Splitting `<letters><digits>` apart recovers the digits from
+ * a prefixed id, and splitting CJK from Latin recovers a name from a following
+ * Chinese particle.
  *
  * But splitting *only* that way breaks identifiers that legitimately mix the two
- * (`shangxinyu2002` becomes `shangxinyu` + `2002` and stops matching), so every
- * maximal alphanumeric run is ALSO hashed whole. Values are compared only as
- * hashes, so this file still carries no identifier in the clear.
+ * (an account name whose tail is four digits becomes `<word>` + `<4 digits>` and
+ * stops matching), so every maximal alphanumeric run is ALSO hashed whole.
+ * Values are compared only as hashes; none of the samples below is written out,
+ * because naming the exact string this file exists to keep out of the repo would
+ * defeat the point of hashing it.
  */
 function segments(text: string): string[] {
   const runs = text.match(/[A-Za-z0-9\u4e00-\u9fa5]+/g) ?? []

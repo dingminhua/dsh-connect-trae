@@ -371,6 +371,11 @@ Local dev via a `link:` install to the desktop profile (restart DSH Desktop afte
 dsh plugin --profile desktop add /path/to/dsh-connect-trae
 ```
 
+**Read [AGENTS.md](AGENTS.md) before you start.** It states the two hard rules for this
+repository: what must never enter the repo or the published package (details in
+[SECURITY.md](SECURITY.md)), and how to prove a change is correct. Read it in particular
+before adding or replacing any screenshot under `docs/assets/` — mosaic is not redaction.
+
 ## Acknowledgements
 
 - [Wang-JQ77/dsh-trae-api](https://github.com/Wang-JQ77/dsh-trae-api) (MIT) — Reference implementation for research into Trae authentication, sessions, and model protocols.

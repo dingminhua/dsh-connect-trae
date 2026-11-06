@@ -7,3 +7,11 @@ coverage/
 .npmrc
 .DS_Store
 .pnpm-store/
+# OCR 训练数据（tesseract.js）。68 MB 的二进制，本机缓存用，绝不入库。
+# 正确位置是 $TEMP/tessdata，用 DSH_TESSDATA 指过去；放在仓库根只是没配好。
+*.traineddata
+# 跨平台 TMPDIR：Windows 上 pnpm 有时把它物化成仓库内的空目录
+tmp/
+# Windows 保留设备名。某些工具（或 `> CON` 之类的重定向）会在仓库根留下
+# 一个同名的伪文件，git 无法把它纳入版本控制，也没有任何价值。
+CON

@@ -26,8 +26,11 @@ import { describeIdShape, describeNameShape, maskUserPath } from '../src/redact.
 
 describe('maskUserPath', () => {
   it('removes the Windows account name but keeps the Trae directory spelling', () => {
-    const masked = maskUserPath('C:\\Users\\DingMinHua\\AppData\\Roaming\\Trae CN\\User\\globalStorage\\storage.json')
-    expect(masked).not.toContain('DingMinHua')
+    // A mixed-case placeholder on purpose: a masked path must not depend on the
+    // home segment's casing, and a synthetic `RealName` proves the mask works on
+    // something that looks like a person rather than a literal `<user>`.
+    const masked = maskUserPath('C:\\Users\\RealName\\AppData\\Roaming\\Trae CN\\User\\globalStorage\\storage.json')
+    expect(masked).not.toContain('RealName')
     expect(masked).toBe('C:\\Users\\<user>\\AppData\\Roaming\\Trae CN\\User\\globalStorage\\storage.json')
   })
 
