@@ -21,7 +21,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { TraeUsageCard } from '../src/client/TraeUsageCard.tsx'
 import type { TraeSettingsKey } from '../src/client/locales.ts'
-import { TRAE_CONTEXT_BUDGET_MID } from '../src/context-budget.ts'
+import { contextBudgetOptions, TRAE_CONTEXT_BUDGET_MID } from '../src/context-budget.ts'
 import { TRAE_USAGE_PATH, withTraeRegion } from '../src/status-paths.ts'
 import type { TraeWebModel } from '../src/status-paths.ts'
 
@@ -84,14 +84,25 @@ async function renderModelsTab(scope: unknown): Promise<void> {
 }
 
 /**
- * The radios of one row, as `formatCapacity`-independent as possible: the card
- * labels them with the token count, so the count itself is the stable handle.
+ * The context-budget select of one row.
+ *
+ * This used to be a radio group; it is a select now (one control per row
+ * instead of 1-3 circles competing with the model name for the same line). The
+ * handle is the element, not its labels: option text goes through
+ * `formatCapacity`, and asserting on it would test the formatter twice.
  */
-function budgetRadiosOf(rowName: string): HTMLInputElement[] {
+function budgetSelectOf(rowName: string): HTMLSelectElement {
   const heading = screen.getByText(rowName)
   const row = heading.closest('.dsm-trae-model')
   if (row === null) throw new Error(`row not found: ${rowName}`)
-  return Array.from(row.querySelectorAll('.dsm-trae-context-budget input[type="radio"]'))
+  const select = row.querySelector('.dsm-trae-context-budget select.dsm-trae-context-select')
+  if (select === null) throw new Error(`select not found: ${rowName}`)
+  return select as HTMLSelectElement
+}
+
+/** The option VALUES of one row's select, as numbers. */
+function budgetOptionsOf(rowName: string): number[] {
+  return Array.from(budgetSelectOf(rowName).options).map(option => Number(option.value))
 }
 
 const ROWS = [
@@ -104,19 +115,21 @@ const ROWS = [
 ]
 
 describe('TraeUsageCard 500K middle step', () => {
-  it('renders a third radio only where 500K is a real middle step', async () => {
+  it('offers a 500K option only where it is a real middle step', async () => {
     stubFetch(usageDocument(ROWS, ['glm-5.2', 'small-max', 'no-max']))
     const { scope } = makeScope()
     await renderModelsTab(scope)
 
     // 200K → 500K → 1M.
-    expect(budgetRadiosOf('glm-5.2')).toHaveLength(3)
+    expect(budgetOptionsOf('glm-5.2')).toEqual([200_000, TRAE_CONTEXT_BUDGET_MID, 1_000_000])
     // 400K Max cannot host a 500K window, so the row keeps its two options.
-    expect(budgetRadiosOf('small-max')).toHaveLength(2)
-    // No Max window: a single, already-checked, disabled option.
-    const single = budgetRadiosOf('no-max')
-    expect(single).toHaveLength(1)
-    expect(single[0]!.disabled).toBe(true)
+    expect(budgetOptionsOf('small-max')).toEqual([200_000, 400_000])
+    // No Max window: a single, already-selected, DISABLED option. The control
+    // still shows the window rather than vanishing — the shape the radios had.
+    const single = budgetSelectOf('no-max')
+    expect(Array.from(single.options)).toHaveLength(1)
+    expect(single.disabled).toBe(true)
+    expect(Number(single.value)).toBe(200_000)
   })
 
   it('「switch all to 500K」 writes the middle step for exactly the eligible rows', async () => {
@@ -138,19 +151,57 @@ describe('TraeUsageCard 500K middle step', () => {
     })
   })
 
-  it('a per-row 500K radio writes the same value the bulk button does', async () => {
+  it('a per-row 500K choice writes the same value the bulk button does', async () => {
     stubFetch(usageDocument(ROWS, ['glm-5.2', 'small-max', 'no-max']))
     const { scope, current } = makeScope()
     await renderModelsTab(scope)
 
-    // Middle radio of the eligible row (0 = dev, 1 = 500K, 2 = Max).
-    const radios = budgetRadiosOf('glm-5.2')
-    fireEvent.click(radios[1]!)
+    // Selecting 500K on the eligible row.
+    fireEvent.change(budgetSelectOf('glm-5.2'), { target: { value: String(TRAE_CONTEXT_BUDGET_MID) } })
     fireEvent.click(screen.getByRole('button', { name: 'row.save' }) as HTMLButtonElement)
 
     await waitFor(() => {
       const slot = current().regions as { cn?: { contextBudgets?: Record<string, number> } }
       expect(slot.cn?.contextBudgets).toEqual({ 'glm-5.2': TRAE_CONTEXT_BUDGET_MID })
+    })
+  })
+
+  it('is a SELECT, not a radio group, so the row height stops depending on the option count', () => {
+    // WHY THIS IS PINNED. The models list is 18 rows tall, and every row
+    // carries one of these. As radios, a 3-option model put three circles plus
+    // three labels on the row's right edge and — in the Settings column
+    // (564px) — they wrapped under the model name, growing the row. A select
+    // fixes the control's width, so a 1-option row and a 3-option row are the
+    // same height and the list stops looking ragged.
+    //
+    // Asserted structurally rather than by pixel: jsdom does not lay out, so
+    // "the row is shorter" cannot be measured here. What CAN be asserted is
+    // that exactly one control exists per row and that no radio survived.
+    stubFetch(usageDocument(ROWS, ['glm-5.2', 'small-max', 'no-max']))
+    const { scope } = makeScope()
+    return renderModelsTab(scope).then(() => {
+      const row = screen.getByText('glm-5.2').closest('.dsm-trae-model')
+      expect(row).not.toBeNull()
+      expect(row!.querySelectorAll('select.dsm-trae-context-select')).toHaveLength(1)
+      expect(row!.querySelectorAll('input[type="radio"]')).toHaveLength(0)
+      // The select states the window as a VALUE, which is what the neighbouring
+      // 「最大上下文」 meta line reports — a ticked circle among circles did not.
+      expect(Number(budgetSelectOf('glm-5.2').value)).toBe(200_000)
+    })
+  })
+
+  it('keeps one option per row select, matching what the host will accept', () => {
+    // A card that offers a window the host then refuses is a control that
+    // silently does nothing; `contextBudgetOptions` is the shared arbiter and
+    // the select must render exactly its output, in order.
+    stubFetch(usageDocument(ROWS, ['glm-5.2', 'small-max', 'no-max']))
+    const { scope } = makeScope()
+    return renderModelsTab(scope).then(() => {
+      for (const name of ['glm-5.2', 'small-max', 'no-max']) {
+        expect(budgetOptionsOf(name), name).toEqual(contextBudgetOptions(
+          ROWS.find(model => model.id === name)!,
+        ))
+      }
     })
   })
 })

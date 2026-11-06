@@ -485,9 +485,21 @@ export const TRAE_CARD_CSS = `
 .dsm-trae-model-effort-select:disabled{opacity:.6;cursor:not-allowed}
 .dsm-trae-model-image{display:inline-flex;align-items:center;gap:4px;color:var(--dsw-alias-label-secondary,#c6c9d0);font-size:11px;line-height:16px;cursor:pointer}
 .dsm-trae-model-image input{margin:0;accent-color:var(--dsw-alias-brand-primary,#5686fe)}
+/* The context-budget control: one select per row, not a row of radios.
+ *
+ * The fieldset stays as the grouping element — it carries the accessible name
+ * and the hint title, and a select has no group of its own. flex:none keeps
+ * it from stealing width from the model name, which is the thing that has to
+ * stay readable on a 564px column.
+ *
+ * The select width is FIXED rather than content-sized: with 2-3 options the
+ * widest label dictates the width, and a per-row width made the list ragged
+ * (a 3-option row's control was visibly wider than its neighbours). */
 .dsm-trae-context-budget{display:flex;align-items:center;justify-content:flex-end;gap:12px;flex:none;margin:0;padding:0;border:0;color:var(--dsw-alias-label-secondary,#c6c9d0);font-size:11px;line-height:16px}
 .dsm-trae-context-budget label{display:inline-flex;align-items:center;gap:4px;cursor:pointer}
 .dsm-trae-context-budget input{margin:0;accent-color:var(--dsw-alias-brand-primary,#5686fe)}
+.dsm-trae-context-select{flex:none;width:96px;max-width:none;padding:2px 6px;font:inherit;font-size:11px;line-height:16px;color:var(--dsw-alias-label-primary,#e6e6e6);background:var(--dsw-alias-bg-layer-3,#2a2c33);border:1px solid var(--dsw-alias-border-l2,#3a3d45);border-radius:7px;cursor:pointer}
+.dsm-trae-context-select:disabled{cursor:default;opacity:.6}
 .dsm-trae-model-capability-note{margin:0;color:var(--dsw-alias-label-tertiary,#999);font-size:12px;line-height:18px}
 .dsm-trae-model-actions{display:flex;align-items:center;justify-content:space-between;gap:12px;border-top:1px solid var(--dsw-alias-border-l2,#36373b);padding-top:12px}
 .dsm-trae-model-actions-buttons{display:flex;align-items:center;justify-content:flex-end;gap:8px}

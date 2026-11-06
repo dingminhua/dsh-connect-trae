@@ -2282,26 +2282,50 @@ export function TraeUsageCard({ t, settingsScope, view, surface, backToConversat
                                   or Max-mode field, so raising it does not make the
                                   upstream serve the wider window. The hint says so
                                   rather than letting the label imply otherwise. */}
-                              {contextBudgetOptions(model).map(option => {
-                                // Each radio is one selectable window. A model with no
-                                // Max window has a single option (its dev window), which
-                                // stays checked and disabled — the same read-only shape
-                                // the old two-radio markup produced.
+                              {/*
+                                A SELECT, not a row of radios. Every row carries one
+                                of these, and the models list is 18 rows tall — the
+                                radio group put 2-3 controls per row on the row's
+                                right edge, and in the Settings column (564px) the
+                                model name, the image checkbox and the group all
+                                competed for one line: the radios wrapped onto a
+                                second line under the name and the row grew.
+
+                                A select collapses the same 1-3 choices into ONE
+                                control of a fixed width, so the row's height no
+                                longer depends on how many windows a model offers
+                                (a 3-option model used to be wider than a 1-option
+                                one, which made the list look ragged). It also
+                                states the current window as a value rather than
+                                as a ticked circle among circles, which is what the
+                                neighbouring 「最大上下文」 meta line reports.
+
+                                A model with no Max window keeps the read-only
+                                shape the radios produced: one option, selected and
+                                disabled, so the control still SHOWS the window
+                                instead of vanishing.
+                              */}
+                              {(() => {
+                                const options = contextBudgetOptions(model)
                                 const selectable = model.maxContextWindow !== undefined
-                                const checked = (activeContextBudgets[model.id] ?? model.contextWindow) === option
+                                const current = activeContextBudgets[model.id] ?? model.contextWindow
                                 return (
-                                  <label key={option}>
-                                    <input
-                                      type="radio"
-                                      name={`context-${model.id}`}
-                                      checked={checked}
-                                      disabled={!selectable || settingsScope?.getSnapshot().writable !== true || saving}
-                                      onChange={() => { setContextBudget(model.id, option) }}
-                                    />
-                                    <span>{formatCapacity(option, t('row.modelUnknown'))}</span>
-                                  </label>
+                                  <select
+                                    className="dsm-trae-context-select"
+                                    aria-label={t('row.contextBudget')}
+                                    title={t('row.contextBudgetHint')}
+                                    value={current === undefined ? '' : String(current)}
+                                    disabled={!selectable || settingsScope?.getSnapshot().writable !== true || saving}
+                                    onChange={event => { setContextBudget(model.id, Number(event.currentTarget.value)) }}
+                                  >
+                                    {options.map(option => (
+                                      <option key={option} value={String(option)}>
+                                        {formatCapacity(option, t('row.modelUnknown'))}
+                                      </option>
+                                    ))}
+                                  </select>
                                 )
-                              })}
+                              })()}
                             </fieldset>
                             </div>
                           </div>

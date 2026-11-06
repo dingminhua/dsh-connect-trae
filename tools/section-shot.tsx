@@ -32,10 +32,17 @@ import { writeFileSync } from 'node:fs'
 
 function catalog(): Record<string, unknown>[] {
   const names = ['DeepSeek-V4.1-Flash', 'GLM-5.2', 'Kimi-K3', 'Qwen3-Max-Thinking-Preview-2026', 'Doubao-Seed-1.6']
+  // THREE WINDOW SHAPES on purpose. The context-budget control is a select whose
+  // option COUNT varies per model, and a fixture where every model offers one
+  // window cannot show whether the control is stable across rows — which is the
+  // thing the select was meant to fix.
   return Array.from({ length: 12 }, (_, index) => ({
     id: `model-${index}`,
     name: `${names[index % names.length] as string}${index >= names.length ? ` (${index})` : ''}`,
     contextWindow: 200_000,
+    // index 0, 3, 6, 9 → dev + 500K + Max; index 1, 4, 7, 10 → dev + Max
+    // (400K, so no 500K middle step); the rest keep a single read-only window.
+    ...(index % 3 === 0 ? { maxContextWindow: 1_000_000 } : index % 3 === 1 ? { maxContextWindow: 400_000 } : {}),
     maxTokens: 32_000,
   }))
 }
