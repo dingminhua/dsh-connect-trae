@@ -29,6 +29,7 @@
  */
 import { describe, it } from 'vitest'
 import { writeFileSync } from 'node:fs'
+import { DEMO_NICKNAME, DEMO_NUMERIC_ID } from './demo-accounts.ts'
 
 function catalog(): Record<string, unknown>[] {
   const names = ['DeepSeek-V4.1-Flash', 'GLM-5.2', 'Kimi-K3', 'Qwen3-Max-Thinking-Preview-2026', 'Doubao-Seed-1.6']
@@ -52,20 +53,20 @@ function usageDocument(): Record<string, unknown> {
   return {
     status: 'signed-in',
     accountId: 'account-1',
-    accountName: '用户7520607992',
+    accountName: DEMO_NUMERIC_ID,
     tokenExpiresAtMs: Date.now() + 3_600_000,
     refreshExpiresAtMs: Date.now() + 10 * 86_400_000,
     region: 'cn',
     enabled: true,
     sidebarPanelEnabled: true,
     accounts: [
-      { id: 'account-1', accountName: '用户7520607992', edition: 'cn', region: 'cn', source: 'desktop', tokenExpiresAtMs: Date.now() + 3_600_000, selected: true },
-      { id: 'account-2', accountName: 'LaoDing', edition: 'solo', region: 'cn', source: 'cli', tokenExpiresAtMs: Date.now() + 7_200_000, selected: false },
+      { id: 'account-1', accountName: DEMO_NUMERIC_ID, edition: 'cn', region: 'cn', source: 'desktop', tokenExpiresAtMs: Date.now() + 3_600_000, selected: true },
+      { id: 'account-2', accountName: DEMO_NICKNAME, edition: 'solo', region: 'cn', source: 'cli', tokenExpiresAtMs: Date.now() + 7_200_000, selected: false },
     ],
     models,
     enabledModelIds: models.filter((_, index) => index % 2 === 0).map(model => model.id),
     imageModelIds: [],
-    credits: { total: 7500, consumed: 5_879.63, available: 1_620.37, workAvailable: 0, generalAvailable: 20.37, accounts: [] },
+    credits: { total: 9_600, consumed: 3_141.28, available: 6_458.72, workAvailable: 0, generalAvailable: 96.42, accounts: [] },
     checkin: { checkedIn: false, didCheckedIn: false, credits: 150, enabled: true, extraCredits: 50 },
     // THE POOL IS PART OF THE SHIPPING LAYOUT. The live desktop profile
     // (cordis.patch.yml) runs with `regions.cn.pool.enabled: true` and three
@@ -84,26 +85,26 @@ function usageDocument(): Record<string, unknown> {
       probeInputTokens: 0,
       memberAccountIds: ['account-1', 'account-2', 'account-3'],
       effectiveMemberAccountIds: ['account-1', 'account-2', 'account-3'],
-      memberNames: { 'account-1': '用户7520607992', 'account-2': 'LaoDing', 'account-3': 'trae-ai-03' },
+      memberNames: { 'account-1': DEMO_NUMERIC_ID, 'account-2': DEMO_NICKNAME, 'account-3': 'demo-third' },
       accounts: [
         // Each account carries a REAL probe record: the measured screenshot that
         // prompted this work showed four stacked lines in the status cell
         // ("正常 / 测得 3 天前 / 来自测速 / upstream answered") squeezing the
-        // account name to "LaoDin". A fixture whose rows are all "never tested"
+        // account name to a bare prefix. A fixture whose rows are all "never tested"
         // renders ONE line there and hides the whole problem.
         {
-          accountId: 'account-1', accountName: '用户7520607992', current: true, member: true, reachable: true,
-          credits: 834, generalAvailable: 20.37, workAvailable: 0, checkedInToday: false,
+          accountId: 'account-1', accountName: DEMO_NUMERIC_ID, current: true, member: true, reachable: true,
+          credits: 517, generalAvailable: 96.42, workAvailable: 0, checkedInToday: false,
           probe: { outcome: 'ok', atMs: Date.now() - 3 * 24 * 3600_000, source: 'test-batch', modelId: 'deepseek-v4.1-flash' },
         },
         {
-          accountId: 'account-2', accountName: 'LaoDing', current: false, member: true, reachable: true,
-          credits: 834, generalAvailable: 310.5, workAvailable: 500, checkedInToday: true,
+          accountId: 'account-2', accountName: DEMO_NICKNAME, current: false, member: true, reachable: true,
+          credits: 517, generalAvailable: 145.6, workAvailable: 500, checkedInToday: true,
           probe: { outcome: 'ok', atMs: Date.now() - 3 * 24 * 3600_000, source: 'test-batch', modelId: 'deepseek-v4.1-flash' },
         },
         {
-          accountId: 'account-3', accountName: 'trae-ai-03', current: false, member: true, reachable: true,
-          credits: 787, generalAvailable: 88.2, workAvailable: 40, checkedInToday: false,
+          accountId: 'account-3', accountName: 'demo-third', current: false, member: true, reachable: true,
+          credits: 268, generalAvailable: 73.9, workAvailable: 40, checkedInToday: false,
           probe: { outcome: 'ok', atMs: Date.now() - 3 * 24 * 3600_000, source: 'test-batch', modelId: 'deepseek-v4.1-flash' },
         },
       ],

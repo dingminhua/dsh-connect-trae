@@ -58,12 +58,12 @@ function usageOf(overrides: Record<string, unknown> = {}): Record<string, unknow
   return {
     status: 'signed-in',
     accountId: 'account-1',
-    accountName: 'LaoDing',
+    accountName: 'demo-user',
     tokenExpiresAtMs: Date.now() + 3_600_000,
     region: 'cn',
     enabled: true,
     accounts: [
-      { id: 'account-1', accountName: 'LaoDing', edition: 'cn', region: 'cn', source: 'desktop', tokenExpiresAtMs: Date.now() + 3_600_000, selected: true },
+      { id: 'account-1', accountName: 'demo-user', edition: 'cn', region: 'cn', source: 'desktop', tokenExpiresAtMs: Date.now() + 3_600_000, selected: true },
     ],
     models: [{ id: 'glm-5.2', name: 'GLM 5.2', contextWindow: 200_000 }],
     enabledModelIds: ['glm-5.2'],

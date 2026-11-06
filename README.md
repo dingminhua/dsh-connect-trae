@@ -2,6 +2,8 @@
   <img src="docs/assets/dsh-connect-trae-usage-card.png" width="860" alt="dsh-connect-trae settings panel" />
 </p>
 
+> 本文与配图中的账号名、额度与时间**均为演示数据**（`demo-*`），不含任何真实账号信息。
+
 <h1 align="center">dsh-connect-trae</h1>
 
 <p align="center"><b>把本机登录的 Trae 模型接入 DeepSeek Harness，并提供用量/积分概览与每日签到领取。</b></p>

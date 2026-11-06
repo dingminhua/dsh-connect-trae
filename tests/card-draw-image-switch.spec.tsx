@@ -58,7 +58,7 @@ function usageDocument(): Record<string, unknown> {
   return {
     status: 'signed-in',
     accountId: 'account-1',
-    accountName: 'LaoDing',
+    accountName: 'demo-user',
     tokenExpiresAtMs: Date.now() + 3_600_000,
     region: 'cn',
     enabled: true,

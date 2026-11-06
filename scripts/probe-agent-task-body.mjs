@@ -6,7 +6,7 @@ const SALT_C = Uint8Array.from([191,192,216,250,122,246,220,97,31,254,98,27,8,72
 const SALT_D = Uint8Array.from([246,204,26,232,232,70,129,109,223,146,169,242,23,241,105,145,50,196,165,42,254,120,3,54,244,207,209,85,53,6,138,106,175,148,31,204,186,186,165,182,87,142,49,10,39,110,26,154,86,56,173,125,18,64,198,225,99,99,83,82,191,134,76,170])
 const xor=(a,b)=>Buffer.from(a.map((v,i)=>v^(b[i]??0)))
 function decrypt(encoded){const b=Buffer.from(encoded,'base64');const h=b.subarray(0,6);const type=h.equals(Buffer.from([0x74,0x63,0x05,0x10,0x00,0x00]))?'aes':'aes-private';const salt=type==='aes-private'?xor(SALT_C,SALT_D):xor(SALT_A,SALT_B);const first=createHash('sha512').update(b.subarray(6,38)).digest();const derived=createHash('sha512').update(Buffer.concat([first,salt])).digest();const d=createDecipheriv('aes-128-cbc',derived.subarray(0,16),derived.subarray(16,32));return Buffer.concat([d.update(b.subarray(38)),d.final()]).subarray(64).toString('utf8')}
-const storage=JSON.parse(await readFile('/Users/dmh2002/Library/Application Support/Trae CN/User/globalStorage/storage.json','utf8'))
+const storage=JSON.parse(await readFile('/Users/<user>/Library/Application Support/Trae CN/User/globalStorage/storage.json','utf8'))
 const cred=JSON.parse(decrypt(storage['iCubeAuthInfo://icube.cloudide']))
 const product=JSON.parse(await readFile('/Applications/Trae CN.app/Contents/Resources/app/product.json','utf8'))
 const deviceId=Object.keys(storage).find(k=>k.startsWith('iCubeAuthInfo://icube-dc:')).slice('iCubeAuthInfo://icube-dc:'.length)

@@ -2,7 +2,7 @@
 /**
  * The card's 「刷新账号与 Token」 press — what it WRITES, not just what it shows.
  *
- * WHY THIS FILE EXISTS: a refresh reported "找到 1 个账号 · 仍绑定 丁敏华" while
+ * WHY THIS FILE EXISTS: a refresh reported "找到 1 个账号 · 仍绑定 demo-user" while
  * the settings document kept `accounts.cn` EMPTY. The route's `selected` flag
  * answers "which account is in use", and when no binding was ever saved the
  * store answers with its DETECTED default (whatever the Trae app is signed in
@@ -58,7 +58,7 @@ function makeScope(initial: Record<string, unknown> = {}, writable = true) {
 }
 
 const ACCOUNTS = [
-  { id: 'account-1', accountName: '丁敏华', edition: 'sg', region: 'ai', source: 'desktop', tokenExpiresAtMs: Date.now() + 3_600_000, selected: true },
+  { id: 'account-1', accountName: 'demo-user', edition: 'sg', region: 'ai', source: 'desktop', tokenExpiresAtMs: Date.now() + 3_600_000, selected: true },
 ]
 
 /** A signed-in document for the international region. */
@@ -66,7 +66,7 @@ function aiDocument(overrides: Record<string, unknown> = {}) {
   return {
     status: 'signed-in',
     accountId: 'account-1',
-    accountName: '丁敏华',
+    accountName: 'demo-user',
     tokenExpiresAtMs: Date.now() + 3_600_000,
     region: 'ai',
     enabled: true,
@@ -106,7 +106,7 @@ async function renderAi(scope: unknown): Promise<void> {
   render(<TraeUsageCard t={t} settingsScope={scope as never} />)
   fireEvent.click(screen.getByRole('button', { name: /row\.title/ }))
   fireEvent.click(screen.getByRole('tab', { name: /row\.tabAi/ }))
-  await waitFor(() => { expect(screen.getByText('丁敏华')).toBeTruthy() })
+  await waitFor(() => { expect(screen.getByText('demo-user')).toBeTruthy() })
 }
 
 /** The refresh button, inside the account block. */
@@ -121,7 +121,7 @@ describe('the refresh-accounts press persists what it displays', () => {
     // `selected` account (its detected default), and the old code treated that
     // as "already bound" and wrote nothing.
     const holder = makeScope({})
-    stubFetch([{ id: 'account-1', accountName: '丁敏华', selected: true }])
+    stubFetch([{ id: 'account-1', accountName: 'demo-user', selected: true }])
     await renderAi(holder.scope)
 
     expect(holder.writes).toEqual([])
@@ -138,7 +138,7 @@ describe('the refresh-accounts press persists what it displays', () => {
     // must never drop the CN pick, or refreshing one side silently unbinds the
     // other. This is the same merge rule every other card write follows.
     const holder = makeScope({ accounts: { cn: 'cn-account-9' } })
-    stubFetch([{ id: 'account-1', accountName: '丁敏华', selected: true }])
+    stubFetch([{ id: 'account-1', accountName: 'demo-user', selected: true }])
     await renderAi(holder.scope)
 
     fireEvent.click(refreshButton())
@@ -152,7 +152,7 @@ describe('the refresh-accounts press persists what it displays', () => {
     // `applySelection`, and rebuild both stores on every click of a button that
     // changed nothing.
     const holder = makeScope({ accounts: { ai: 'account-1' } })
-    stubFetch([{ id: 'account-1', accountName: '丁敏华', selected: true }])
+    stubFetch([{ id: 'account-1', accountName: 'demo-user', selected: true }])
     await renderAi(holder.scope)
 
     fireEvent.click(refreshButton())
@@ -165,7 +165,7 @@ describe('the refresh-accounts press persists what it displays', () => {
     // press still binds what it found — an account it can see is closer to the
     // truth than an id it cannot — but it must MERGE, never replace the map.
     const holder = makeScope({ accounts: { ai: 'account-7' } })
-    stubFetch([{ id: 'account-1', accountName: '丁敏华', selected: false }])
+    stubFetch([{ id: 'account-1', accountName: 'demo-user', selected: false }])
     await renderAi(holder.scope)
 
     fireEvent.click(refreshButton())
@@ -177,7 +177,7 @@ describe('the refresh-accounts press persists what it displays', () => {
     // A settings scope that refuses writes must not leave the card claiming a
     // save it could not perform.
     const holder = makeScope({}, false)
-    stubFetch([{ id: 'account-1', accountName: '丁敏华', selected: true }])
+    stubFetch([{ id: 'account-1', accountName: 'demo-user', selected: true }])
     await renderAi(holder.scope)
 
     fireEvent.click(refreshButton())
@@ -192,7 +192,7 @@ describe('the refresh-accounts press persists what it displays', () => {
     // "I saved this" from "this was already saved", which is the difference the
     // old wording collapsed into the same sentence.
     const holder = makeScope({})
-    stubFetch([{ id: 'account-1', accountName: '丁敏华', selected: true }])
+    stubFetch([{ id: 'account-1', accountName: 'demo-user', selected: true }])
     await renderAi(holder.scope)
 
     fireEvent.click(refreshButton())

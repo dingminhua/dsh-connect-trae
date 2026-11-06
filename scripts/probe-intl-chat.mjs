@@ -15,7 +15,7 @@
 import { readFile } from 'node:fs/promises'
 import { createDecipheriv, createHash } from 'node:crypto'
 
-const INTL_SOLO_STORAGE = '/Users/dmh2002/Library/Application Support/TRAE SOLO/User/globalStorage/storage.json'
+const INTL_SOLO_STORAGE = '/Users/<user>/Library/Application Support/TRAE SOLO/User/globalStorage/storage.json'
 const INTL_SOLO_PRODUCT = '/Applications/TRAE SOLO.app/Contents/Resources/app/product.json'
 const PROBE_MODEL = 'gpt-5.4'
 

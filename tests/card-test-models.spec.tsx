@@ -55,7 +55,7 @@ function usageDocument(catalog: TraeWebModel[], enabledIds: string[]): Record<st
   return {
     status: 'signed-in',
     accountId: 'account-1',
-    accountName: 'LaoDing',
+    accountName: 'demo-user',
     tokenExpiresAtMs: Date.now() + 3_600_000,
     region: 'cn',
     enabled: true,

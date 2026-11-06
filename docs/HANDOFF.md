@@ -170,7 +170,7 @@ f389acc feat: 完善 Trae Raw Chat 探测与能力模型
 - 已确认本项目根级`package.json`布局（`lib/`+`cordis.patch.yml`）与已安装的
   `dsh-workbuddy-connect`（npm 0.2.3）一致，可被DSH安装加载。
 - 当前插件已加入desktop profile（`dsh plugin --profile desktop add <repo>`，2026-08-28）。
-  - `~/.dsh/profiles/desktop/package.json`：`dependencies["dsh-connect-trae"] = "link:/Users/dmh2002/DshProject/dsh-connect-trae"`。
+  - `~/.dsh/profiles/desktop/package.json`：`dependencies["dsh-connect-trae"] = "link:/Users/<user>/DshProject/dsh-connect-trae"`。
   - `dsh.profile.bundles` 已自动包含 `dsh-connect-trae`（bundle reconcile 已纳入 `cordis.patch.yml` 的 `dsh-connect-trae` 行）。
   - `node_modules/dsh-connect-trae` 为软链接指向项目根。
   - 安装采用正式 CLI，未直接手改 package.json。
@@ -179,7 +179,7 @@ f389acc feat: 完善 Trae Raw Chat 探测与能力模型
 不要直接手改`~/.dsh/profiles/desktop/package.json`，应先定位DSH Desktop实际CLI入口，使用正式：
 
 ```text
-dsh plugin --profile desktop add /Users/dmh2002/DshProject/dsh-connect-trae
+dsh plugin --profile desktop add /Users/<user>/DshProject/dsh-connect-trae
 ```
 
 或等价受控命令，让DSH自动完成bundle reconcile。安装后需要重启DSH Desktop，再验证Provider模型目录和真实对话。

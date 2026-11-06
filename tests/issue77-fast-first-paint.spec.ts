@@ -41,7 +41,7 @@ const expiresAtMs = Date.now() + 60_000
 const credential: TraeCredential = {
   accessToken: 'eyJhbGciOiJSUzI1NiJ9.signature',
   userId: 'uid-1',
-  accountName: 'LaoDing',
+  accountName: 'demo-user',
   host: 'https://api.trae.cn',
   expiresAtMs,
   edition: 'solo',
@@ -54,7 +54,7 @@ function storeSpies(options: { resolveThrows?: boolean } = {}) {
   let resolveCalls = 0
   const store = {
     async accounts() {
-      return [{ id: 'account-1', accountName: 'LaoDing', edition: 'solo' as const, enterprise: false, region: 'cn' as const, source: 'desktop' as const, tokenExpiresAtMs: expiresAtMs, selected: true }]
+      return [{ id: 'account-1', accountName: 'demo-user', edition: 'solo' as const, enterprise: false, region: 'cn' as const, source: 'desktop' as const, tokenExpiresAtMs: expiresAtMs, selected: true }]
     },
     async status() { return { state: 'signed-in' as const, edition: 'solo' as const, expiresAtMs: Date.now() + 1000, source: 'desktop' as const } },
     async current() { currentCalls += 1; return credential },
@@ -93,14 +93,14 @@ function clientSpies() {
  */
 function poolSpies(overrides: Partial<Record<keyof TraePoolDeps, unknown>> = {}) {
   const members = vi.fn(async () => [
-    { account: { id: 'account-1', accountName: 'LaoDing' }, credits: { total: 20, expiringSoon: 0, generalAvailable: 20, workAvailable: 0 } },
+    { account: { id: 'account-1', accountName: 'demo-user' }, credits: { total: 20, expiringSoon: 0, generalAvailable: 20, workAvailable: 0 } },
   ])
   const localMembers = vi.fn(async () => [
-    { account: { id: 'account-1', accountName: 'LaoDing' } },
+    { account: { id: 'account-1', accountName: 'demo-user' } },
   ])
-  const memberNames = vi.fn(async () => ({ 'account-1': 'LaoDing' }))
-  const localMemberNames = vi.fn(async () => ({ 'account-1': 'LaoDing' }))
-  const otherAccounts = vi.fn(async () => [{ id: 'account-1', accountName: 'LaoDing' }])
+  const memberNames = vi.fn(async () => ({ 'account-1': 'demo-user' }))
+  const localMemberNames = vi.fn(async () => ({ 'account-1': 'demo-user' }))
+  const otherAccounts = vi.fn(async () => [{ id: 'account-1', accountName: 'demo-user' }])
   const checkinState = vi.fn(async () => ({ 'account-1': { checkedIn: true } }))
   const cachedCheckinState = vi.fn(() => ({ 'account-1': { checkedIn: true } }))
   const bag = {
@@ -163,7 +163,7 @@ describe('the fast first-paint document (issue #77)', () => {
     // The rows are what the card paints, so they must be there.
     expect(doc.status).toBe('signed-in')
     if (doc.status !== 'signed-in') throw new Error('expected a signed-in document')
-    expect(doc.accountName).toBe('LaoDing')
+    expect(doc.accountName).toBe('demo-user')
     expect(doc.pool?.accounts.map(row => row.accountId)).toEqual(['account-1'])
     expect(doc.accounts).toHaveLength(1)
     // ...and nothing has touched the network.
@@ -194,7 +194,7 @@ describe('the fast first-paint document (issue #77)', () => {
     let currentCalls = 0
     let resolveCalls = 0
     const store = {
-      async accounts() { return [{ id: 'account-1', accountName: 'LaoDing', edition: 'solo' as const, enterprise: false, region: 'cn' as const, source: 'desktop' as const, tokenExpiresAtMs: expiresAtMs, selected: true }] },
+      async accounts() { return [{ id: 'account-1', accountName: 'demo-user', edition: 'solo' as const, enterprise: false, region: 'cn' as const, source: 'desktop' as const, tokenExpiresAtMs: expiresAtMs, selected: true }] },
       async status() { return { state: 'signed-in' as const, edition: 'solo' as const, expiresAtMs: Date.now() + 1000, source: 'desktop' as const } },
       async diagnose() { return { tried: [], failures: [] } },
       async current() { currentCalls += 1; return undefined },

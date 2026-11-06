@@ -13,7 +13,7 @@ const expiresAtMs = Date.now() + 60_000
 const credential: TraeCredential = {
   accessToken: 'eyJhbGciOiJSUzI1NiJ9.signature',
   userId: 'uid',
-  accountName: 'LaoDing',
+  accountName: 'demo-user',
   host: 'https://api.trae.cn',
   expiresAtMs,
   edition: 'solo',
@@ -45,7 +45,7 @@ async function mount(pool: TraePoolDeps | undefined): Promise<CapturedEntry[]> {
   const client = new TraeUsageClient({ credential: async () => credential, fetchImpl: async () => new Response('{}'), baseUrl: 'https://api.trae.cn' })
   const options: TraeUsageRouteOptions = {
     store: () => ({
-      async accounts() { return [{ id: A, accountName: 'LaoDing', edition: 'solo', enterprise: false, region: 'cn', source: 'desktop', tokenExpiresAtMs: expiresAtMs, selected: true }] },
+      async accounts() { return [{ id: A, accountName: 'demo-user', edition: 'solo', enterprise: false, region: 'cn', source: 'desktop', tokenExpiresAtMs: expiresAtMs, selected: true }] },
       async status() { return { state: 'signed-in', edition: 'solo', expiresAtMs, source: 'desktop' } },
       async resolve() { return credential },
     }) as unknown as ReturnType<TraeUsageRouteOptions['store']>,

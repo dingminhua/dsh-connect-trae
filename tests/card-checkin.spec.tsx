@@ -60,7 +60,7 @@ function makeScope(initial: Record<string, unknown> = {}, writable = true) {
   }
 }
 
-const ACCOUNT = { id: 'account-1', accountName: 'LaoDing', edition: 'cn', region: 'cn', source: 'desktop', tokenExpiresAtMs: Date.now() + 3_600_000, selected: true }
+const ACCOUNT = { id: 'account-1', accountName: 'demo-user', edition: 'cn', region: 'cn', source: 'desktop', tokenExpiresAtMs: Date.now() + 3_600_000, selected: true }
 
 /**
  * One signed-in CN document carrying the roster whose row holds the check-in
@@ -71,7 +71,7 @@ function usageDocument(overrides: Record<string, unknown> = {}) {
   return {
     status: 'signed-in',
     accountId: 'account-1',
-    accountName: 'LaoDing',
+    accountName: 'demo-user',
     tokenExpiresAtMs: Date.now() + 3_600_000,
     region: 'cn',
     enabled: true,
@@ -117,7 +117,7 @@ function stubFetch(
 async function renderOpen(scope: unknown): Promise<void> {
   render(<TraeUsageCard t={t} settingsScope={scope as never} />)
   fireEvent.click(screen.getByRole('button', { name: /row\.title/ }))
-  await waitFor(() => { expect(screen.getByText('LaoDing')).toBeTruthy() })
+  await waitFor(() => { expect(screen.getByText('demo-user')).toBeTruthy() })
 }
 
 /** The account block, so its buttons are never confused with the model block's. */
@@ -148,7 +148,7 @@ describe('TraeUsageCard daily check-in', () => {
     const { scope } = makeScope()
     await renderOpen(scope)
 
-    const button = rowCheckin('LaoDing')
+    const button = rowCheckin('demo-user')
     // The day's base reward rides ON the button: the row states the payout
     // without a second line of caption text beside it.
     expect(button.textContent).toBe('row.checkinClaimWith:{"reward":"150"}')
@@ -163,7 +163,7 @@ describe('TraeUsageCard daily check-in', () => {
     const { scope } = makeScope()
     await renderOpen(scope)
 
-    fireEvent.click(rowCheckin('LaoDing'))
+    fireEvent.click(rowCheckin('demo-user'))
 
     await waitFor(() => { expect(calls.some(call => call.url === withTraeRegion(TRAE_CHECKIN_PATH, 'cn'))).toBe(true) })
     const claim = calls.find(call => call.url.startsWith(TRAE_CHECKIN_PATH))
@@ -180,8 +180,8 @@ describe('TraeUsageCard daily check-in', () => {
     const { scope } = makeScope()
     await renderOpen(scope)
 
-    expect(within(accountRow('LaoDing')).queryByRole('button', { name: /row\.checkin/ })).toBeNull()
-    expect(within(accountRow('LaoDing')).getByText('row.poolCheckedIn')).toBeTruthy()
+    expect(within(accountRow('demo-user')).queryByRole('button', { name: /row\.checkin/ })).toBeNull()
+    expect(within(accountRow('demo-user')).getByText('row.poolCheckedIn')).toBeTruthy()
   })
 
   it('stops every row once THIS machine spent its check-in on another account', async () => {
@@ -216,7 +216,7 @@ describe('TraeUsageCard daily check-in', () => {
     const { scope } = makeScope()
     await renderOpen(scope)
 
-    const row = accountRow('LaoDing')
+    const row = accountRow('demo-user')
     expect(within(row).queryByRole('button', { name: /row\.checkin/ })).toBeNull()
     // Not "已签到": this account was never paid, only the machine was spent.
     expect(within(row).getByText('row.poolDeviceUsed')).toBeTruthy()
@@ -228,7 +228,7 @@ describe('TraeUsageCard daily check-in', () => {
     const { scope } = makeScope()
     await renderOpen(scope)
 
-    const row = accountRow('LaoDing')
+    const row = accountRow('demo-user')
     expect(within(row).getByText('row.poolCheckedIn')).toBeTruthy()
     // A paid account must never carry the device-spent wording.
     expect(within(row).queryByText('row.poolDeviceUsed')).toBeNull()
@@ -246,10 +246,10 @@ describe('TraeUsageCard daily check-in', () => {
     const { scope } = makeScope()
     await renderOpen(scope)
 
-    fireEvent.click(rowCheckin('LaoDing'))
+    fireEvent.click(rowCheckin('demo-user'))
 
-    await waitFor(() => { expect(within(accountRow('LaoDing')).getByText('row.poolDeviceUsed')).toBeTruthy() })
-    expect(within(accountRow('LaoDing')).queryByRole('button', { name: /row\.checkin/ })).toBeNull()
+    await waitFor(() => { expect(within(accountRow('demo-user')).getByText('row.poolDeviceUsed')).toBeTruthy() })
+    expect(within(accountRow('demo-user')).queryByRole('button', { name: /row\.checkin/ })).toBeNull()
     expect(within(accountBlock()).queryByText(/row\.checkinError/)).toBeNull()
   })
 
@@ -258,7 +258,7 @@ describe('TraeUsageCard daily check-in', () => {
     const { scope } = makeScope()
     await renderOpen(scope)
 
-    expect(rowCheckin('LaoDing').disabled).toBe(true)
+    expect(rowCheckin('demo-user').disabled).toBe(true)
   })
 
   it('shows no check-in button when the roster is empty', async () => {
@@ -285,7 +285,7 @@ describe('TraeUsageCard daily check-in', () => {
     const { scope } = makeScope()
     await renderOpen(scope)
 
-    fireEvent.click(rowCheckin('LaoDing'))
+    fireEvent.click(rowCheckin('demo-user'))
 
     await waitFor(() => { expect(within(accountBlock()).getByText(/row\.checkinError:.*9004/)).toBeTruthy() })
   })
@@ -311,7 +311,7 @@ describe('TraeUsageCard daily check-in', () => {
     const { scope } = makeScope()
     await renderOpen(scope)
 
-    fireEvent.click(rowCheckin('LaoDing'))
+    fireEvent.click(rowCheckin('demo-user'))
 
     await waitFor(() => { expect(calls.some(call => call.url.startsWith(TRAE_CHECKIN_PATH))).toBe(true) })
     const claims = calls.filter(call => call.url.startsWith(TRAE_CHECKIN_PATH))
@@ -329,7 +329,7 @@ describe('TraeUsageCard daily check-in', () => {
     const { scope } = makeScope()
     await renderOpen(scope)
 
-    fireEvent.click(rowCheckin('LaoDing'))
+    fireEvent.click(rowCheckin('demo-user'))
 
     await waitFor(() => { expect(within(accountBlock()).getByText(/row\.checkinError:.*upstream exploded/)).toBeTruthy() })
   })
@@ -344,7 +344,7 @@ describe('TraeUsageCard daily check-in', () => {
    */
   it('re-reads the OTHER rows after a claim, not just the one clicked', async () => {
     const roster = [
-      { id: 'account-1', accountName: 'LaoDing', edition: 'cn', region: 'cn', source: 'desktop', tokenExpiresAtMs: Date.now() + 3_600_000, selected: true },
+      { id: 'account-1', accountName: 'demo-user', edition: 'cn', region: 'cn', source: 'desktop', tokenExpiresAtMs: Date.now() + 3_600_000, selected: true },
       { id: 'account-2', accountName: 'SecondCN', edition: 'cn', region: 'cn', source: 'cli', tokenExpiresAtMs: Date.now() + 7_200_000, selected: false },
     ]
     const statusReads: string[] = []
@@ -367,7 +367,7 @@ describe('TraeUsageCard daily check-in', () => {
 
     // Count only what the claim itself triggers.
     statusReads.length = 0
-    fireEvent.click(rowCheckin('LaoDing'))
+    fireEvent.click(rowCheckin('demo-user'))
 
     await waitFor(() => { expect(statusReads).toContain('account-2') })
     expect(statusReads).toContain('account-1')

@@ -24,6 +24,7 @@ import { describe, it } from 'vitest'
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { DEMO_NICKNAME } from './demo-accounts.ts'
 
 describe('promo shot', () => {
   it('writes the html', async () => {
@@ -106,10 +107,10 @@ describe('promo shot', () => {
     ]
 
     const document_ = {
-      status: 'signed-in', accountId: 'account-1', accountName: 'LaoDing',
+      status: 'signed-in', accountId: 'account-1', accountName: DEMO_NICKNAME,
       tokenExpiresAtMs: Date.now() + 3_600_000, region: 'cn', enabled: true, accounts: [],
       models, enabledModelIds: models.map(model => model.id),
-      credits: { total: 7500, consumed: 5000, available: 2500, workAvailable: 0, generalAvailable: 2500, accounts: [] },
+      credits: { total: 9_600, consumed: 4_000, available: 5_600, workAvailable: 0, generalAvailable: 5_600, accounts: [] },
     }
 
     const fetchStub = async (input: string | URL | Request) => {

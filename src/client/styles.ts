@@ -224,7 +224,7 @@ export const TRAE_CARD_CSS = `
 /* The account rows: two lines each 鈥?who the account is, then what it is worth
    鈥?with the one action that applies to THAT row on the right. A four-column
    table was the wrong instrument here: every field demanded its own header, the
-   columns drifted with the content ("LaoDing" vs a full expiry stamp), and the
+   columns drifted with the content (a short nickname vs a full expiry stamp), and the
    bound row repeated its "in use" badge in two different columns. */
 /* The account table, shaped like the sibling WorkBuddy card's pool table: a
    bordered container, a tinted header row, and one grid row per account whose
@@ -680,7 +680,7 @@ export const TRAE_CARD_CSS = `
  * 这张卡同时画在三处，宽度与窗口毫无关系：输入框卡片、整页版（上限 860px）、
  * 以及设置面板的内容列（1400px 屏上是 564px）。本文件里所有 @media 断点测的
  * 都是**视口**，所以在设置面板里它们永远不触发——564px 的列拿到了五列桌面表格，
- * 每个单元格都在截断（实测账号列被压到 76px，「用户7520607992」只剩「用户75」）。
+ * 每个单元格都在截断（实测账号列被压到 76px，一个 9 位数字账号名只剩前 5 个字符）。
  *
  * container-type:inline-size 让下面的断点改测**这张表**的宽度，那才是行真正要
  * 塞进去的宽度。
@@ -797,7 +797,7 @@ export const TRAE_CARD_CSS = `
    * 真正竖排的是它内部的 .dsm-trae-pool-probe-cell（flex-direction:column）。
    * 只改外层包装的话，状态列仍然一句一行，被挤成「正常 / 测得 3 天前 / 来自测速 /
    * upstream answered」四行——旁边只有 12px 间距，整行高度就被这一格撑到 100px
-   * 以上，账号名也跟着被压窄（实测截成「LaoDin」「用户7」）。
+   * 以上，账号名也跟着被压窄（实测截成前几个字符「用户7」）。
    *
    * 改成横排并允许在自己内部换行：这四个事实读起来本来就是一句话
    * （「正常 · 测得 3 天前 · 来自测速 · upstream answered」），宽时从左排到右，
@@ -807,7 +807,7 @@ export const TRAE_CARD_CSS = `
    *
    * 宽的时候它是个三行网格（名字 / 标签 / 探针时间），第一列固定给勾选框。
    * 在窄列里这三行没有理由继续各占一行——它们本来就是一句话
-   * （「LaoDing · 已在池中 · 测试于 11/03, 06:35」），横排后名字与这两条短事实
+   * （「demo-usr · 已在池中 · 测试于 11/03, 06:35」），横排后名字与这两条短事实
    * 共享一行，只有真的放不下时才折行。勾选框仍然排在最前，并保持垂直居中对齐
    * 到第一行基线（align-self:baseline 会让它沉到行底）。 */
   .dsm-trae-pool-account{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 8px}

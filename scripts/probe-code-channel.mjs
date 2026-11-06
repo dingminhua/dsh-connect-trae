@@ -18,7 +18,7 @@
 import { readFile } from 'node:fs/promises'
 import { createDecipheriv, createHash, randomUUID } from 'node:crypto'
 
-const CN_STORAGE = '/Users/dmh2002/Library/Application Support/Trae CN/User/globalStorage/storage.json'
+const CN_STORAGE = '/Users/<user>/Library/Application Support/Trae CN/User/globalStorage/storage.json'
 const CN_PRODUCT = '/Applications/Trae CN.app/Contents/Resources/app/product.json'
 const ENDPOINT = 'https://trae-api-cn.mchost.guru/api/agent/v3/create_agent_task'
 const MODEL = process.argv[2] ?? 'glm-5.3'

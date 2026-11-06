@@ -33,6 +33,7 @@ describe('card shot', () => {
     const { AccountPool } = await import('../src/client/AccountPool.tsx')
     const { TRAE_CARD_CSS } = await import('../src/client/styles.ts')
     const { zh } = await import('../src/client/locales.ts')
+    const { DEMO_NICKNAME, DEMO_NUMERIC_ID } = await import('./demo-accounts.ts')
 
     const t = ((key: string, params?: Record<string, unknown>) => {
       const raw = (zh as Record<string, string>)[key] ?? key
@@ -50,13 +51,13 @@ describe('card shot', () => {
       effectiveMemberAccountIds: ['u1', 'u2'],
       memberNames: {},
       accounts: [
-        { accountId: 'u1', accountName: '用户7520607992', current: true, member: true, reachable: true,
-          generalAvailable: 1272.96, workAvailable: 0, expiringSoon: 1200, nearestExpiryMs: Date.now() + 4 * 86400_000, checkedInToday: true },
-        { accountId: 'u2', accountName: 'LaoDing', current: false, member: true, reachable: true,
+        { accountId: 'u1', accountName: DEMO_NUMERIC_ID, current: true, member: true, reachable: true,
+          generalAvailable: 842.17, workAvailable: 0, expiringSoon: 860, nearestExpiryMs: Date.now() + 4 * 86400_000, checkedInToday: true },
+        { accountId: 'u2', accountName: DEMO_NICKNAME, current: false, member: true, reachable: true,
           tokenExpired: true, checkedInToday: false, excludedBy: 'credential-rejected' as const,
           probe: { outcome: 'credential-rejected' as const, atMs: Date.now() - 3 * 3600_000, source: 'test-batch' as const } },
-        { accountId: 'u3', accountName: '130****5578', current: false, member: false, reachable: true,
-          generalAvailable: 1944, workAvailable: 0, checkedInToday: false,
+        { accountId: 'u3', accountName: '138****0000', current: false, member: false, reachable: true,
+          generalAvailable: 1_203, workAvailable: 0, checkedInToday: false,
           probe: { outcome: 'ok' as const, atMs: Date.now() - 5 * 3600_000, source: 'test-batch' as const, modelId: 'deepseek-v4.1-flash' } },
       ],
     }

@@ -76,11 +76,11 @@ function usageDocument(general: number, expiry?: ExpiryShape): Record<string, un
   return {
     status: 'signed-in',
     accountId: 'account-1',
-    accountName: 'LaoDing',
+    accountName: 'demo-user',
     tokenExpiresAtMs: Date.now() + 3_600_000,
     region: 'cn',
     accounts: [
-      { id: 'account-1', accountName: 'LaoDing', edition: 'cn', region: 'cn', source: 'dsh', tokenExpiresAtMs: Date.now() + 3_600_000, selected: true },
+      { id: 'account-1', accountName: 'demo-user', edition: 'cn', region: 'cn', source: 'dsh', tokenExpiresAtMs: Date.now() + 3_600_000, selected: true },
       { id: 'account-2', accountName: 'Backup', edition: 'cn', region: 'cn', source: 'dsh', tokenExpiresAtMs: Date.now() + 3_600_000, selected: false },
     ],
     models: [],
@@ -111,7 +111,7 @@ function stubRoute(options: { expiryAt?: number; expiry?: ExpiryShape } = {}): {
     const body = url.includes('/account-credits')
       ? {
           accounts: [
-            { id: 'account-1', accountName: 'LaoDing', selected: true, generalAvailable: 3392 },
+            { id: 'account-1', accountName: 'demo-user', selected: true, generalAvailable: 3392 },
             { id: 'account-2', accountName: 'Backup', selected: false, generalAvailable: 1777 },
           ],
         }
@@ -243,11 +243,11 @@ describe('ComposerPointsGate provider scoping', () => {
       return new Response(JSON.stringify({
         status: 'signed-in',
         accountId: 'ai-1',
-        accountName: 'LaoDing',
+        accountName: 'demo-user',
         tokenExpiresAtMs: Date.now() + 3_600_000,
         region: 'ai',
         accounts: [
-          { id: 'ai-1', accountName: 'LaoDing', edition: 'sg', region: 'ai', source: 'desktop', tokenExpiresAtMs: Date.now() + 3_600_000, selected: true },
+          { id: 'ai-1', accountName: 'demo-user', edition: 'sg', region: 'ai', source: 'desktop', tokenExpiresAtMs: Date.now() + 3_600_000, selected: true },
         ],
         models: [],
         enabledModelIds: [],
@@ -487,7 +487,7 @@ describe('ComposerPoints readout', () => {
     expect(document.querySelector('.dsm-trae-composer-panel-refresh')).toBeNull()
     // The panel is a TABLE of accounts, not a property list: every account in
     // the region gets a row, and the one figure per row is the general balance.
-    expect(screen.getByText('LaoDing')).toBeTruthy()
+    expect(screen.getByText('demo-user')).toBeTruthy()
     expect(screen.getByText('Backup')).toBeTruthy()
     // The bound account's figure, and the other account's — distinct numbers,
     // so "two rows showing the same number" cannot pass unnoticed.
@@ -583,7 +583,7 @@ describe('the account table and account switching', () => {
       if (url.includes('/account-credits')) {
         return new Response(JSON.stringify({
           accounts: [
-            { id: 'account-1', accountName: 'LaoDing', selected: true },
+            { id: 'account-1', accountName: 'demo-user', selected: true },
             { id: 'account-2', accountName: 'Backup', selected: false, generalAvailable: 1777 },
           ],
         }), { status: 200 })

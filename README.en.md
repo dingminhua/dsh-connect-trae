@@ -2,6 +2,8 @@
   <img src="docs/assets/dsh-connect-trae-usage-card.png" width="860" alt="dsh-connect-trae settings panel" />
 </p>
 
+> Account names, balances and timestamps in this document and its screenshots are **demo data** (`demo-*`); no real account information is shown.
+
 <h1 align="center">dsh-connect-trae</h1>
 
 <p align="center"><b>Connect locally signed-in Trae models to DeepSeek Harness with local DSH tools, a credits overview, and daily check-in claiming.</b></p>

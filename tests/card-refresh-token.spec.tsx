@@ -57,12 +57,12 @@ function usageDocument(refreshExpiresAtMs: number | undefined) {
   return {
     status: 'signed-in',
     accountId: 'account-1',
-    accountName: 'LaoDing',
+    accountName: 'demo-user',
     tokenExpiresAtMs: Date.now() + 3_600_000,
     ...refreshExpiresAtMs === undefined ? {} : { refreshExpiresAtMs },
     region: 'cn',
     enabled: true,
-    accounts: [{ id: 'account-1', accountName: 'LaoDing', edition: 'cn', region: 'cn', source: 'desktop', tokenExpiresAtMs: Date.now() + 3_600_000, ...refreshExpiresAtMs === undefined ? {} : { refreshExpiresAtMs }, selected: true }],
+    accounts: [{ id: 'account-1', accountName: 'demo-user', edition: 'cn', region: 'cn', source: 'desktop', tokenExpiresAtMs: Date.now() + 3_600_000, ...refreshExpiresAtMs === undefined ? {} : { refreshExpiresAtMs }, selected: true }],
     models: [],
     enabledModelIds: [],
     credits: { total: 7500, consumed: 5_879.63, available: 1_620.37, workAvailable: 0, generalAvailable: 20.37, accounts: [] },
@@ -126,7 +126,7 @@ describe('refresh-token countdown on the card', () => {
     expect(screen.queryByText(/row\.refreshTokenExpiring/)).toBeNull()
     expect(screen.queryByText(/row\.refreshTokenLapsed/)).toBeNull()
     // The account itself is still listed, so "no line" is not "no account".
-    expect(screen.getByText('LaoDing')).toBeTruthy()
+    expect(screen.getByText('demo-user')).toBeTruthy()
   })
 
   it('treats the boundary as "still running" on the last day', async () => {

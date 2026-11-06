@@ -11,7 +11,7 @@ const expiresAtMs = Date.now() + 60_000
 const credential: TraeCredential = {
   accessToken: 'eyJhbGciOiJSUzI1NiJ9.signature',
   userId: 'uid',
-  accountName: 'LaoDing',
+  accountName: 'demo-user',
   host: 'https://api.trae.cn',
   expiresAtMs,
   edition: 'solo',
@@ -23,7 +23,7 @@ function makeRoute(options: { fetchImpl?: typeof fetch } = {}): TraeUsageRouteOp
   const client = new TraeUsageClient({ credential: async () => credential, fetchImpl, baseUrl: 'https://api.trae.cn' })
   return {
     store: () => ({
-      async accounts() { return [{ id: 'account-1', accountName: 'LaoDing', edition: 'solo', enterprise: false, region: 'cn', source: 'desktop', tokenExpiresAtMs: expiresAtMs, selected: true }] },
+      async accounts() { return [{ id: 'account-1', accountName: 'demo-user', edition: 'solo', enterprise: false, region: 'cn', source: 'desktop', tokenExpiresAtMs: expiresAtMs, selected: true }] },
       async status() { return { state: 'signed-in', edition: 'solo', expiresAtMs: Date.now() + 1000, source: 'desktop' } },
       async resolve() { return credential },
     }) as unknown as ReturnType<TraeUsageRouteOptions['store']>,
@@ -90,7 +90,7 @@ describe('traeWebUsage', () => {
     // exactly the "one account is missing" shape.
     const deps = makeRoute()
     deps.store = () => ({
-      async accounts() { return [{ id: 'account-1', accountName: 'LaoDing', edition: 'solo', enterprise: false, region: 'cn', source: 'desktop', tokenExpiresAtMs: expiresAtMs, selected: true }] },
+      async accounts() { return [{ id: 'account-1', accountName: 'demo-user', edition: 'solo', enterprise: false, region: 'cn', source: 'desktop', tokenExpiresAtMs: expiresAtMs, selected: true }] },
       async status() { return { state: 'signed-in', edition: 'solo', expiresAtMs: Date.now() + 1000, source: 'desktop' } },
       async resolve() { return credential },
       async current() { return credential },
@@ -162,10 +162,10 @@ describe('traeWebUsage', () => {
     if (result.status !== 'signed-in') return
     expect(result).toMatchObject({
       accountId: 'account-1',
-      accountName: 'LaoDing',
+      accountName: 'demo-user',
       tokenExpiresAtMs: expiresAtMs,
       region: 'cn',
-      accounts: [{ id: 'account-1', accountName: 'LaoDing', edition: 'solo', source: 'desktop', tokenExpiresAtMs: expiresAtMs, selected: true }],
+      accounts: [{ id: 'account-1', accountName: 'demo-user', edition: 'solo', source: 'desktop', tokenExpiresAtMs: expiresAtMs, selected: true }],
       models: [{ id: 'DeepSeek-V4-Flash', name: 'DeepSeek-V4-Flash', contextWindow: 168_000, maxTokens: 32_000 }],
       rawChat: { state: 'protocol-gated', status: 400, checkedAtMs: 123 },
       enabledModelIds: ['DeepSeek-V4-Flash'],
@@ -316,7 +316,7 @@ describe('traeWebUsage region routing', () => {
   const intlCredential: TraeCredential = {
     accessToken: 'eyJhbGciOiJSUzI1NiJ9.signature',
     userId: 'intl-uid',
-    accountName: 'IntlLaoDing',
+    accountName: 'IntlDemoUser',
     host: 'https://growsg-normal.trae.ai',
     userRegion: 'SG',
     expiresAtMs,
@@ -329,7 +329,7 @@ describe('traeWebUsage region routing', () => {
     const seenRegions: TraePanel[] = []
     return {
       store: () => ({
-        async accounts() { return [{ id: 'account-intl', accountName: 'IntlLaoDing', edition: 'solo-sg', region: 'ai', source: 'desktop', tokenExpiresAtMs: expiresAtMs, selected: true }] },
+        async accounts() { return [{ id: 'account-intl', accountName: 'IntlDemoUser', edition: 'solo-sg', region: 'ai', source: 'desktop', tokenExpiresAtMs: expiresAtMs, selected: true }] },
         async status() { return { state: 'signed-in', edition: 'solo-sg', expiresAtMs, source: 'desktop' } },
         async resolve() { return intlCredential },
       }) as unknown as ReturnType<TraeUsageRouteOptions['store']>,
@@ -851,7 +851,7 @@ describe('traeWebUsage: exhausted bound account (issue #25)', () => {
     deps.store = () => ({
       async accounts() {
         return [
-          { id: 'spent', accountName: 'LaoDing', edition: 'solo', region: 'cn', source: 'desktop', tokenExpiresAtMs: expiresAtMs, selected: true },
+          { id: 'spent', accountName: 'demo-user', edition: 'solo', region: 'cn', source: 'desktop', tokenExpiresAtMs: expiresAtMs, selected: true },
           { id: 'usable', accountName: 'DMH', edition: 'cn', region: 'cn', source: 'desktop', tokenExpiresAtMs: expiresAtMs, selected: false },
         ]
       },
@@ -906,7 +906,7 @@ describe('traeWebUsage: exhausted bound account (issue #25)', () => {
     deps.store = () => ({
       async accounts() {
         return [
-          { id: 'spent', accountName: 'LaoDing', edition: 'solo', region: 'cn', source: 'desktop', tokenExpiresAtMs: expiresAtMs, selected: true },
+          { id: 'spent', accountName: 'demo-user', edition: 'solo', region: 'cn', source: 'desktop', tokenExpiresAtMs: expiresAtMs, selected: true },
           // Empty too: must not be offered as a way out.
           { id: 'also-spent', accountName: 'Empty', edition: 'cn', region: 'cn', source: 'desktop', tokenExpiresAtMs: expiresAtMs, selected: false },
           // Funded but on the OTHER region: its CN packs are not this card's
@@ -976,7 +976,7 @@ describe('traeAccountCredits: the composer panel table', () => {
     deps.store = () => ({
       async accounts() {
         return [
-          { id: 'account-1', accountName: 'LaoDing', edition: 'solo', region: 'cn', source: 'desktop', tokenExpiresAtMs: expiresAtMs, selected: true },
+          { id: 'account-1', accountName: 'demo-user', edition: 'solo', region: 'cn', source: 'desktop', tokenExpiresAtMs: expiresAtMs, selected: true },
           { id: 'account-2', accountName: 'Backup', edition: 'solo', region: 'cn', source: 'desktop', tokenExpiresAtMs: expiresAtMs, selected: false },
           { id: 'account-3', accountName: 'Empty', edition: 'solo', region: 'cn', source: 'cli', tokenExpiresAtMs: expiresAtMs, selected: false },
         ]
@@ -1005,7 +1005,7 @@ describe('traeAccountCredits: the composer panel table', () => {
         : accountId === 'account-1' ? balance(3392) : balance(0)
 
     const rows = await traeAccountCredits(deps, 'cn')
-    expect(rows.map(row => row.accountName)).toEqual(['LaoDing', 'Backup', 'Empty'])
+    expect(rows.map(row => row.accountName)).toEqual(['demo-user', 'Backup', 'Empty'])
     expect(rows.map(row => row.generalAvailable)).toEqual([3392, 1777, 0])
     expect(rows[0]?.selected).toBe(true)
     expect(rows[1]?.selected).toBe(false)
@@ -1036,7 +1036,7 @@ describe('traeAccountCredits: the composer panel table', () => {
 
     const rows = await traeAccountCredits(deps, 'cn')
     expect(rows[0]).toEqual({
-      id: 'account-1', accountName: 'LaoDing', selected: true, generalAvailable: 3392,
+      id: 'account-1', accountName: 'demo-user', selected: true, generalAvailable: 3392,
     })
     expect(rows[1]?.generalAvailable).toBe(1777)
     // The shared client must not be consulted at all: one call to it is one
@@ -1078,7 +1078,7 @@ describe('traeAccountCredits: the composer panel table', () => {
     delete deps.creditsOfAccount
     deps.client = () => clientWith(3392)
     const rows = await traeAccountCredits(deps, 'cn')
-    expect(rows.map(row => row.accountName)).toEqual(['LaoDing', 'Backup', 'Empty'])
+    expect(rows.map(row => row.accountName)).toEqual(['demo-user', 'Backup', 'Empty'])
     // The bound account's figure does not depend on the optional lookup, so it
     // survives on a host that exposes none; the other rows carry no number.
     expect(rows[0]?.generalAvailable).toBe(3392)

@@ -48,11 +48,11 @@ function stubRoute(): void {
   vi.stubGlobal('fetch', async (input: string | URL | Request) => {
     const url = String(input)
     const body = url.includes('/account-credits')
-      ? { accounts: [{ id: 'account-1', accountName: 'LaoDing', selected: true, generalAvailable: 3392 }] }
+      ? { accounts: [{ id: 'account-1', accountName: 'demo-user', selected: true, generalAvailable: 3392 }] }
       : {
           status: 'signed-in',
           accountId: 'account-1',
-          accountName: 'LaoDing',
+          accountName: 'demo-user',
           tokenExpiresAtMs: Date.now() + 3_600_000,
           region: 'cn',
           accounts: [],

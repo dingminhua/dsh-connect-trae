@@ -13,11 +13,11 @@
 发布流程里的 `git commit` / `git tag` 会带上提交作者，GitHub 上显示的名称和邮箱来自这里。
 
 ```bash
-git config --global user.name  "LaoDing"
-git config --global user.email "shangxinyu2002@gmail.com"
+git config --global user.name  "<你的提交署名>"
+git config --global user.email "<your-github-email>"
 ```
 
-- **必须与 LICENSE 版权归属一致**：本项目 LICENSE 版权为 `Copyright (c) 2026 LaoDing`，提交署名 `LaoDing` 与之一致，不要改成 npm 账号或其它名称。
+- **必须与 LICENSE 版权归属一致**：本项目 LICENSE 版权为 `Copyright (c) 2026 LaoDing`，不要改成 npm 账号或其它名称。
 - 若某仓库想用不同署名，可在该仓库内 `git config user.name/email` 设置 local 级；否则默认继承全局。
 
 ### 1.2 git 代理（访问 GitHub 用）
@@ -46,7 +46,7 @@ git config --global --get http.https://github.com.proxy
 npm whoami
 ```
 
-四项输出应分别为：`LaoDing`、`shangxinyu2002@gmail.com`、`http://127.0.0.1:7897`、`dmh2002`。
+四项输出应分别为：`<你的提交署名>`、`<你的 GitHub 提交邮箱>`、`http://127.0.0.1:7897`、`dmh2002`。
 
 ## 2. 发布流程要点（速查）
 
@@ -70,7 +70,7 @@ npm whoami
 3. **设置 namespace 无需白名单**：DSH 0.1.1-rc.2 起 `dsh-host-apiproxy` 已移除 `WEB_SETTINGS_NAMESPACES` 白名单，`settings.describe` 直接返回全部已注册 namespace → 无需任何 patch。
 4. **首次注册只做一次**：`dsh plugin --profile desktop add /路径` 以 `link:` 安装，重复注册会重装依赖树 → 不要重复执行。
 5. **更新后必须重启 DSH 进程**：bundle patch 与 host/client 半边在启动时加载 → 改代码 / 装新版本后重启 DSH Desktop（⌘Q → 重开）才生效；仅改 settings.yaml 是热加载，无需重启。
-6. **本地开发用 `link:`，不重装依赖树**：`dsh plugin --profile desktop add /Users/dmh2002/DshProject/dsh-connect-trae`，node_modules 里是源码软链，改码后重启生效；不要在 desktop profile 里手动跑 `pnpm install` 重装整树。
+6. **本地开发用 `link:`，不重装依赖树**：`dsh plugin --profile desktop add /Users/<user>/DshProject/dsh-connect-trae`，node_modules 里是源码软链，改码后重启生效；不要在 desktop profile 里手动跑 `pnpm install` 重装整树。
 7. **cordis.patch.yml 只做最小插入**：注册插件 id 即可，如本项目 `- insert: - id: dsh-connect-trae / name: dsh-connect-trae`，不改 profile 默认模型。
 8. **license / copyright 字段**：`package.json` 的 `license: "MIT"`、`copyright: "Copyright (c) 2026 LaoDing"` 与根 LICENSE 三者保持一致；README「许可证」章节应写全（协议 + 版权归属 + 概要 + 指向 LICENSE），不要只留一行 `[MIT](LICENSE)`。
 

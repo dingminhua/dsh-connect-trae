@@ -1,5 +1,5 @@
 /**
- * Plugin icon (LD brand logo, 64px) shared across the LaoDing plugin family.
+ * Plugin icon (LD brand logo, 64px) shared across the same-family plugins.
  * Same data URI used by `dsh-subagent-default-model` so the external image
  * stays consistent.
  */

@@ -33,6 +33,7 @@
  */
 import { describe, it } from 'vitest'
 import { writeFileSync } from 'node:fs'
+import { DEMO_NICKNAME, DEMO_NUMERIC_ID } from './demo-accounts.ts'
 
 /** Short names mixed with long ones: the promo capsule only interacts with long. */
 const MODEL_NAMES = [
@@ -75,19 +76,19 @@ function usageDocument(): Record<string, unknown> {
   return {
     status: 'signed-in',
     accountId: 'account-1',
-    accountName: '用户7520607992',
+    accountName: DEMO_NUMERIC_ID,
     tokenExpiresAtMs: Date.now() + 3_600_000,
     refreshExpiresAtMs: Date.now() + 10 * 86_400_000,
     region: 'cn',
     enabled: true,
     accounts: [
-      { id: 'account-1', accountName: '用户7520607992', edition: 'cn', region: 'cn', source: 'desktop', tokenExpiresAtMs: Date.now() + 3_600_000, selected: true },
-      { id: 'account-2', accountName: 'LaoDing', edition: 'solo', region: 'cn', source: 'cli', tokenExpiresAtMs: Date.now() + 7_200_000, selected: false },
+      { id: 'account-1', accountName: DEMO_NUMERIC_ID, edition: 'cn', region: 'cn', source: 'desktop', tokenExpiresAtMs: Date.now() + 3_600_000, selected: true },
+      { id: 'account-2', accountName: DEMO_NICKNAME, edition: 'solo', region: 'cn', source: 'cli', tokenExpiresAtMs: Date.now() + 7_200_000, selected: false },
     ],
     models,
     enabledModelIds: models.filter((_, index) => index % 2 === 0).map(model => model.id),
     imageModelIds: [],
-    credits: { total: 7500, consumed: 5_879.63, available: 1_620.37, workAvailable: 0, generalAvailable: 20.37, accounts: [] },
+    credits: { total: 9_600, consumed: 3_141.28, available: 6_458.72, workAvailable: 0, generalAvailable: 96.42, accounts: [] },
     checkin: { checkedIn: false, didCheckedIn: false, credits: 150, enabled: true, extraCredits: 50 },
   }
 }

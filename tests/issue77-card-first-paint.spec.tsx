@@ -62,11 +62,11 @@ function fastDocument(): Record<string, unknown> {
   return {
     status: 'signed-in',
     accountId: 'account-1',
-    accountName: 'LaoDing',
+    accountName: 'demo-user',
     tokenExpiresAtMs: Date.now() + 3_600_000,
     region: 'cn',
     enabled: true,
-    accounts: [{ id: 'account-1', accountName: 'LaoDing', edition: 'solo', region: 'cn', source: 'desktop', tokenExpiresAtMs: Date.now() + 3_600_000, selected: true }],
+    accounts: [{ id: 'account-1', accountName: 'demo-user', edition: 'solo', region: 'cn', source: 'desktop', tokenExpiresAtMs: Date.now() + 3_600_000, selected: true }],
     models: [{ id: 'DeepSeek-V4-Flash', name: 'DeepSeek-V4-Flash', contextWindow: 168_000, maxTokens: 32_000 }],
     enabledModelIds: ['DeepSeek-V4-Flash'],
     pool: {
@@ -77,7 +77,7 @@ function fastDocument(): Record<string, unknown> {
       probeInputTokens: 0,
       memberAccountIds: ['account-1'],
       effectiveMemberAccountIds: ['account-1'],
-      accounts: [{ accountId: 'account-1', accountName: 'LaoDing', current: true, member: true, reachable: true }],
+      accounts: [{ accountId: 'account-1', accountName: 'demo-user', current: true, member: true, reachable: true }],
       catalog: [{ id: 'DeepSeek-V4-Flash', name: 'DeepSeek-V4-Flash', contextWindow: 168_000, maxTokens: 32_000 }],
     },
   }
@@ -94,7 +94,7 @@ function fullDocument(): Record<string, unknown> {
       ...(base.pool as Record<string, unknown>),
       // `generalAvailable` is the cell the row prints (the General bucket), which
       // is what distinguishes the applied full document from the thin one.
-      accounts: [{ accountId: 'account-1', accountName: 'LaoDing', credits: 20.37, generalAvailable: 20.37, current: true, member: true, reachable: true, checkedInToday: true }],
+      accounts: [{ accountId: 'account-1', accountName: 'demo-user', credits: 20.37, generalAvailable: 20.37, current: true, member: true, reachable: true, checkedInToday: true }],
     },
   }
 }
@@ -155,7 +155,7 @@ describe('the card paints the first document first (issue #77)', () => {
 
     // The rows are what the issue is about: they must be there BEFORE the
     // expensive document answers.
-    await waitFor(() => { expect(screen.getByText('LaoDing')).toBeTruthy() })
+    await waitFor(() => { expect(screen.getByText('demo-user')).toBeTruthy() })
     expect(document.querySelector('.dsm-trae-pool')).not.toBeNull()
     // The signed-out guidance must NOT be shown: the user is signed in.
     expect(screen.queryByText('row.signedOutHint')).toBeNull()
@@ -200,7 +200,7 @@ describe('the card paints the first document first (issue #77)', () => {
     const { fireEvent } = await import('@testing-library/react')
     fireEvent.click(screen.getByRole('button', { name: /row\.title/ }))
 
-    await waitFor(() => { expect(screen.getByText('LaoDing')).toBeTruthy() })
+    await waitFor(() => { expect(screen.getByText('demo-user')).toBeTruthy() })
     // Wait until the full document has been requested AND applied.
     await waitFor(() => {
       const credits = document.querySelector('.dsm-trae-pool-credit-num')

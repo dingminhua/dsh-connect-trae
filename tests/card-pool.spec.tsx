@@ -621,7 +621,7 @@ describe('AccountPool card section', () => {
 
     // ONE click, ONE log line per account: the Host streams a `{row}` and then a
     // final `{rows}` summary repeating it, so logging both printed every account
-    // twice ("LaoDing：正常。" twice for a single click).
+    // twice ("demo-user：正常。" twice for a single click).
     for (const name of ['AccA', 'AccB']) {
       expect(screen.getAllByText(new RegExp(`"accountName":"${name}"`))).toHaveLength(1)
     }

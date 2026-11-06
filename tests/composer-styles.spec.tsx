@@ -31,7 +31,7 @@ function stubRoute(): void {
   vi.stubGlobal('fetch', async () => new Response(JSON.stringify({
     status: 'signed-in',
     accountId: 'account-1',
-    accountName: 'LaoDing',
+    accountName: 'demo-user',
     tokenExpiresAtMs: Date.now() + 3_600_000,
     region: 'cn',
     accounts: [],
@@ -74,7 +74,7 @@ function stubRoute(): void {
       effectiveMemberAccountIds: ['account-1'],
       memberNames: {},
       accounts: [
-        { accountId: 'account-1', accountName: 'LaoDing', member: true, current: true, reachable: true, generalAvailable: 3392 },
+        { accountId: 'account-1', accountName: 'demo-user', member: true, current: true, reachable: true, generalAvailable: 3392 },
       ],
     },
   }), { status: 200 }))

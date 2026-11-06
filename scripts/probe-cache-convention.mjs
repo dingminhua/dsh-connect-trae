@@ -15,7 +15,7 @@
 import { readFile } from 'node:fs/promises'
 import { createDecipheriv, createHash } from 'node:crypto'
 
-const CN_STORAGE = '/Users/dmh2002/Library/Application Support/Trae CN/User/globalStorage/storage.json'
+const CN_STORAGE = '/Users/<user>/Library/Application Support/Trae CN/User/globalStorage/storage.json'
 const CN_PRODUCT = '/Applications/Trae CN.app/Contents/Resources/app/product.json'
 const SALT_A = Uint8Array.from([82,9,106,213,48,54,165,56,191,64,163,158,129,243,215,251,124,227,57,130,155,47,255,135,52,142,67,68,196,222,233,203,84,123,148,50,166,194,35,61,238,76,149,11,66,250,195,78,8,46,161,102,40,217,36,178,118,91,162,73,109,139,209,37])
 const SALT_B = Uint8Array.from([31,221,168,51,136,7,199,49,177,18,16,89,39,128,236,95,96,81,127,169,25,181,74,13,45,229,122,159,147,201,156,239,160,224,59,77,174,42,245,176,200,235,187,60,131,83,153,97,23,43,4,126,186,119,214,38,225,105,20,99,85,33,12,125])

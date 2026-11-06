@@ -66,7 +66,7 @@ function makeScope(initial: Record<string, unknown> = {}, writable = true) {
 }
 
 const ACCOUNTS = [
-  { id: 'account-1', accountName: 'LaoDing', edition: 'cn', region: 'cn', source: 'desktop', tokenExpiresAtMs: Date.now() + 3_600_000, selected: true },
+  { id: 'account-1', accountName: 'demo-user', edition: 'cn', region: 'cn', source: 'desktop', tokenExpiresAtMs: Date.now() + 3_600_000, selected: true },
   { id: 'account-2', accountName: 'SecondCN', edition: 'solo', region: 'cn', source: 'cli', tokenExpiresAtMs: Date.now() + 7_200_000, selected: false },
 ]
 
@@ -75,7 +75,7 @@ function usageDocument(overrides: Record<string, unknown> = {}) {
   return {
     status: 'signed-in',
     accountId: 'account-1',
-    accountName: 'LaoDing',
+    accountName: 'demo-user',
     tokenExpiresAtMs: Date.now() + 3_600_000,
     region: 'cn',
     enabled: true,
@@ -155,17 +155,17 @@ describe('the account rows in the card', () => {
     const rows = within(accountBlock()).getAllByRole('row')
     expect(rows).toHaveLength(3)
     expect(rows[0]?.className).toContain('dsm-trae-account-row-head')
-    expect(accountRow('LaoDing')).toBeTruthy()
+    expect(accountRow('demo-user')).toBeTruthy()
     expect(accountRow('SecondCN')).toBeTruthy()
 
     // The raw `edition` token used to be all the user got: "solo" told them
     // nothing about which product the credential came from (issue #25).
     expect(accountRow('SecondCN').textContent).toContain('row.editionSolo')
     expect(accountRow('SecondCN').textContent).toContain('row.sourceCli')
-    expect(accountRow('LaoDing').textContent).toContain('row.sourceDesktop')
+    expect(accountRow('demo-user').textContent).toContain('row.sourceDesktop')
     // The region is NOT repeated beside the edition: "国内版 · 国内 · 桌面端"
     // said the same thing twice, which is exactly the noise that was removed.
-    expect(accountRow('LaoDing').textContent).not.toContain('row.regionCn')
+    expect(accountRow('demo-user').textContent).not.toContain('row.regionCn')
   })
 
   it('marks the bound account and does not offer it an action', async () => {
@@ -173,7 +173,7 @@ describe('the account rows in the card', () => {
     const { scope } = makeScope()
     await renderOpen(scope)
 
-    const current = accountRow('LaoDing')
+    const current = accountRow('demo-user')
     expect(current.className).toContain('dsm-trae-account-row-current')
     expect(current.textContent).toContain('row.accountCurrentBadge')
 
@@ -211,7 +211,7 @@ describe('the account rows in the card', () => {
     await renderOpen(scope)
 
     await vi.waitFor(() => { expect(accountRow('SecondCN').textContent).toMatch(/1,235/) })
-    expect(accountRow('LaoDing').textContent).toMatch(/row\.accountBalance:.*20/)
+    expect(accountRow('demo-user').textContent).toMatch(/row\.accountBalance:.*20/)
     const reads = calls.filter(call => call.url.startsWith(TRAE_ACCOUNT_STATUS_PATH))
     // Two accounts → two per-account status reads, region-scoped like the rest.
     expect(reads).toHaveLength(2)
@@ -226,7 +226,7 @@ describe('the account rows in the card', () => {
     // The roster is untouched by a failed per-account status: the row stays and
     // both accounts are still switchable — no error banner, no empty table.
     expect(accountRow('SecondCN')).toBeTruthy()
-    expect(accountRow('LaoDing')).toBeTruthy()
+    expect(accountRow('demo-user')).toBeTruthy()
   })
 
   it('gives every CN account row its OWN claim button, and none to a bulk sweep', async () => {
@@ -244,7 +244,7 @@ describe('the account rows in the card', () => {
 
     await waitFor(() => { expect(screen.getAllByRole('button', { name: /row\.checkinClaimWith/ })).toHaveLength(2) })
     // They live INSIDE their own rows — never a single control for the roster.
-    expect(within(accountRow('LaoDing')).getByRole('button', { name: /row\.checkinClaimWith/ })).toBeTruthy()
+    expect(within(accountRow('demo-user')).getByRole('button', { name: /row\.checkinClaimWith/ })).toBeTruthy()
     expect(within(accountRow('SecondCN')).getByRole('button', { name: /row\.checkinClaimWith/ })).toBeTruthy()
   })
 })
@@ -299,13 +299,13 @@ describe('the stale-binding hint', () => {
     // …and the rows stay with it: header plus both accounts.
     const rows = within(accountBlock()).getAllByRole('row')
     expect(rows).toHaveLength(3)
-    expect(accountRow('LaoDing')).toBeTruthy()
+    expect(accountRow('demo-user')).toBeTruthy()
 
     // The bound account is still named as the bound one — the roster's own
     // `selected` flag is the only source for that when the document carries no
     // `accountId` — and it still offers no redundant action.
-    expect(accountRow('LaoDing').className).toContain('dsm-trae-account-row-current')
-    expect(within(accountRow('LaoDing')).queryByRole('button', { name: 'row.accountSwitch' })).toBeNull()
+    expect(accountRow('demo-user').className).toContain('dsm-trae-account-row-current')
+    expect(within(accountRow('demo-user')).queryByRole('button', { name: 'row.accountSwitch' })).toBeNull()
 
     // The OTHER row is the way out, and it has to actually work: one press
     // rebinds the slot to an account that is still usable.

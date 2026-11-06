@@ -72,14 +72,14 @@ describe('describeNameShape', () => {
   it('reports length and numeric-ness instead of the name', () => {
     // A real nickname and a generated `用户<phone>` id must be distinguishable
     // by shape — that is what tells a reader account discovery worked.
-    const nickname = describeNameShape('LaoDing')
-    expect(nickname).toBe('7 字符')
-    expect(nickname).not.toContain('LaoDing')
-    expect(describeNameShape('7520607992')).toBe('10 字符，纯数字')
+    const nickname = describeNameShape('demo-user')
+    expect(nickname).toBe('9 字符')
+    expect(nickname).not.toContain('demo-user')
+    expect(describeNameShape('1000000000')).toBe('10 字符，纯数字')
   })
 
   it('never echoes the value for any input', () => {
-    for (const value of ['丁敏华', 'real@example.com', 42, undefined, null]) {
+    for (const value of ['demo-user', 'real@example.com', 42, undefined, null]) {
       const shape = describeNameShape(value)
       expect(shape).toMatch(/^\d+ 字符/)
       if (typeof value === 'string' && value !== '') expect(shape).not.toContain(value)

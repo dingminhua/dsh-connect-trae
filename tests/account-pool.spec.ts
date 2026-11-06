@@ -35,7 +35,7 @@ const NOW = 1_700_000_000_000
 const credential: TraeCredential = {
   accessToken: 'eyJhbGciOiJSUzI1NiJ9.signature',
   userId: 'uid',
-  accountName: 'LaoDing',
+  accountName: 'demo-user',
   host: 'https://api.trae.cn',
   expiresAtMs: NOW + 60_000,
   edition: 'solo',
@@ -401,10 +401,10 @@ describe('mergePoolProbe', () => {
 
   it('inherits the account name but never the measured model', () => {
     const merged = mergePoolProbe(
-      probe({ outcome: 'ok', accountName: 'LaoDing', modelId: 'old-model' }),
+      probe({ outcome: 'ok', accountName: 'demo-user', modelId: 'old-model' }),
       probe({ outcome: 'ok', atMs: NOW + 1_000 }),
     )
-    expect(merged.accountName).toBe('LaoDing')
+    expect(merged.accountName).toBe('demo-user')
     expect(merged.modelId).toBeUndefined()
   })
 })
@@ -412,7 +412,7 @@ describe('mergePoolProbe', () => {
 describe('probeUpdatesOf', () => {
   const row = (overrides: Partial<TraePoolTestRow> & Pick<TraePoolTestRow, 'outcome'>): TraePoolTestRow => ({
     accountId: 'a'.repeat(24),
-    accountName: 'LaoDing',
+    accountName: 'demo-user',
     modelId: 'free-large',
     detail: 'detail',
     ...overrides,

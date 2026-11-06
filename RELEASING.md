@@ -25,12 +25,69 @@
 ### 1. 确认代码、测试与版权
 
 ```bash
-cd /Users/dmh2002/DshProject/dsh-connect-trae
-pnpm run check        # typecheck + test + build，应全部通过
+cd /Users/<user>/DshProject/dsh-connect-trae
+pnpm run check              # typecheck + test + build，应全部通过
+pnpm run verify:privacy     # 发布物隐私核验，必须 0 失败（见下节）
 grep -F "Copyright (c) 2026 LaoDing" LICENSE
 ```
 
-> 本项目以 MIT 许可证发布，版权归属必须保持为 **LaoDing**；发布前不得把 LICENSE 中的版权主体改成 npm 账号、GitHub 账号或其他名称。
+> 本项目以 MIT 许可证发布，版权归属必须保持为 **一个昵称**；发布前不得把 LICENSE 中的版权主体改成 npm 账号、GitHub 账号或其他名称。
+
+### 1.5 隐私门禁：截图与测试夹具（**发布阻断项**）
+
+> **为什么这一节存在。** v4.10.0 及更早版本把维护者本人的 Trae 账号名（一个真实的
+> `用户<n>` 数字账号与 `一个昵称`）以**明文**渲染进了 `docs/assets/*.png`，同一条字符串
+> 也躺在生成这些图的 `tools/*-shot.tsx` 夹具里，于是它随 GitHub、市场与 **80 个 npm
+> 版本**一起分发。整个测试套件当时是绿的——因为没有任何一条测试把**夹具数据**当作
+> **发布物**来看。这不是一次疏忽，是一个缺失的检查，所以现在把它固化成门禁。
+
+**规则（新增或修改截图前必须遵守）：**
+
+1. **截图夹具里不允许出现真实身份。** 账号名、账号 id、真实余额、设备号、令牌到期
+   时间、真实邮箱、本机用户名，一律用 [`tools/demo-accounts.ts`](tools/demo-accounts.ts)
+   导出的常量（`DEMO_NUMERIC_ID` / `DEMO_NICKNAME`），或明确的 `demo-*` 合成名。
+2. **形状仍要代表性。** 这些图是用来量版式的：演示名要保持与真实数据相同的长度数量级
+   （9 位数字 id、7 字符昵称），否则卡片会按错误的宽度排版，截图就不再是有意义的证据。
+3. **余额、积分、时间一律编造。** 不要用「反正只是数字」当理由——余额能定位到具体
+   账号，到期时间能定位到具体登录。
+4. **打码不算脱敏。** 马赛克/模糊的原文仍可从块状信息中部分还原，且**看上去像已处理**
+   最容易让人跳过复核。要么用 `demo-*` 重出图，要么整块**不透明色块**覆盖。
+5. **测试夹具同样是发布物。** 任何会被渲染进截图、或会被渲染进 README/CHANGELOG
+   的数据，都按发布物对待。
+
+**两道自动检查（分开跑，发布前都要绿）：**
+
+| 检查 | 覆盖 | 怎么跑 | 失败意味着 |
+| --- | --- | --- | --- |
+| `tests/privacy.spec.ts` | **整个仓库的文本文件**：夹具 `accountName` 字面量、真实标识、个人 home 路径、版权署名 | `pnpm test` | 源码/文档里写回了真实信息 —— 下次出图或提交就会漏 |
+| `scripts/verify-privacy.mjs` | 发布用 PNG 的字节流与**渲染文本**、随包文本、版本与 CHANGELOG 一致 | `pnpm run verify:privacy` | 已发出的产物本身有问题 |
+
+> 第二道里的**像素 OCR** 需要 `tesseract.js` **和**一份本地语言包。tesseract.js 默认从
+> CDN 拉 traineddata，在代理后面或离线时会失败——而一个失败即跳过的检查比没有检查更糟。
+> 所以本地语言包优先，路径通过环境变量给出：
+>
+> ```powershell
+> # PowerShell：目录里需要有 eng.traineddata.gz
+> $env:DSH_TESSDATA = "$env:TEMP\tessdata"
+> pnpm run verify:privacy
+> ```
+> ```bash
+> DSH_TESSDATA=/path/to/tessdata pnpm run verify:privacy
+> ```
+>
+> **没有语言包时脚本会打印 `SKIP … screenshots are NOT text-verified`**：那不是通过，
+> 是缺口。`prepublishOnly`（`npm publish` 自动触发）在这种情况下会**直接拒绝发布**，
+> 所以发布机必须备好语言包。
+
+**发现泄露后的处置（按这个顺序，不要只做第一项）：**
+
+1. 改**夹具**，不要改图片字节——图是产物，夹具是原因；
+2. 重出受影响的图，`pnpm run verify:privacy` 全绿；
+3. 若字符串进了 `CHANGELOG.md`，一并脱敏（它会随包发给所有人）；
+4. **历史不重写**（本项目既有决定）：已发布的 tag、fork 与 registry 上的旧版本无法回收，
+   重写只会让它们失去意义。在当版 CHANGELOG 里如实记下修了什么。
+5. 记住 `一个昵称` 本身是 LICENSE 版权署名，**公开程度不因图片而改变**；新增的泄露是
+   「哪个账号属于这个人」这层**关联**。不要因此把版权署名一起删掉。
 
 ### 2. 更新版本号
 
@@ -74,7 +131,7 @@ git push origin vX.Y.Z
 npm publish
 ```
 
-**打包内容**：`package.json` 的 `files` 字段已限定只发布 `lib/`、`docs/assets/dsh-connect-trae-usage-card.png`、`scripts/verify-windows.mjs`、`screenshots.json`、`cordis.patch.yml`、`README.md`、`README.en.md`、`CHANGELOG.md`、`THIRD_PARTY_NOTICES.md`、`LICENSE`，`tests/` 和 `node_modules/` 不会进入发布包。
+**打包内容**：`package.json` 的 `files` 字段已限定只发布 `lib/`、`icons/`、三张产品图（`docs/assets/dsh-connect-trae-{usage-card,sidebar-page,composer-credits}.png`）、`scripts/verify-windows.mjs`、`screenshots.json`、`cordis.patch.yml`、`README.md`、`README.en.md`、`CHANGELOG.md`、`THIRD_PARTY_NOTICES.md`、`LICENSE`，`tests/` 和 `node_modules/` 不会进入发布包。**新增产品图时要同步改这里与 `files`**——否则图在仓库里、README 也引用了，但 npm 包里没有，npm 页面上就是一张破图。
 
 > `scripts/verify-windows.mjs` 是有意随包分发的：README 指引 Windows 用户运行它做真机验证，不随包则 npm 用户无法执行该步骤。它是自包含的单文件，只依赖 `lib/` 的导出。
 > 注意 `docs/*.md`（含 `WINDOWS_TOKEN_PROBE.md`）**不进包**，因此 README 中引用它们的链接必须用 GitHub 绝对地址，否则在 npm 页面会 404。
@@ -162,7 +219,7 @@ cd /tmp && rm -rf verify && mkdir verify && cd verify
 npm pack dsh-connect-trae@X.Y.Z && tar -xzf dsh-connect-trae-X.Y.Z.tgz
 
 # 2) 逐文件与 tagged 提交对比（仓库目录内执行）
-cd /Users/dmh2002/DshProject/dsh-connect-trae
+cd /Users/<user>/DshProject/dsh-connect-trae
 for f in CHANGELOG.md README.md README.en.md LICENSE THIRD_PARTY_NOTICES.md \
          cordis.patch.yml package.json screenshots.json; do
   a=$(shasum -a 256 "/tmp/verify/package/$f" | cut -d' ' -f1)

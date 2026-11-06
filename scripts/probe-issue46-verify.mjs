@@ -19,7 +19,7 @@ const mod = await import('../lib/index.js')
 const { TraeSoloRemoteCatalogClient, TraeSoloUpstreamClient, mergeTraeModelSources } = mod
 const { withChatCallableFunctions } = await import('../src/catalog.ts')
 
-const storage = JSON.parse(await readFile('/Users/dmh2002/Library/Application Support/Trae CN/User/globalStorage/storage.json', 'utf8'))
+const storage = JSON.parse(await readFile('/Users/<user>/Library/Application Support/Trae CN/User/globalStorage/storage.json', 'utf8'))
 const raw = JSON.parse(decrypt(storage['iCubeAuthInfo://icube.cloudide']))
 const product = JSON.parse(await readFile('/Applications/Trae CN.app/Contents/Resources/app/product.json', 'utf8'))
 const dcKey = Object.keys(storage).find(key => key.startsWith('iCubeAuthInfo://icube-dc:'))

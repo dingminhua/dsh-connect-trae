@@ -48,14 +48,14 @@ function makeScope(initial: Record<string, unknown> = {}, writable = true) {
   }
 }
 
-const AI_ACCOUNT = { id: 'account-1', accountName: 'LaoDing', edition: 'sg', region: 'ai', source: 'desktop', tokenExpiresAtMs: Date.now() + 3_600_000, selected: true }
+const AI_ACCOUNT = { id: 'account-1', accountName: 'demo-user', edition: 'sg', region: 'ai', source: 'desktop', tokenExpiresAtMs: Date.now() + 3_600_000, selected: true }
 
 /** One signed-in ai document carrying the roster whose row holds subscription. */
 function payDocument(overrides: Record<string, unknown> = {}) {
   return {
     status: 'signed-in',
     accountId: 'account-1',
-    accountName: 'LaoDing',
+    accountName: 'demo-user',
     tokenExpiresAtMs: Date.now() + 3_600_000,
     region: 'ai',
     enabled: true,
@@ -92,7 +92,7 @@ async function renderArtificialAccount(): Promise<void> {
   render(<TraeUsageCard t={t} settingsScope={scope as never} />)
   fireEvent.click(screen.getByRole('button', { name: /row\.title/ }))
   fireEvent.click(screen.getByRole('tab', { name: /row\.tabAi/ }))
-  await waitFor(() => { expect(screen.getByText('LaoDing')).toBeTruthy() })
+  await waitFor(() => { expect(screen.getByText('demo-user')).toBeTruthy() })
 }
 
 /** The account block, so its buttons are never confused with the model block's. */
@@ -146,8 +146,8 @@ describe('TraeUsageCard subscription row (ai)', () => {
 
     // The row names the plan ON its balance line — one verdict, one line, no
     // separate subscription block beside the roster.
-    await waitFor(() => { expect(within(accountRow('LaoDing')).getByText('row.planTier:{"tier":"Pro"}')).toBeTruthy() })
-    expect(within(accountRow('LaoDing')).queryByText('row.noPackage')).toBeNull()
+    await waitFor(() => { expect(within(accountRow('demo-user')).getByText('row.planTier:{"tier":"Pro"}')).toBeTruthy() })
+    expect(within(accountRow('demo-user')).queryByText('row.noPackage')).toBeNull()
   })
 
   it('still reports a package entitlement without a plan identity', async () => {
@@ -156,16 +156,16 @@ describe('TraeUsageCard subscription row (ai)', () => {
 
     // Without a tier string the row renders the bare subscribed label; what
     // matters is that it is on and does not claim "no package".
-    await waitFor(() => { expect(within(accountRow('LaoDing')).getByText('row.subscribed')).toBeTruthy() })
-    expect(within(accountRow('LaoDing')).queryByText('row.noPackage')).toBeNull()
+    await waitFor(() => { expect(within(accountRow('demo-user')).getByText('row.subscribed')).toBeTruthy() })
+    expect(within(accountRow('demo-user')).queryByText('row.noPackage')).toBeNull()
   })
 
   it('names the free tier instead of only saying there is no package', async () => {
     stubFetch(payDocument(), { hasPackage: false, payIdentity: 0, payIdentityStr: 'Free' })
     await renderArtificialAccount()
 
-    await waitFor(() => { expect(within(accountRow('LaoDing')).getByText('row.noPackage')).toBeTruthy() })
-    expect(within(accountRow('LaoDing')).queryByText('row.subscribed')).toBeNull()
+    await waitFor(() => { expect(within(accountRow('demo-user')).getByText('row.noPackage')).toBeTruthy() })
+    expect(within(accountRow('demo-user')).queryByText('row.subscribed')).toBeNull()
   })
 
   it('reads the subscription through the region-scoped per-account status route', async () => {
@@ -181,7 +181,7 @@ describe('TraeUsageCard subscription row (ai)', () => {
     render(<TraeUsageCard t={t} settingsScope={scope as never} />)
     fireEvent.click(screen.getByRole('button', { name: /row\.title/ }))
     fireEvent.click(screen.getByRole('tab', { name: /row\.tabAi/ }))
-    await waitFor(() => { expect(screen.getByText('LaoDing')).toBeTruthy() })
+    await waitFor(() => { expect(screen.getByText('demo-user')).toBeTruthy() })
 
     // The row's subscription is read from the per-account status route, and the
     // read is region-scoped to ai exactly like every other route on this card.
@@ -205,7 +205,7 @@ describe('TraeUsageCard has no standalone subscription box (ai)', () => {
     await renderArtificialAccount()
 
     // The plan IS on screen — in the row's 额度 cell, and nowhere else.
-    await waitFor(() => { expect(within(accountRow('LaoDing')).getByText('row.noPackage')).toBeTruthy() })
+    await waitFor(() => { expect(within(accountRow('demo-user')).getByText('row.noPackage')).toBeTruthy() })
     expect(screen.queryByText('row.subscriptionLabel')).toBeNull()
     expect(screen.queryByText('row.payStatusUnknown')).toBeNull()
   })

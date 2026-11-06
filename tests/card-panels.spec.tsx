@@ -66,12 +66,12 @@ function usageOf(overrides: Record<string, unknown> = {}): Record<string, unknow
   return {
     status: 'signed-in',
     accountId: 'account-1',
-    accountName: 'LaoDing',
+    accountName: 'demo-user',
     tokenExpiresAtMs: Date.now() + 3_600_000,
     region: 'cn',
     enabled: true,
     accounts: [
-      { id: 'account-1', accountName: 'LaoDing', edition: 'cn', region: 'cn', source: 'desktop', tokenExpiresAtMs: Date.now() + 3_600_000, selected: true },
+      { id: 'account-1', accountName: 'demo-user', edition: 'cn', region: 'cn', source: 'desktop', tokenExpiresAtMs: Date.now() + 3_600_000, selected: true },
     ],
     models: [
       { id: 'glm-5.2', name: 'GLM 5.2', contextWindow: 200_000, maxContextWindow: 1_000_000 },
@@ -154,7 +154,7 @@ describe('the card splits into three sections', () => {
     expect(text).toContain('trae')
     expect(text).toContain('row.diagAccount')
     // …by NAME, not by id: the diagnostics panel must not print `account-1`.
-    expect(text).toContain('LaoDing')
+    expect(text).toContain('demo-user')
     expect(text).not.toContain('account-1')
     expect(text).toContain('row.diagCatalog')
     expect(text).toContain('row.diagEnabled')

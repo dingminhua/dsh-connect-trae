@@ -30,8 +30,8 @@ const cliJwtContent = (userId: string, exp: number): string =>
 
 describe('Trae credential normalization', () => {
   it('normalizes ISO and numeric expiries while exposing only the display username', () => {
-    expect(normalizeTraeCredential({ token: 'at', expiredAt: '2030-01-01T00:00:00.000Z', account: { username: 'LaoDing', email: 'private@example.com' } }, 'cn', 'desktop')).toMatchObject({
-      accessToken: 'at', accountName: 'LaoDing', edition: 'cn', source: 'desktop', expiresAtMs: Date.parse('2030-01-01T00:00:00.000Z'),
+    expect(normalizeTraeCredential({ token: 'at', expiredAt: '2030-01-01T00:00:00.000Z', account: { username: 'demo-user', email: 'private@example.com' } }, 'cn', 'desktop')).toMatchObject({
+      accessToken: 'at', accountName: 'demo-user', edition: 'cn', source: 'desktop', expiresAtMs: Date.parse('2030-01-01T00:00:00.000Z'),
     })
     expect(normalizeTraeCredential({}, 'cn', 'desktop')).toBeUndefined()
   })

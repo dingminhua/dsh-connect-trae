@@ -27,6 +27,7 @@
  */
 import { describe, it } from 'vitest'
 import { writeFileSync } from 'node:fs'
+import { DEMO_NICKNAME, DEMO_NUMERIC_ID } from './demo-accounts.ts'
 
 const TOKENS = `
 :root{
@@ -119,16 +120,16 @@ describe('composer shot', () => {
     const usage = {
       status: 'signed-in',
       accountId: 'account-1',
-      accountName: 'LaoDing',
+      accountName: DEMO_NICKNAME,
       tokenExpiresAtMs: Date.now() + 3_600_000,
       region: 'cn',
       accounts: [
-        { id: 'account-1', accountName: 'LaoDing', edition: 'cn', region: 'cn', source: 'desktop', tokenExpiresAtMs: Date.now() + 3_600_000, selected: true },
-        { id: 'account-2', accountName: '用户7520607992', edition: 'cn', region: 'cn', source: 'desktop', tokenExpiresAtMs: Date.now() + 3_600_000, selected: false },
+        { id: 'account-1', accountName: DEMO_NICKNAME, edition: 'cn', region: 'cn', source: 'desktop', tokenExpiresAtMs: Date.now() + 3_600_000, selected: true },
+        { id: 'account-2', accountName: DEMO_NUMERIC_ID, edition: 'cn', region: 'cn', source: 'desktop', tokenExpiresAtMs: Date.now() + 3_600_000, selected: false },
       ],
       models: [],
       enabledModelIds: [],
-      credits: { total: 7500, consumed: 5_879.63, available: 1_620.37, workAvailable: 0, generalAvailable: 634, accounts: [] },
+      credits: { total: 9_600, consumed: 3_141.28, available: 6_458.72, workAvailable: 0, generalAvailable: 412, accounts: [] },
       // The pool section, so the header's TEST button renders: the shot exists to
       // measure the row the user actually sees, and on a configured profile both
       // controls are in it.
@@ -142,8 +143,8 @@ describe('composer shot', () => {
         effectiveMemberAccountIds: ['account-1', 'account-2'],
         memberNames: {},
         accounts: [
-          { accountId: 'account-1', accountName: 'LaoDing', member: true, current: true, reachable: true, generalAvailable: 634 },
-          { accountId: 'account-2', accountName: '用户7520607992', member: true, current: false, reachable: true, generalAvailable: 784 },
+          { accountId: 'account-1', accountName: DEMO_NICKNAME, member: true, current: true, reachable: true, generalAvailable: 412 },
+          { accountId: 'account-2', accountName: DEMO_NUMERIC_ID, member: true, current: false, reachable: true, generalAvailable: 583 },
         ],
       },
     }
@@ -157,8 +158,8 @@ describe('composer shot', () => {
       if (url.includes('/account-credits')) {
         return new Response(JSON.stringify({
           accounts: [
-            { id: 'account-1', accountName: 'LaoDing', selected: true, generalAvailable: 634 },
-            { id: 'account-2', accountName: '用户7520607992', selected: false, generalAvailable: 784 },
+            { id: 'account-1', accountName: DEMO_NICKNAME, selected: true, generalAvailable: 412 },
+            { id: 'account-2', accountName: DEMO_NUMERIC_ID, selected: false, generalAvailable: 583 },
           ],
         }), { status: 200 })
       }

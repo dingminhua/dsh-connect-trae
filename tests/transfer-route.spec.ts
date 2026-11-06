@@ -59,7 +59,7 @@ function response(): {
 }
 
 const cnCredential = (over: Partial<TraeCredential> = {}): TraeCredential => ({
-  accessToken: 'tok-cn', refreshToken: 'rt-cn', userId: 'user-1', accountName: 'LaoDing',
+  accessToken: 'tok-cn', refreshToken: 'rt-cn', userId: 'user-1', accountName: 'demo-user',
   host: 'https://api.trae.cn', userRegion: 'CN', expiresAtMs: 1_893_456_000_000,
   edition: 'cn', source: 'dsh', ...over,
 })

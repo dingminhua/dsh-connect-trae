@@ -51,7 +51,7 @@ function stubUsage(): void {
   vi.stubGlobal('fetch', async () => new Response(JSON.stringify({
     status: 'signed-in',
     accountId: 'account-1',
-    accountName: 'LaoDing',
+    accountName: 'demo-user',
     tokenExpiresAtMs: Date.now() + 3_600_000,
     region: 'cn',
     accounts: [],
@@ -285,7 +285,7 @@ describe('the section surface', () => {
     // Every @media breakpoint in this stylesheet measures the VIEWPORT, and the
     // settings column is 564px regardless of window size — so a media query
     // never fires there. The pool shipped a five-column grid into 564px and the
-    // account name was measured at 76px ("用户7520607992" read "用户75").
+    // account name was measured at 76px (a 9-digit id read as only its prefix).
     //
     // container-type belongs on the TABLE and not an ancestor: it makes the
     // element the containing block for position:fixed descendants, and the busy
@@ -315,7 +315,7 @@ describe('the section surface', () => {
     // each carry their OWN `flex-direction:column` / three-row grid. Left alone
     // they kept those inner layouts, so the status cell stayed four lines
     // ("正常 / 测得 3 天前 / 来自测速 / upstream answered") and the account name
-    // was squeezed to "LaoDin" and "用户75" — the row got taller AND narrower.
+    // was squeezed to a bare prefix — the row got taller AND narrower.
     const narrow = /@container \(max-width:700px\)\{([\s\S]*?)\n\}/.exec(TRAE_CARD_CSS)?.[1] ?? ''
     expect(narrow).toContain('.dsm-trae-pool-probe-cell{flex-direction:row')
     expect(narrow).toContain('.dsm-trae-pool-account{display:flex')

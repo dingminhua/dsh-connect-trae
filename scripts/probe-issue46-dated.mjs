@@ -16,7 +16,7 @@ import { decrypt } from './decrypt-block.js'
 const mod = await import('../lib/index.js')
 const { buildTraeCnHeaders, REGION_GATEWAYS } = mod
 
-const storage = JSON.parse(await readFile('/Users/dmh2002/Library/Application Support/Trae CN/User/globalStorage/storage.json', 'utf8'))
+const storage = JSON.parse(await readFile('/Users/<user>/Library/Application Support/Trae CN/User/globalStorage/storage.json', 'utf8'))
 const raw = JSON.parse(decrypt(storage['iCubeAuthInfo://icube.cloudide']))
 const product = JSON.parse(await readFile('/Applications/Trae CN.app/Contents/Resources/app/product.json', 'utf8'))
 const dcKey = Object.keys(storage).find(key => key.startsWith('iCubeAuthInfo://icube-dc:'))
