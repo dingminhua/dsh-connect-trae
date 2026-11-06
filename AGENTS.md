@@ -58,6 +58,10 @@ pnpm run verify:privacy      # 只扫发布物：PNG 字节流 + OCR 渲染文�
 `verify:privacy` 的 OCR 那一行必须是 `OK`，出现 `SKIP` 说明后端没起来，
 在 `DSH_STRICT_PRIVACY=1` 或 `npm publish` 流程里会被判为失败。
 
+> **CI 也会跑它**（`.github/workflows/ci.yml` 的 `Privacy gate` 步骤，双平台）。
+> 所以「本地忘了跑」不等于它能溜过去；但反过来，**CI 绿也不等于图片没问题**——
+> OCR 读的是渲染出来的像素，低对比度、异常字距、被裁切的部分它读不到。
+
 **它们挡不住什么，心里要有数**：图片内容只能靠 OCR（会漏全角、插空格、低对比度），
 文本扫描按值哈希（挡不住 Base64 编码后再写进去的身份信息）。
 **新增或替换 `docs/assets/` 下的图，必须自己打开看一眼实际像素。**

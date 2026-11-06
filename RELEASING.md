@@ -78,6 +78,10 @@ grep -F "Copyright (c) 2026 LaoDing" LICENSE
 > **没有语言包时脚本会打印 `SKIP … screenshots are NOT text-verified`**：那不是通过，
 > 是缺口。`prepublishOnly`（`npm publish` 自动触发）在这种情况下会**直接拒绝发布**，
 > 所以发布机必须备好语言包。
+>
+> **CI 也会跑同一道门禁**（`.github/workflows/ci.yml` 的 `Privacy gate` 步骤，ubuntu 与
+> windows 各一次）。它在 runner 临时目录里放好语言包，并设 `DSH_STRICT_PRIVACY=1`——
+> 拉取失败时是**红**，不是静默的绿。所以「本地忘了跑」不等于它能溜过去。
 
 **发现泄露后的处置（按这个顺序，不要只做第一项）：**
 

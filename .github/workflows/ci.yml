@@ -47,3 +47,27 @@ jobs:
 
       - name: Verify package contents
         run: npm pack --dry-run
+
+      # The publication gate has to run HERE, not only on the maintainer's
+      # machine: `prepublishOnly` fires at `npm publish` time, which is the
+      # last moment and only for whoever runs it. CI is the first moment.
+      #
+      # `DSH_STRICT_PRIVACY=1` turns a missing OCR backend from a silent SKIP
+      # into a failure, so a runner without the traineddata cannot report a
+      # green gate it did not actually check. The data is fetched into
+      # `$RUNNER_TEMP` (never the repo root) and pointed at with DSH_TESSDATA.
+      - name: Fetch OCR data for the image gate
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/tessdata"
+          curl -fsSL -o "$RUNNER_TEMP/tessdata/eng.traineddata.gz" \
+            https://github.com/naptha/tessdata/raw/gh-pages/4.0.0_best/eng.traineddata.gz
+          curl -fsSL -o "$RUNNER_TEMP/tessdata/chi_sim.traineddata.gz" \
+            https://github.com/naptha/tessdata/raw/gh-pages/4.0.0_best/chi_sim.traineddata.gz
+
+      - name: Privacy gate
+        shell: bash
+        env:
+          DSH_TESSDATA: ${{ runner.temp }}/tessdata
+          DSH_STRICT_PRIVACY: '1'
+        run: pnpm run verify:privacy
