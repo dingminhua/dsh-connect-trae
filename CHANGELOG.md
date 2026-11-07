@@ -1,5 +1,156 @@
 # Changelog
 
+## 4.15.0 (2026-11-08)
+
+### 新增：模型选择器里的胶囊，改成「谁都能显示」
+
+按同族插件的做法（`dsh-connect-workbuddy` 的 `docs/MODEL-LABEL-SPEC.md`）补完两件事。
+两件是**同一条链的两头**，缺一头都不成立。
+
+**背景一句话**：`conversation.input.model.label` 是 `single` 槽，只渲染一条注册，
+而赢家的组件会被**所有** provider 的行走一遍。所以：
+
+| 位置 | 谁能画 | 靠什么 |
+| --- | --- | --- |
+| 自己的行 | 自己的组件 | 自己判定的促销胶囊（时钟判定，已有） |
+| 别人的行 | **槽位赢家** | 只有 `model.badge`——别人**发布过**的东西 |
+
+4.8.1 只做了下半张表（赢家复现别人的 `badge`），本版补上半张：**本插件也开始发布**。
+不发布的话，一旦 qoder / workbuddy 抢先占了那格，本插件的行就什么装饰都没有——
+这正是那两家各自胶囊消失时看到的现象。
+
+**一、adapter 发布 `badge`（`src/model-badge.ts` + `src/adapter.ts`）**
+
+覆盖 `listModels()`，只挂 `badge`，别的一个字段都不动：
+
+```ts
+const now = new Date()   // ONE clock for the whole catalog
+return models.map((model) => {
+  const badge = this.badgeOf(model.id, now)
+  return { ...model, ...(badge === undefined ? {} : { badge }) }
+})
+```
+
+三条都是踩过的坑，写死在测试里：
+
+1. **必须用展开（`...`）而不是字面量直写 `badge`。** 0.1.x 的 `LlmModelInfo` 没有这个
+   字段，字面量会被 tsc 判为未知属性；展开一个变量不受这条检查约束，同一份代码在两个
+   宿主线上都能编译（已用 0.2.2-rc.1 的类型实测）。旧宿主会在注册表里**静默丢掉**它，
+   不报错、不崩，行退化成原来的名字。
+2. **「没有 badge」是 `undefined`，不是 `null`。** 注册表对传入值直接做 `badge.text`，
+   `null` 会在 `listModels` 里抛错，而那个错误是**按 provider 的**——`trae` 的**全部**
+   模型会一起从目录消失（进 `failures`），不只是带胶囊那一行。
+3. **文案 ≤ 12 个 grapheme、`tone` 只能用四个字面量、翻译表必须含 `en`。** 这条链上
+   没有任何一步校验它们：注册表只做规范化，宿主的 `Tag` 只把 tone 写成 `data-tone`。
+   写错的后果都是**安静的**——缺 `en` 是一枚空胶囊，错的 tone 是一枚没有配色的胶囊。
+
+**说的是哪一件事：此刻正在跑的促销。** 与卡片上、与自己行上画的那枚胶囊**同一份数据、
+同一个判定**（`selectTraePromoBadge`）——`5 折` / `闲时 5 折` / `限时 5 折`，中文照上游
+的「折」，英文改写成百分比（英文没有「折」）。`subsidy` / `limited` 落 `warning`，
+`offPeak` 落 `info`，与 `PROMO_TONES` 一致。
+
+**时钟在 `listModels()` 里读，这是规范说的「where it is drawn」那一刻**，而**不是**
+把促销冻进目录：`activityDiscount` 一直是以未判定的形态挂在模型条目上的，判定发生在
+画的那一刻，窗口一关就不再出现。整个目录**只取一次时间**——否则一次刷新期间窗口边界
+落下，同一张菜单里会有一行带胶囊、隔壁那行不带。
+
+**这一版推翻了两小时前的一稿，原因值得记下来。** 第一稿放的是「免费」
+（`creditMultiplier === 0` → `Free`/`免费`，`success`），理由是「badge 是目录数据，
+不该装随时钟变的东西」。两处都错：
+
+| 错在哪 | 实测 |
+| --- | --- |
+| **那个判据根本不可达** | 两条解析路径都把上游的 `consumption_rate` 过一遍 `finitePositive`（`src/solo.ts:103`、`src/model-metadata.ts:54`），它要求 `> 0`，所以 `rate: 0` 进来是 `undefined`。`creditMultiplier` 恰好为 `0` 只能来自**已保存的** `lastCatalog`，永远不来自实时目录。喂 `rate: 0` / `0.0` / `'0'` 给真实解析器，三个都是 `undefined` |
+| **我把规范的边界读反了** | 规范「三个已知边界」第 2 条反对的是**分钟级负载态**（负载等级、剩余积分、队列长度），促销恰恰是第 1 步 ✅ 示例的头一项；而 workbuddy 自己的 `resolveModelBadge` 放的就是 `selectPromoBadge(info.promos, Date.now())` |
+
+第一稿能活下来，是因为**夹具是我手写的** `creditMultiplier: 0`——一个没有任何解析
+路径能产生的值。测试因此全绿，功能其实一行都不会显示。现在补了一条守卫直接喂真实
+解析器（`tests/model-badge.spec.ts` 的 `why a price-derived badge is impossible`），
+把这条不可达性钉住。
+
+**英文措辞按最坏情况定的。** 12 grapheme 的上限要按 `percent = 100` 检查，不是按好看的
+`50`：`Off-peak 100% off` 是 17，会撑破一行；`Offpeak 100%` 正好 12。测试专门构造了
+100% 的夹具，只测 50 会漏掉真实的溢出。
+
+**二、别人的行：按宿主的样子复现（`src/client/TraeModelLabel.tsx`）**
+
+非本插件的行本来就会复现 `badge`（4.8.1），本版按宿主真值校正了三处，并让这一支
+**对任何形状都不抛**：
+
+- **顺序**：`trigger` 时胶囊在**前**、名字在后；`menu` / `option` 时名字在前、胶囊在
+  后。`selected` 不参与。
+- **配色**：`info` 是 `state-business-primary`（不是 `brand-primary`）、`warning` 是
+  `state-warn-primary`（不是 `state-warn-secondary`），底色是各自颜色 10%（`warning`
+  12%）的 `color-mix`，**没有描边**。原来的实现这两个 token 都抄错了，而且加了描边。
+  差一个 token 仍然「看着像蓝的」，所以这种错能活过一次 review——但同一行两颗胶囊是
+  并排比较的。
+- **几何**：`padding: 1px 8px`、`font-size: 11px`、`line-height: 17px`、`999px` 圆角，
+  且**不截断**（原来加了 `max-width` + 省略号，宿主不截断，截了反而在同宽度下显示成
+  「限时免…」）。
+- **不抛**：`null`、未知 tone、非字符串 `text`、根本不是对象的 `badge`，一律退化成
+  纯名字。这一支崩了不是丢一枚胶囊——`entriesOfSlot` 会把**整个组件**从那一格摘掉，
+  于是选择器里**每一行**的模型名都跟着没。
+
+这一支仍然是纯函数：不发请求、不读快照、不起定时器（一个菜单可能同时有二十行别家的
+模型）。
+
+**没改的**：`model.name` 一个字符都没动。名字还被宿主用作菜单 `title`、触发器的
+`aria-label` 和搜索排序键，把胶囊语法塞进去会从这三个地方漏出来。
+
+### 修复：面板里那个空框
+
+积分面板的表格和「最近刷新」之间会画出一个**空白的框**——有边框、有高度，里面一个字
+都没有。截图报告的正是它。
+
+**根因是守卫问错了问题。** 渲染条件是 `signedIn?.credits?.expiry !== undefined`，只要
+上游把四个桶发下来就成立；而真正决定「有没有话说」的是 `expiryNotice()`，它在四个桶
+**全部 `packs: 0`** 时返回 `undefined`——没有时间范围、没有金额、也没有包数可报。
+两层判断不一致，于是 `<div class="dsm-trae-expiry">` 照样渲染，里面那个 `<span>` 是
+空的，边框用的还是 `tone ?? 'lapsed'` 的兜底值：
+
+```
+<div ...><span></span></div>      ← 测试里真实拿到的东西
+```
+
+**这个形状不是异常数据。** `/usage` 返回一个 `expiry` 块、而所有包要么不在 7 天窗口内
+要么已经用尽，是普通账号的常态——每个这样的账号都会顶着一个空框。
+
+**修法**：把「取 notice」收成一个函数 `expiryNoticeOf()`，渲染条件直接读它的返回值。
+这样「有没有框」和「有没有句子」是同一个布尔值，不可能再对不上。卡片那侧的
+`TraeAccountPanel` 本来就是对的（`notice === undefined` 直接 `return null`），所以这次
+只动了面板一处；两处共用的层级判定仍在 `expiry-ladder.ts`。
+
+**测试**：先写了一条会失败的用例（`expiry` 对象在、四个桶全空 → 断言
+`.dsm-trae-expiry` 为 `null`），确认它在修之前红，输出就是上面那个空 div。修完转绿，
+同时断言 `.dsm-trae-composer-panel-foot` 仍在——证明是「框没了」，不是「整个面板没渲染」。
+
+### 测试
+
+全仓 **110 个测试文件 / 1425 例**通过（新增 2 个文件 / 36 例）。
+
+- `tests/model-badge.spec.ts`（15 例）：促销行带 badge、无促销行**连键都没有**
+  （`'badge' in model`）、名字不变、`en` 必填、tone 在四个字面量内、时钟判定（窗口内
+  有、窗口外没有）、与卡片措辞一致；**并按最坏情况（`percent = 100`）**断言 12 grapheme
+  上限——只测 50 会漏掉 `Off-peak 100% off` 那个真实的溢出。
+  另有一条 `why a price-derived badge is impossible`：喂真实解析器 `rate: 0` / `0.0` /
+  `'0'`，断言三者都解析成 `undefined`。这是这次翻车的那条路，留着防止有人再回头用它。
+  还有一条守着「英文**故意**比卡片短」：把卡片那句 `Off-peak 100% off` 拿来断言它确实
+  超过 12，再断言 badge 的英文不是它——将来谁想「统一」两处文案，会先在这里失败。
+- `tests/composer-points.spec.tsx` 新增 1 例（空桶不画框，见上）。
+- `tests/model-label-host-badge.spec.tsx`（19 例）：三种 placement 的顺序与那个空格、
+  四个 tone 的 token、无描边、宿主几何、不截断、未知 tone 落 `neutral`，以及 `null` /
+  非对象 / 非字符串 `text` / 空白串全部退化成纯名字且**不抛**、别家行不发请求不起定时器。
+- `tests/settings-integration.spec.ts` 新增 1 例端到端：经**真实**的 `LlmRuntime` 走一遍
+  设置 schema → 目录 → `listModels()`，断言促销行拿到 badge、普通行没有这个键。
+- 反向验证（不是只在修好之后断言，六次全部被抓）：`placement` 两个分支对调 → 6 例红；
+  `badge` 改成 `null` → 1 例红；展开写法改成 `{ ...model, badge }` → 2 例红；忽略传入的
+  时钟（写死一个日期）→ 1 例红；去掉 `en` → 4 例红；`offPeak` 的 tone 改成 `brand` →
+  1 例红。
+- **一次没抓住的变异，记在这里**：把 `promoZhe` 的 `Number.isInteger(zhe) ? String(zhe)
+  : zhe.toFixed(1)` 改成 `String(zhe)`，14 例全绿。实测 `percent` 取遍 1–100，两种写法
+  的输出**完全相同**，所以任何断言都抓不到它。这一条不是测试不够，是该分支在当前取值
+  域里等价；注释里已写明这个重复实现为什么不会漂移。
+
 ## 4.14.3 (2026-11-07)
 
 ### 修复：CI 连续 8 次失败——两处都是配置，与代码无关

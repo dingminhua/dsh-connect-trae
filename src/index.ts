@@ -145,6 +145,7 @@ export { TraeRawCapabilityController, type TraeRawCapabilityControllerOptions } 
 export { TraeFallbackUpstreamClient, type TraeFallbackUpstreamOptions } from './fallback-upstream.ts'
 export { TraeGatedUpstreamClient, type TraeGatedUpstreamOptions } from './gated-upstream.ts'
 export { applyReasoningEffort, parseReasoningCapability, TRAE_REASONING_EFFORTS, type TraeReasoningCapability, type TraeReasoningEffort } from './reasoning.ts'
+export { TRAE_BADGE_TONES, traeModelBadge, type TraeBadgeTone, type TraeModelBadge } from './model-badge.ts'
 export { refreshTraeCredential, type TraeRefreshDevice } from './refresh.ts'
 export { decodeTraeEvent, SseDecoder, type SseEvent, type TraeStreamEvent } from './sse.ts'
 export { prepareSoloBody, TraeSoloUpstreamClient, TRAE_SOLO_CHAT_PATH, TRAE_SOLO_FUNCTION, TRAE_SOLO_MODELS_PATH, type TraeSoloClientOptions } from './solo.ts'

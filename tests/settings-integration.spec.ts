@@ -606,3 +606,71 @@ describe('settingsNamespaceOf', () => {
     } finally { await restore() }
   })
 })
+
+/**
+ * The selector badge, end to end through the REAL host registry.
+ *
+ * `tests/model-badge.spec.ts` proves the adapter stamps `badge` onto the rows it
+ * returns. That is not the same claim as "the picker receives it": the value
+ * passes through `LlmRuntime.listModels`, which normalizes it into a fresh
+ * object and — this is the part worth pinning — does so only for rows that
+ * carry it, while rows without one must come out with NO key at all.
+ *
+ * The failure this guards is the expensive one: a `badge` that is present but
+ * malformed (`null`, or an object with no readable `text`) throws inside the
+ * registry, and a throw there is per-PROVIDER — every Trae model would vanish
+ * from the catalog, not just the decorated row.
+ */
+describe('the selector badge through the host registry', () => {
+  it('carries the badge of a free row and leaves every other row keyless', async () => {
+    const ctx = new Context()
+    context = ctx
+    await ctx.plugin(LlmRuntime)
+    await ctx.plugin(MemorySettings)
+    const restore = await isolatedPlugin(ctx)
+    try {
+      await expect.poll(() => ctx.llm.listProviders().map(provider => provider.id)).toContain('trae')
+
+      // A directory row carrying a live promotion next to an ordinary one. Saved
+      // through the settings channel so this exercises the schema too — a field
+      // the schema drops never reaches the adapter at all.
+      //
+      // WHY NOT "a row priced at 0": an earlier version of this test did exactly
+      // that and passed while the feature was dead. `creditMultiplier: 0` cannot
+      // come from any parse path (both rate parsers demand a positive number),
+      // so a zero-multiplier fixture here proves nothing about the live
+      // directory. The promotion below is the shape upstream really publishes.
+      await ctx.settings.update(Trae.TRAE_SETTINGS_NS, {
+        regions: {
+          cn: {
+            lastCatalog: [
+              {
+                id: 'promo-model',
+                name: 'Promo Model',
+                contextWindow: 200_000,
+                input: ['text'],
+                creditMultiplier: 0.39,
+                activityDiscount: {
+                  current: { discountType: 'subsidy', beforeRate: 0.78, rate: 0.39, discountPercent: 50 },
+                },
+              },
+              { id: 'paid-model', name: 'Paid Model', contextWindow: 200_000, input: ['text'], creditMultiplier: 0.79 },
+            ],
+            enabledModelIds: ['promo-model', 'paid-model'],
+          },
+        },
+      })
+
+      const models = await ctx.llm.listModels('trae')
+      expect(models.find(model => model.id === 'promo-model')?.badge).toEqual({
+        text: { en: '50% off', zh: '5 折' },
+        tone: 'warning',
+      })
+      // ABSENT, not undefined-valued: the registry spreads conditionally, and
+      // `'badge' in model` is the assertion that tells the two apart.
+      expect('badge' in (models.find(model => model.id === 'paid-model') ?? {})).toBe(false)
+      // The name stays the catalog name — the badge is a separate field.
+      expect(models.find(model => model.id === 'promo-model')?.name).toBe('Promo Model · x0.39')
+    } finally { await restore() }
+  })
+})

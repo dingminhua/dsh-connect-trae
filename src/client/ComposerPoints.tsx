@@ -53,6 +53,7 @@ import {
 import { COMPOSER_POINTS_CSS } from './styles.ts'
 import { formatDateTime } from './display.ts'
 import { expiryHeadlineKey, expiryNotice, expiryToneClass } from './expiry-ladder.ts'
+import type { ExpiryNotice } from './expiry-ladder.ts'
 import { planText } from './plan-text.ts'
 import type { TraeWebAccountCredit, TraeWebAccountState, TraeWebCreditExpiry, TraeWebPayStatus, TraeWebUsage } from '../status-paths.ts'
 import { withTraePoolAction } from '../status-paths.ts'
@@ -157,6 +158,25 @@ function generalCreditsOf(usage: TraeWebUsage): number | undefined {
 /** Group the digits so a four-figure balance stays readable in a narrow row. */
 function formatCredits(value: number): string {
   return value.toLocaleString('en-US', { maximumFractionDigits: 0 })
+}
+
+/**
+ * The notice this panel would render, or undefined when there is nothing to say.
+ *
+ * THE ONE GUARD THE RENDER READS. An earlier version asked
+ * `signedIn?.credits?.expiry !== undefined`, which is true whenever upstream sent
+ * the four buckets — even with every `packs` count at 0. The box then rendered
+ * with an empty `<span>` inside and the `lapsed` border (the tone fallback),
+ * i.e. a warning-shaped rectangle containing nothing. Every empty-bucket
+ * document produced one, which is the blank box in the reported screenshot.
+ *
+ * Putting the whole lookup here means the render cannot ask a weaker question
+ * than the copy does: "is there a box" and "is there a sentence" are now the
+ * same boolean.
+ */
+function expiryNoticeOf(signedIn: { credits?: { expiry?: TraeWebCreditExpiry } } | undefined): ExpiryNotice | undefined {
+  const expiry = signedIn?.credits?.expiry
+  return expiry === undefined ? undefined : expiryNotice(expiry)
 }
 
 /**
@@ -863,14 +883,26 @@ export function ComposerPoints(props: ComposerPointsProps) {
           {/* Credit about to lapse. This panel is where the balance is actually
               read, so it is where "some of that balance is about to disappear"
               belongs — but only for the CN shape: the international document
-              carries a plan, not packs, so it has no per-pack expiry at all. */}
-          {activeRegion === 'cn' && signedIn?.credits?.expiry !== undefined
-            ? <div className={`dsm-trae-expiry ${expiryToneClass(expiryNotice(signedIn.credits.expiry)?.tier ?? 'lapsed')}`} role="status">
-                <span>{expiryMessageOf(signedIn.credits.expiry, t)}</span>
-                {soonestExpiryOf(signedIn.credits.expiry) === undefined
+              carries a plan, not packs, so it has no per-pack expiry at all.
+
+              GUARD ON THE NOTICE, NOT ON THE DOCUMENT. `credits.expiry` being
+              present only means upstream sent the four buckets; every one of
+              them can be empty (`packs: 0`), and then `expiryNotice()` returns
+              `undefined` because there is no horizon, no amount and no pack
+              count to report. Keying the render on the object drew an EMPTY
+              bordered box between the table and 「最近刷新」 — visible in the
+              reported screenshot as a blank rectangle with nothing in it. A
+              warning with nothing to warn about is not a warning.
+
+              Rendering is now driven by the same call that produces the copy,
+              so "there is a box" and "there is a sentence" cannot disagree. */}
+          {activeRegion === 'cn' && expiryNoticeOf(signedIn) !== undefined
+            ? <div className={`dsm-trae-expiry ${expiryToneClass(expiryNoticeOf(signedIn)!.tier)}`} role="status">
+                <span>{expiryMessageOf(signedIn!.credits!.expiry!, t)}</span>
+                {expiryNoticeOf(signedIn)!.soonestExpiresAtMs === undefined
                   ? null
                   : <span className="dsm-trae-expiry-detail">
-                      {t('row.expiryEarliest', { time: formatDateTime(soonestExpiryOf(signedIn.credits.expiry)!) })}
+                      {t('row.expiryEarliest', { time: formatDateTime(expiryNoticeOf(signedIn)!.soonestExpiresAtMs!) })}
                     </span>}
               </div>
             : null}

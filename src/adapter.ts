@@ -2,11 +2,12 @@ import { createProvider } from '@earendil-works/pi-ai'
 import type { Api, AuthContext, Context, CredentialStore, Message, Model, Provider, ProviderStreams, Tool } from '@earendil-works/pi-ai'
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy'
 import { ReasoningEffortId, resolveRetryPolicy } from '@deepseek-ai/dsh-llm'
-import type { LlmResolvedModelInfo, PreparedAdapterCall } from '@deepseek-ai/dsh-llm'
+import type { LlmModelInfo, LlmResolvedModelInfo, PreparedAdapterCall } from '@deepseek-ai/dsh-llm'
 import { PiAiAdapter } from '@deepseek-ai/dsh-llm-pi-ai'
 import type { ResolvedPiAiProviderProfile } from '@deepseek-ai/dsh-llm-pi-ai'
 import type { AttachmentStore } from '@deepseek-ai/dsh-attachment'
 import { FALLBACK_CONTEXT_WINDOW, servedContextWindow, traeInputModalities, traeModelDisplayName, type TraeCatalog, type TraeModelInfo } from './catalog.ts'
+import { traeModelBadge, type TraeModelBadge } from './model-badge.ts'
 import { piAiRuntimeInfo, type PiAiGeneration } from './pi-ai-runtime.ts'
 import { defaultEffortFor } from './default-effort.ts'
 import type { TraeShim } from './shim.ts'
@@ -432,7 +433,8 @@ export function withContextAdaptation(api: ProviderStreams, generation: PiAiGene
 }
 
 /**
- * The adapter, with the level each model runs at reported upward.
+ * The adapter, with the level each model runs at reported upward and the
+ * selector badge this plugin advertises on its own rows.
  *
  * WHY THIS SUBCLASS EXISTS. The kernel asks the adapter for a model's reasoning
  * metadata and materialises `reasoning.defaultEffort` into every request that
@@ -444,8 +446,9 @@ export function withContextAdaptation(api: ProviderStreams, generation: PiAiGene
  * at the seam the kernel actually consults, is what makes the picker name a
  * level instead of `Default`. See `default-effort.ts` for the precedence.
  *
- * The override is deliberately narrow: it rewrites ONE field of an object the
- * parent just built, and only when the model genuinely declares that level.
+ * Both overrides are deliberately narrow: each rewrites ONE field of an object
+ * the parent just built, and only where this plugin genuinely has something to
+ * say that the parent cannot.
  */
 class DefaultEffortAdapter extends PiAiAdapter {
   /**
@@ -456,12 +459,56 @@ class DefaultEffortAdapter extends PiAiAdapter {
    */
   private readonly defaultEffort: (model: string) => string | undefined
 
+  /**
+   * The badge for one advertised row id, judged at a caller-supplied clock;
+   * `undefined` means "say nothing".
+   *
+   * Looked up per row rather than precomputed, for the same reason as
+   * `defaultEffort`: `listModels()` is answered from the LIVE catalog, which a
+   * refresh can replace between two reads.
+   */
+  private readonly badgeOf: (modelId: string, now: Date) => TraeModelBadge | undefined
+
   constructor(
     config: ConstructorParameters<typeof PiAiAdapter>[0],
     defaultEffort: (model: string) => string | undefined = () => undefined,
+    badgeOf: (modelId: string, now: Date) => TraeModelBadge | undefined = () => undefined,
   ) {
     super(config)
     this.defaultEffort = defaultEffort
+    this.badgeOf = badgeOf
+  }
+
+  /**
+   * Attach the selector badge to the rows this provider advertises.
+   *
+   * WHY OVERRIDE `listModels` SPECIFICALLY: `badge` travels the CATALOG path
+   * only. `normalizeModelInfo` (exact-route resolution) does not copy it, and no
+   * request or Session event carries it — the host's `LlmRuntime.listModels`
+   * is the one place it is read off an adapter and forwarded. `PiAiAdapter`'s
+   * own implementation never emits one, so a subclass has to add it here.
+   *
+   * WHY THE CONDITIONAL SPREAD, AND NOT `{ ...model, badge }`: hosts before
+   * 0.2.2 have no `badge` on `LlmModelInfo` at all, and a literal `badge` key
+   * would be rejected there as an unknown property — this file has to compile
+   * against BOTH host lines. Spreading a variable dodges that check, and the
+   * old registry silently drops the key, so a row degrades to exactly the name
+   * it had before. `undefined` must therefore express "no badge"; a `null`
+   * would throw inside the registry's `badge.text` and take the whole provider
+   * out of the catalog (see `model-badge.ts`).
+   *
+   * ONE CLOCK FOR THE WHOLE CATALOG. `now` is fixed before the map, not inside
+   * it: a promotion window can end between two rows, and two models of one
+   * directory disagreeing about whether the same offer is running is a bug the
+   * user sees as one row decorated and its neighbour not.
+   */
+  override async listModels(provider: string): Promise<readonly LlmModelInfo[]> {
+    const models = await super.listModels(provider)
+    const now = new Date()
+    return models.map((model) => {
+      const badge = this.badgeOf(model.id, now)
+      return { ...model, ...(badge === undefined ? {} : { badge }) }
+    })
   }
 
   override resolveModel(provider: string, model: string, signal?: AbortSignal): Promise<LlmResolvedModelInfo> {
@@ -614,12 +661,35 @@ export function createTraeAdapter(options: TraeAdapterOptions): TraeAdapter {
       options.defaultEfforts?.() ?? {},
     )
   }
+  /**
+   * The badge for one advertised row, resolved from the LIVE catalog.
+   *
+   * `catalog.current()` for the same reason `resolveDefaultEffort` reads it:
+   * those are the rows this provider actually serves, so the badge describes the
+   * promotion running RIGHT NOW rather than one saved earlier.
+   *
+   * ONE CLOCK PER CALL, NOT PER ROW. `listModels()` maps over every row, so
+   * reading `Date.now()` per row would let a window boundary fall between two
+   * rows of the same catalog — one model marked "闲时 5 折" and the next not, in
+   * the same menu, from the same clock tick that never happened. `listModels`
+   * fixes the instant once and passes it here.
+   *
+   * THE ENTERPRISE ROUTE IS NOT SPECIAL-CASED. The badge now describes a
+   * promotion rather than a consumer-pool price, and `activity_discount` is a
+   * property of the row's own config, so a tenant row that publishes one is
+   * genuinely discounted for that tenant. The `showRate` suppression stays where
+   * it belongs: the NAME still omits the multiplier there.
+   */
+  const resolveBadge = (model: string, now: Date): TraeModelBadge | undefined => {
+    const info = options.catalog.current().find(entry => entry.id === model)
+    return info === undefined ? undefined : traeModelBadge(info, now)
+  }
   const adapter = new DefaultEffortAdapter({
     profiles: () => profiles,
     auth: INERT_AUTH,
     resolveApiKey: async () => options.secret ?? options.shim.token(),
     ...options.resolveAttachments === undefined ? {} : { resolveAttachments: options.resolveAttachments },
-  }, resolveDefaultEffort)
+  }, resolveDefaultEffort, resolveBadge)
 
   return {
     adapter,

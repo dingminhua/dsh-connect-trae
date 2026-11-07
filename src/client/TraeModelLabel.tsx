@@ -55,7 +55,7 @@
  * @module dsh-connect-trae/client/TraeModelLabel
  */
 import { useEffect, useState } from 'react'
-import type { ReactElement } from 'react'
+import type { CSSProperties, ReactElement } from 'react'
 import { selectTraePromoBadge } from '../promo.ts'
 import type { TraePromoBadge, TraePromoKind } from '../promo.ts'
 import { panelOfProvider } from '../region.ts'
@@ -404,70 +404,170 @@ export const MODEL_LABEL_PRIORITY = -102
  *
  * `text` is a literal or translations keyed by lowercase language id with a
  * required English entry, and `tone` is the emphasis the host's own label
- * paints. This plugin never advertises one of these itself, but it must not
- * DELETE another provider's: `conversation.input.model.label` is a `single`
- * slot, so whichever component holds it replaces the host's built-in
- * name+badge rendering for every provider, not just its own.
+ * paints. Declared LOCALLY, not imported from `@deepseek-ai/dsh-llm`: that type
+ * does not exist on 0.1.x, and the whole point is that this file still compiles
+ * there (where `props.model.badge` is simply always `undefined`).
+ *
+ * This plugin publishes one of these itself now (`src/model-badge.ts`), but the
+ * rule here is unchanged: it must not DELETE another provider's either.
+ * `conversation.input.model.label` is a `single` slot, so whichever component
+ * holds it replaces the host's built-in name+badge rendering for every
+ * provider, not just its own.
+ *
+ * Every field is OPTIONAL and every value is `unknown` on purpose. This shape
+ * is what arrives from the wire, and the branch that reads it must survive
+ * anything: see {@link readHostBadge}.
  */
 interface HostModelBadge {
-  text: string | Record<string, string>
-  tone: 'neutral' | 'info' | 'success' | 'warning'
+  text?: unknown
+  tone?: unknown
 }
 
-/** The tone colours, mapped onto the same theme tokens the host's Tag paints. */
-const HOST_BADGE_TONES: Record<HostModelBadge['tone'], { color: string, background: string, border: string }> = {
-  neutral: { color: 'var(--dsw-alias-label-secondary)', background: 'var(--dsw-alias-bg-layer-2)', border: 'var(--dsw-alias-border-l2)' },
-  info: { color: 'var(--dsw-alias-brand-primary)', background: 'var(--dsw-alias-bg-layer-2)', border: 'var(--dsw-alias-border-l2)' },
-  success: { color: 'var(--dsw-alias-state-success-primary)', background: 'var(--dsw-alias-bg-layer-2)', border: 'var(--dsw-alias-border-l2)' },
-  warning: { color: 'var(--dsw-alias-state-warn-secondary)', background: 'var(--dsw-alias-bg-layer-2)', border: 'var(--dsw-alias-border-l2)' },
+/** The four tones the host understands, as a lookup for narrowing. */
+const HOST_BADGE_TONE_NAMES = ['neutral', 'info', 'success', 'warning'] as const
+
+type HostBadgeTone = typeof HOST_BADGE_TONE_NAMES[number]
+
+/**
+ * The tone palette, transcribed from the host's `Tag.module.css` (0.2.2-rc.1).
+ *
+ * TWO TOKENS ARE EASY TO MISCOPY, AND BOTH WERE: `info` paints
+ * `state-business-primary` (not `brand-primary`) and `warning` paints
+ * `state-warn-primary` (not `state-warn-secondary`). A near-miss token still
+ * "looks blue" or "looks amber", which is why this survived a review — but two
+ * capsules on one row are compared directly, so the drift is visible.
+ *
+ * The fill is the tone's own colour mixed into transparent (10%, or 12% for
+ * `warning`), and there is NO border: the host's capsule is a fill only.
+ */
+const HOST_BADGE_TONES: Record<HostBadgeTone, { color: string, background: string }> = {
+  neutral: {
+    color: 'var(--dsw-alias-label-secondary)',
+    background: 'var(--dsw-alias-bg-module-platform)',
+  },
+  info: {
+    color: 'var(--dsw-alias-state-business-primary)',
+    background: 'color-mix(in srgb, var(--dsw-alias-state-business-primary) 10%, transparent)',
+  },
+  success: {
+    color: 'var(--dsw-alias-state-success-primary)',
+    background: 'color-mix(in srgb, var(--dsw-alias-state-success-primary) 10%, transparent)',
+  },
+  warning: {
+    color: 'var(--dsw-alias-state-warn-primary)',
+    background: 'color-mix(in srgb, var(--dsw-alias-state-warn-primary) 12%, transparent)',
+  },
+}
+
+/** One badge as this component will actually draw it: a known tone and real text. */
+interface ResolvedHostBadge {
+  tone: HostBadgeTone
+  label: string
+}
+
+/** Whether a value is one of the host's four tone literals. */
+function isHostBadgeTone(value: unknown): value is HostBadgeTone {
+  return typeof value === 'string' && (HOST_BADGE_TONE_NAMES as readonly string[]).includes(value)
 }
 
 /**
  * The one line a badge shows, in the reader's language.
  *
- * The host contract requires an English entry, so that is the last resort; the
- * active language and its base tag (`de-DE` → `de`) come first, matching what
- * the host's own resolver does. An empty string is treated as absent — a blank
- * chip would be a decoration that says nothing.
+ * `text` is `unknown` because it comes off the wire. A literal is used as-is; a
+ * table is looked up exactly the way the host's `resolveText` does it — active
+ * language, then its base tag (`pt-BR` → `pt-br` → `pt`), then the required
+ * `en`. Anything else (a number, an array, a nested object) is not text, so it
+ * reads as absent rather than being stringified into `[object Object]`.
+ *
+ * A BLANK string is treated as absent, which is deliberately STRICTER than the
+ * host: `resolveText` returns `''` untouched (it only fills in missing keys), so
+ * `{ en: '' }` paints a real, empty capsule. Refusing that here means a
+ * decoration never says nothing — a rule this component adds, not the host's.
  */
-function resolveHostBadgeText(text: string | Record<string, string>): string | undefined {
+function resolveHostBadgeText(text: unknown): string | undefined {
   if (typeof text === 'string') return text.trim() === '' ? undefined : text
+  if (typeof text !== 'object' || text === null || Array.isArray(text)) return undefined
+  const table = text as Record<string, unknown>
   const language = uiLanguage().toLowerCase()
   const base = language.split('-')[0] ?? ''
-  const picked = text[language] ?? (base === '' ? undefined : text[base]) ?? text.en
-  return picked === undefined || picked.trim() === '' ? undefined : picked
+  const candidates = [table[language], base === '' ? undefined : table[base], table['en']]
+  for (const candidate of candidates) {
+    if (typeof candidate !== 'string') continue
+    if (candidate.trim() !== '') return candidate
+  }
+  return undefined
 }
 
-/** One provider-authored selector badge, drawn where the host's own label draws it. */
-function HostBadge(props: { badge: HostModelBadge, label: string }): ReactElement {
-  const tone = HOST_BADGE_TONES[props.badge.tone] ?? HOST_BADGE_TONES.neutral
+/**
+ * Read one provider-authored badge, or `undefined` when there is nothing to say.
+ *
+ * THE WHOLE POINT IS THAT THIS DOES NOT THROW. `badge` arrives from another
+ * plugin's catalog, so its shape is that plugin's business: a `null`, an unknown
+ * tone, a missing `text` and a numeric `text` are all things a third party can
+ * ship. A throw here does not lose the capsule — it retires THIS COMPONENT from
+ * the `single` cell, which strips the name off every row in the picker. The
+ * degradation is therefore total: anything unreadable becomes the plain name.
+ */
+function readHostBadge(badge: unknown): ResolvedHostBadge | undefined {
+  if (typeof badge !== 'object' || badge === null || Array.isArray(badge)) return undefined
+  const label = resolveHostBadgeText((badge as HostModelBadge).text)
+  if (label === undefined) return undefined
+  const tone = (badge as HostModelBadge).tone
+  // An unknown tone still says something true: the host writes only
+  // `data-tone`, so a tone it has no CSS for renders a capsule with no palette.
+  // Neutral is the honest stand-in — never blank, never a throw.
+  return { tone: isHostBadgeTone(tone) ? tone : 'neutral', label }
+}
+
+/**
+ * One provider-authored selector badge, drawn where the host's own label draws it.
+ *
+ * Styled INLINE rather than by class, because a slot component renders OUTSIDE
+ * the card: the card's stylesheet is only mounted while the card is, so a picker
+ * opened on a page that never mounted it would otherwise get an uncoloured
+ * capsule. The geometry is the host's `Tag` verbatim — `padding: 1px 8px`,
+ * `font-size: 11px`, `line-height: 17px`, `border-radius: 999px`,
+ * `corner-shape: round`.
+ *
+ * NO `max-width` / `text-overflow`, deliberately: the host does not truncate, so
+ * truncating here would show "限时免…" at exactly the row width where the host
+ * showed the whole thing — less consistent, not more.
+ */
+function HostBadge(props: { badge: ResolvedHostBadge }): ReactElement {
+  const tone = HOST_BADGE_TONES[props.badge.tone]
+  // Typed as `CSSProperties` FIRST, so every key below is checked; the escape
+  // hatch is then confined to the one property the typings do not know.
+  const geometry: CSSProperties = {
+    display: 'inline-flex',
+    alignItems: 'center',
+    flex: 'none',
+    borderRadius: '999px',
+    padding: '1px 8px',
+    fontSize: '11px',
+    lineHeight: '17px',
+    fontWeight: 500,
+    whiteSpace: 'nowrap',
+    color: tone.color,
+    background: tone.background,
+  }
+  // `corner-shape` is a 2025 CSS primitive React's typings do not name yet. On
+  // an engine that lacks it the assignment is a no-op and `border-radius`
+  // alone gives the same rounded rectangle, so this degrades to the old shape
+  // rather than to nothing.
+  const style = { ...geometry, cornerShape: 'round' } as CSSProperties
   return (
     <span
-      className="dsm-trae-model-label-host-badge"
-      style={{
-        flex: 'none',
-        borderRadius: '999px',
-        padding: '0 6px',
-        fontSize: '10px',
-        fontWeight: 500,
-        lineHeight: '15px',
-        whiteSpace: 'nowrap',
-        border: `1px solid ${tone.border}`,
-        color: tone.color,
-        background: tone.background,
-        maxWidth: '8em',
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
-      }}
+      className={`dsm-trae-model-label-host-badge dsm-trae-model-label-host-badge-${props.badge.tone}`}
+      style={style}
     >
-      {props.label}
+      {props.badge.label}
     </span>
   )
 }
 
 export function TraeModelLabel(props: {
   provider: { id: string, name: string }
-  model: { id: string, name: string, badge?: HostModelBadge }
+  model: { id: string, name: string, badge?: unknown }
   placement: 'trigger' | 'menu' | 'option'
   selected: boolean
 }): ReactElement {
@@ -476,15 +576,37 @@ export function TraeModelLabel(props: {
   if (panel === undefined) {
     // Another provider's model: the host's built-in label is replaced by this
     // component, so it has to reproduce what that label would have shown — the
-    // catalog name and, since 0.2.2, the model's optional badge. The host puts
-    // the badge BEFORE the name in the composer trigger and AFTER it in menus.
-    const badgeInfo = model.badge
-    const label = badgeInfo === undefined ? undefined : resolveHostBadgeText(badgeInfo.text)
-    if (badgeInfo === undefined || label === undefined) return <span>{model.name}</span>
-    const badge = <HostBadge badge={badgeInfo} label={label} />
-    return props.placement === 'trigger'
-      ? <span>{badge} {model.name}</span>
-      : <span>{model.name} {badge}</span>
+    // catalog name and, since 0.2.2, the model's optional badge. `selected` does
+    // not participate, it only drives the host's own check mark.
+    //
+    // THE BADGE IS ALWAYS AFTER THE NAME, ON EVERY PLACEMENT. The host's own
+    // fallback moves it BEFORE the name on the trigger and AFTER it in menus;
+    // this component does not follow that, on purpose. Its own rows are always
+    // "name, then chip", so following the host showed "chip name" for other
+    // providers' models and "name chip" for its own in the SAME open menu — two
+    // orders in one list, which reads as a rendering bug rather than a rule. One
+    // order for every row is the only arrangement a user can learn. See
+    // `docs/MODEL-LABEL-SPEC.md`.
+    //
+    // NOTHING ELSE HAPPENS IN THIS BRANCH. One menu can hold twenty foreign
+    // rows, so there is no fetch, no snapshot read and no timer here — and the
+    // badge is read through {@link readHostBadge}, which cannot throw.
+    const badge = readHostBadge(model.badge)
+    if (badge === undefined) return <span>{model.name}</span>
+    // A FLEX ROW, not a bare span with a space: a space aligns the chip on the
+    // TEXT BASELINE, and since the chip is itself `inline-flex` its baseline
+    // comes from its inner text, so the pill rides visibly higher. The own-row
+    // branch below uses inline-flex + align-items:center; both branches must
+    // share one alignment model.
+    return (
+      <span
+        className="dsm-trae-model-label"
+        style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', whiteSpace: 'nowrap', verticalAlign: 'baseline' }}
+      >
+        <span>{model.name}</span>
+        <HostBadge badge={badge} />
+      </span>
+    )
   }
   return <TraeModelLabelInner modelId={model.id} name={model.name} panel={panel} />
 }

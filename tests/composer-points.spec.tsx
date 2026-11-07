@@ -425,6 +425,38 @@ describe('ComposerPoints readout', () => {
     expect(detail).not.toBe(oldRendering)
   })
 
+  it('renders NO expiry box when the document carries an expiry with every bucket empty', async () => {
+    // The box in the screenshot. `credits.expiry` EXISTING is not the same as
+    // there being something to say: `expiryNotice()` returns undefined when all
+    // four buckets are empty (`packs === 0` in each), because there is no
+    // horizon, no amount and no pack count to report. The component guarded on
+    // the OBJECT instead of on the NOTICE, so the `<div class="dsm-trae-expiry">`
+    // still rendered — an empty bordered box between the table and "最近刷新",
+    // 28px tall, with nothing inside it.
+    //
+    // This is the shape a real account produces whenever `/usage` returns an
+    // `expiry` block whose packs are all outside the 7-day horizon or already
+    // drained: the keys are present, every figure is 0.
+    stubRoute({
+      expiry: {
+        within24h: { total: 0, packs: 0 },
+        within3d: { total: 0, packs: 0 },
+        within7d: { total: 0, packs: 0 },
+        expired: { total: 0, packs: 0 },
+      },
+    })
+    render(<ComposerPoints t={realT} provider="trae" region="cn" />)
+    await waitFor(() => { expect(screen.getByText(/3,392/)).toBeTruthy() })
+    fireEvent.click(screen.getByRole('button', { name: /Trae CN/ }))
+    await waitFor(() => { expect(document.querySelector('[role="dialog"]')).not.toBeNull() })
+
+    // Nothing to warn about -> no box at all, not a box with no text.
+    expect(document.querySelector('.dsm-trae-expiry')).toBeNull()
+    // And the foot is still there right after the table, so this is "the box is
+    // gone", not "the whole panel failed to render".
+    expect(document.querySelector('.dsm-trae-composer-panel-foot')).not.toBeNull()
+  })
+
   it('keeps the same-day refresh stamp as a bare clock time', async () => {
     // The fix must not overreach: `composer.lastRefresh` is "now" by
     // construction, always the same day, and widens the foot of a narrow panel

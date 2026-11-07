@@ -268,18 +268,23 @@ describe('the model label in the host picker', () => {
    * another provider's decoration. It must draw it where the host draws it:
    * before the name in the composer trigger, after it in menus/options.
    */
-  it('keeps another provider\'s catalog badge visible, in the host\'s order', () => {
+  it('keeps another provider\'s catalog badge visible, always after the name', () => {
     vi.stubGlobal('fetch', async () => {
       throw new Error('a foreign model must never trigger this plugin\'s fetch')
     })
     const badge = { text: 'New', tone: 'success' as const }
 
+    // No space in the text: name and capsule are siblings in a flex row, so
+    // the gap is CSS. Order is pinned structurally below.
     const menu = render(<TraeModelLabel {...props('someone-else', 'Their Model', 'm1', badge)} />)
-    expect(menu.container.textContent).toBe('Their Model New')
+    expect(menu.container.textContent).toBe('Their ModelNew')
     menu.unmount()
 
+    // The trigger keeps the SAME order as a menu row, unlike the host's own
+    // fallback. This plugin's own rows never swap, so following the host would
+    // show two orders in one open menu; see `docs/MODEL-LABEL-SPEC.md`.
     const trigger = render(<TraeModelLabel {...props('someone-else', 'Their Model', 'm1', badge, 'trigger')} />)
-    expect(trigger.container.textContent).toBe('New Their Model')
+    expect(trigger.container.textContent).toBe('Their ModelNew')
     expect(trigger.container.querySelector('.dsm-trae-model-label-host-badge')).not.toBeNull()
   })
 

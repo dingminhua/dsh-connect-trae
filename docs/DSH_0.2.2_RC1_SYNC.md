@@ -103,7 +103,7 @@ src/adapter.ts(545,9): error TS2739: Type '{ … }' is missing the following pro
 | 能力 | 是否采纳 | 理由 |
 | --- | --- | --- |
 | `llm/models-updated(provider)` | **采纳** | 本插件的目录变化是「同一路由换了 roster」，`llm/adapters-updated` 只在路由拓扑变化时发，覆盖不到。现在在 `invalidateAdapter`（所有 `catalog.set` 路径的唯一收口）按 provider 发一次，并用签名去重，避免每次设置写入都让选择器重读 |
-| `model.badge` 渲染 | **采纳（只补回别人的）** | `conversation.input.model.label` 是 `single` 槽，本插件占住后宿主的「名字 + badge」内置渲染对**所有** provider 都不再生效。现在非 Trae 行按宿主顺序补回 badge（trigger 在前、菜单在后），并做语言回退；本插件自己的行行为不变 |
+| `model.badge` 渲染 | **采纳（补回别人的 + 发布自己的）** | `conversation.input.model.label` 是 `single` 槽，本插件占住后宿主的「名字 + badge」内置渲染对**所有** provider 都不再生效。现在非 Trae 行按宿主顺序补回 badge（trigger 在前、菜单在后），并做语言回退；本插件自己的行行为不变。反向的一半见 4.15.0：本插件也开始在**自己的** `listModels()` 里发布 `badge`（此刻正在跑的促销 → `5 折` / `闲时 5 折` / `限时 5 折`），因为槽的赢家只能画出别人**发布过**的东西——不发布，一旦别的插件赢了那格，本插件的行就什么装饰都没有 |
 | 新语言 ja/es/fr/de/ru/pt | **不采纳（决定）** | 只维护 zh / en；其他语言的用户按宿主回退链读英文 |
 | `settings.section.icon` | **不适用** | 插件注册的是 `plugins.bundle.config` / `plugins.row.config`，不拥有 `settings.section` |
 | `llm-pi-ai/request-headers` / `prepareHeaders` | **不采纳** | 插件不附加自定义推理请求头 |
