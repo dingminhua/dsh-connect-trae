@@ -112,41 +112,247 @@ interface SlotsLike {
  * @returns whether a route was taken. `false` means the caller's control should
  *   report that this host has no way there — see the module note.
  */
-export function openPluginSettingsPage(get: (name: string) => unknown): boolean {
-  const slots = get('slots') as SlotsLike | undefined
-  if (slots === undefined || typeof slots.entries !== 'function') return false
+/**
+ * The settings panel container inside the shell.
+ *
+ * `data-shortcut-modal="settings"` is the SHELL'S OWN attribute — its shortcut
+ * router keys off it to decide whether the open modal is the settings one — so
+ * it is far more stable than any class name, which is a CSS-module hash that
+ * changes with every build.
+ */
+export const SETTINGS_PANEL_SELECTOR = '[data-shortcut-modal="settings"]'
+
+/**
+ * The sidebar's settings trigger: dialog semantics plus an expanded state.
+ *
+ * Both attributes are load-bearing. `aria-haspopup="dialog"` identifies it as
+ * the thing that opens the panel; `aria-expanded` is how route 2 tells an open
+ * panel from a closed one WITHOUT clicking, because clicking a trigger that is
+ * already expanded CLOSES the dialog — a jump that would read as the settings
+ * window flickering shut.
+ */
+export const SETTINGS_TRIGGER_SELECTOR = 'button[aria-haspopup="dialog"][aria-expanded]'
+
+/**
+ * Budget for "panel mounted + nav row rendered".
+ *
+ * The panel mounts synchronously on the click, but the nav rows' labels wait
+ * for a locale snapshot, so a same-frame query is often one tick too early.
+ * Five attempts over ~300ms covers one layout pass while staying under the
+ * threshold where a user starts to think the press did nothing.
+ */
+const RETRY_DELAYS_MS = [0, 60, 70, 80, 90] as const
+
+/** Options for {@link openPluginSettingsPage}. */
+export interface SettingsRouteOptions {
+  /**
+   * The nav-row label in the CURRENT language, evaluated per press.
+   *
+   * A function rather than a string: route 2 finds the row by its rendered
+   * text, and a label captured at registration would stop matching the moment
+   * the user switches language.
+   */
+  label: () => string
+  /** Document; injected by tests. */
+  doc?: Document
+  /** Scheduler; injected by tests. Defaults to `window.setTimeout`. */
+  schedule?: (run: () => void, ms: number) => void
+  /**
+   * Called when NO route could even be attempted, so the caller can fall back
+   * to something that is at least not a dead press.
+   */
+  onGiveUp?: () => void
+}
+
+function defaultSchedule(run: () => void, ms: number): void {
+  try {
+    window.setTimeout(run, ms)
+  } catch {
+    // A host without a working timer should still get the row clicked rather
+    // than a jump that never runs.
+    run()
+  }
+}
+
+/**
+ * Find the settings nav row whose label is this plugin's.
+ *
+ * Trimmed equality, not `includes`: 「dsh-connect-trae」 is a SUBSTRING of
+ * nothing here, but 「模型」 is a substring of 「模型与预设」 on a differently
+ * worded shell, and a loose match would click the wrong row.
+ */
+function findSectionRow(scope: ParentNode, label: string): HTMLButtonElement | undefined {
+  const want = label.trim()
+  if (want === '') return undefined
+  const buttons = Array.from(scope.querySelectorAll<HTMLButtonElement>('button'))
+  return buttons.find(button => (button.textContent ?? '').trim() === want)
+}
+
+/**
+ * Route 1: open this plugin's section through the shell's store seat.
+ *
+ * @returns `'opened'` when the dialog is on the right section, `'shell'` when
+ *   the dialog opened but is NOT preselected (route 2 can still click the row),
+ *   and `undefined` when the seat is absent or unusable.
+ */
+function openThroughStoreSeat(
+  get: (name: string) => unknown,
+  sectionId: string,
+): 'opened' | 'shell' | undefined {
+  let slots: SlotsLike | undefined
+  try {
+    slots = get('slots') as SlotsLike | undefined
+  } catch {
+    return undefined
+  }
+  if (slots === undefined || typeof slots.entries !== 'function') return undefined
 
   let seat: unknown
   try {
-    // `entries` is a plain ledger read, but it is another bundle's service and a
-    // composed profile can replace `slots` with something that throws here.
+    // `entries` is a plain ledger read, but it is another bundle's service and
+    // a composed profile can replace `slots` with something that throws here.
     seat = slots.entries(SETTINGS_SLOT)[0]?.store
   } catch {
-    return false
+    return undefined
   }
-  if (seat === null || typeof seat !== 'object') return false
+  if (seat === null || typeof seat !== 'object') return undefined
 
   const handle = seat as SettingsShellHandleLike
-  if (typeof handle.create !== 'function') return false
+  if (typeof handle.create !== 'function') return undefined
 
   try {
     const instance = handle.create()
     const openSection = instance?.actions?.openSection
     if (typeof openSection === 'function') {
-      openSection(TRAE_SETTINGS_ID)
-      return true
+      openSection(sectionId)
+      return 'opened'
     }
-    // An older shell line whose store predates `openSection`: the dialog can
-    // still be opened, just not preselected. That lands the user in Settings
-    // with this plugin's nav row in front of them — one click from the page,
-    // which is strictly better than a press that does nothing.
+    // A shell whose store predates `openSection`. Pressing it still opens the
+    // dialog, so report `'shell'` and let route 2 click the nav row: the user
+    // lands on the right page that way, and this is not a dead button. This is
+    // the ONE difference from the 4.9.x code, which returned success here and
+    // left the user on whichever section the shell defaults to.
     const open = instance?.actions?.open
     if (typeof open === 'function') {
       open()
-      return true
+      return 'shell'
     }
   } catch {
-    // `create()` or a baked action threw. Nothing left to try.
+    // `create()` or a baked action threw. Nothing left to try here.
   }
-  return false
+  return undefined
+}
+
+/**
+ * Open this plugin's settings page — the wide Settings dialog, on THIS
+ * plugin's section.
+ *
+ * ## Two routes, best first (the shape borrowed from dsh-connect-workbuddy 5.20.4)
+ *
+ * 1. **The shell's store seat** — one call, exact, no timing:
+ *    `slots.entries(SETTINGS_SLOT)[0].store.create().actions.openSection(id)`.
+ * 2. **Driving the chrome** — click the sidebar's settings trigger, wait for the
+ *    panel, then click this plugin's nav row by its label.
+ *
+ * Route 1 is strictly better where it exists: `openSection(id)` sets `activeId`
+ * AND `open` in one action, so there is no window in which the dialog is open
+ * on the wrong section, no retry loop, and no dependency on the nav row's
+ * localized text. Route 2 is kept because the host range this plugin declares
+ * spans shell lines that may predate the seat; deleting it would trade a
+ * working fallback for nothing.
+ *
+ * ## Why both routes are needed even now
+ *
+ * A seat that carries `open()` but not `openSection()` is a real shell shape
+ * (the store gained `openSection` after `open`). Returning `true` on that seat —
+ * which 4.9.x did — claimed success while leaving the user on the shell's
+ * default section, so the button appeared to do something other than what its
+ * label promised. Handing back `'shell'` and continuing to route 2 is what
+ * makes the button land on the page it names on EVERY shell.
+ *
+ * ## Why the probe happens per PRESS, not during `apply`
+ *
+ * The seat belongs to ANOTHER bundle whose apply order is not ours to assume.
+ * Probing once during `apply()` would capture `undefined` on a host whose
+ * settings bundle applied later, leaving the button dead for the whole session.
+ * `entries()` answers `[]` for an undeclared slot, so a per-press probe is
+ * stateless and always current — the same reason the caller passes `softGet`.
+ *
+ * ## Why it never throws
+ *
+ * Every path runs from a RENDER path (a click handler in the credits popover).
+ * A throw here would take out the whole readout rather than one button, so each
+ * stage swallows its own failure and the jump degrades to a silent no-op when
+ * the shell has a different shape.
+ *
+ * @param get - the entry's soft service probe (`ctx.get`), which returns
+ *   `undefined` for an absent service instead of throwing. Called HERE, on every
+ *   invocation, so a service that appears after `apply` is still found.
+ * @param options - label thunk (required for route 2) plus test seams.
+ * @returns whether a route was taken. `false` means `onGiveUp` already ran or
+ *   there was nothing to fall back to.
+ */
+export function openPluginSettingsPage(
+  get: (name: string) => unknown,
+  options: SettingsRouteOptions,
+): boolean {
+  const { doc = document, label } = options
+  const schedule = options.schedule ?? defaultSchedule
+
+  // ---- Route 1: the shell's own store seat (exact, one call) --------------
+  let seatResult: 'opened' | 'shell' | undefined
+  try {
+    seatResult = openThroughStoreSeat(get, TRAE_SETTINGS_ID)
+  } catch {
+    // The probe itself must not be able to break the button.
+    seatResult = undefined
+  }
+  if (seatResult === 'opened') return true
+  // `'shell'`: the dialog is open but on another section — fall through so
+  // route 2 can click this plugin's row. The panel being open is exactly the
+  // state route 2 detects, so it will not re-click the trigger.
+
+  // ---- Route 2: drive the chrome -----------------------------------------
+  try {
+    const existing = doc.querySelector(SETTINGS_PANEL_SELECTOR)
+    if (existing === null) {
+      const triggers = Array.from(doc.querySelectorAll<HTMLButtonElement>(SETTINGS_TRIGGER_SELECTOR))
+      const collapsed = triggers.find(button => button.getAttribute('aria-expanded') !== 'true')
+      // No trigger at all = this host has no settings panel, or the sidebar is
+      // collapsed to the rail. Do not guess: take the fallback rather than
+      // leaving a button that does nothing when pressed.
+      if (collapsed === undefined) {
+        try { options.onGiveUp?.() } catch { /* the fallback failing is still a no-op */ }
+        return false
+      }
+      collapsed.click()
+    }
+
+    let clicked = false
+    let remaining = RETRY_DELAYS_MS.length
+    for (const delay of RETRY_DELAYS_MS) {
+      schedule(() => {
+        if (clicked) return
+        remaining -= 1
+        try {
+          const scope = doc.querySelector(SETTINGS_PANEL_SELECTOR) ?? doc
+          const row = findSectionRow(scope, label())
+          if (row !== undefined) {
+            clicked = true
+            row.click()
+            return
+          }
+        } catch { /* shell shaped differently: this attempt is done, next runs */ }
+        // Out of retries and still no row: hand over to the caller's fallback.
+        // Deliberately AFTER the last attempt rather than on the first miss — a
+        // panel that has mounted while its rows are still rendering is normal.
+        if (remaining === 0) {
+          try { options.onGiveUp?.() } catch { /* the fallback failing is still a no-op */ }
+        }
+      }, delay)
+    }
+    return true
+  } catch {
+    return false
+  }
 }

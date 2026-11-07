@@ -223,7 +223,14 @@ export function apply(ctx: ClientContext): void {
      * happens on every press and a shell that appears later is still found. See
      * `settings-route.ts` for the finding that established which seam this is.
      */
-    const onOpenSettings = (): boolean => openPluginSettingsPage(softGet)
+    // The label thunk, not a fixed string: route 2 finds the nav row by its
+    // RENDERED text, so this must resolve in whatever language is active at the
+    // moment of the press. `t('nav.panel')` is the same key the section
+    // registration uses, so the row this route looks for is the row that gets
+    // registered — one spelling, one source.
+    const onOpenSettings = (): boolean => openPluginSettingsPage(softGet, {
+      label: () => t('nav.panel'),
+    })
 
     const forms = softGet('configForms') as
       | {

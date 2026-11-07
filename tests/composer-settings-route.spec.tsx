@@ -96,14 +96,42 @@ function shellSeat(): { openSection: ReturnType<typeof vi.fn>; open: ReturnType<
 const probe = (seat: { entries: unknown } | undefined) =>
   (name: string): unknown => (name === 'slots' ? seat : undefined)
 
-describe('openPluginSettingsPage: which host seam is used', () => {
+/** The option bag every route test needs: a label thunk and a no-op fallback. */
+function routeOptions(extra: Partial<Parameters<typeof openPluginSettingsPage>[1]> = {}) {
+  return { label: () => 'dsh-connect-trae', ...extra }
+}
+
+/** A settings panel carrying the given nav-row labels. */
+function panelWith(labels: string[]): HTMLElement {
+  const panel = document.createElement('div')
+  panel.setAttribute('data-shortcut-modal', 'settings')
+  for (const label of labels) {
+    const button = document.createElement('button')
+    button.textContent = label
+    panel.append(button)
+  }
+  return panel
+}
+
+/** The sidebar trigger the shell renders. */
+function trigger(expanded = 'false'): HTMLButtonElement {
+  const button = document.createElement('button')
+  button.setAttribute('aria-haspopup', 'dialog')
+  button.setAttribute('aria-expanded', expanded)
+  return button
+}
+
+/** Run every scheduled callback immediately. */
+const flush = (run: () => void): void => { run() }
+
+describe('openPluginSettingsPage: route 1, the shell store seat', () => {
   it('opens THIS plugin\'s section through the shell store seat', () => {
     // The finding the module records: the shell pins `create: () => shellInstance`
     // onto its `sidebar.settings` registration precisely so a reader of the seat
     // gets the live dialog. `openSection(id)` sets `activeId` and `open` at once,
     // which is the whole job of this button.
     const seat = shellSeat()
-    const opened = openPluginSettingsPage(probe(seat))
+    const opened = openPluginSettingsPage(probe(seat), routeOptions())
 
     expect(opened).toBe(true)
     expect(seat.openSection).toHaveBeenCalledWith(TRAE_SETTINGS_ID)
@@ -117,70 +145,215 @@ describe('openPluginSettingsPage: which host seam is used', () => {
 
   it('reads the SEAT for this slot, not some other slot', () => {
     const seat = shellSeat()
-    openPluginSettingsPage(probe(seat))
+    openPluginSettingsPage(probe(seat), routeOptions())
     expect(seat.entries).toHaveBeenCalledWith(SETTINGS_SLOT)
     expect(SETTINGS_SLOT).toBe('sidebar.settings')
   })
 
-  it('falls back to a bare open() on a shell whose store predates openSection', () => {
-    // An older shell line can still open the dialog; it just cannot preselect.
-    // That puts the nav row in front of the user — one click from the page, which
-    // beats a press that does nothing.
+  it('still reaches the RIGHT page when the seat only offers open()', () => {
+    // THE POINT OF TWO ROUTES. A shell whose store predates `openSection` can
+    // open the dialog but not preselect it. The 4.9.x code returned `true` here
+    // and left the user on whichever section the shell defaults to — the button
+    // claimed success and did something other than what its label says.
+    //
+    // Now `open()` runs (the panel is up) and route 2 clicks this plugin's nav
+    // row, so the user lands on the page the button names.
+    document.body.innerHTML = ''
+    let jumped = 0
+    const panel = panelWith(['通用', 'dsh-connect-trae', '插件'])
+    document.body.append(panel)
+    panel.children[1]?.addEventListener('click', () => { jumped += 1 })
+
     const open = vi.fn()
     const opened = openPluginSettingsPage(probe({
       entries: () => [{ store: { create: () => ({ actions: { open } }) } }],
-    }))
+    }), routeOptions({ schedule: flush }))
 
     expect(opened).toBe(true)
+    // The dialog was opened...
     expect(open).toHaveBeenCalledTimes(1)
+    // ...and the row was then clicked, so the landing section is the right one.
+    expect(jumped, 'route 2 never clicked this plugin\'s nav row').toBe(1)
   })
 
   it('reports FALSE when the slots service is absent, instead of throwing', () => {
     // The caller is a click handler on a user's machine: "cannot" must not
     // become an exception there.
-    expect(openPluginSettingsPage(() => undefined)).toBe(false)
+    document.body.innerHTML = ''
+    expect(openPluginSettingsPage(() => undefined, routeOptions({ schedule: flush }))).toBe(false)
   })
 
   it('reports FALSE when the shell has not registered the slot yet', () => {
     // `entries()` answers `[]` until the shell's `whenAccess('settings/describe')`
     // gate passes and it registers. That is a host state, not an error.
-    expect(openPluginSettingsPage(probe({ entries: () => [] }))).toBe(false)
+    document.body.innerHTML = ''
+    expect(openPluginSettingsPage(probe({ entries: () => [] }), routeOptions({ schedule: flush }))).toBe(false)
   })
 
   it('reports FALSE when the seat carries no store', () => {
     // A `sidebar.settings` registration that declared no store seat. Both
     // `undefined` and a non-object must land here rather than being called.
-    expect(openPluginSettingsPage(probe({ entries: () => [{ }] }))).toBe(false)
-    expect(openPluginSettingsPage(probe({ entries: () => [{ store: null }] }))).toBe(false)
+    document.body.innerHTML = ''
+    expect(openPluginSettingsPage(probe({ entries: () => [{ }] }), routeOptions({ schedule: flush }))).toBe(false)
+    expect(openPluginSettingsPage(probe({ entries: () => [{ store: null }] }), routeOptions({ schedule: flush }))).toBe(false)
   })
 
   it('reports FALSE when the seat declares a store but no create()', () => {
-    expect(openPluginSettingsPage(probe({ entries: () => [{ store: {} }] }))).toBe(false)
+    document.body.innerHTML = ''
+    expect(openPluginSettingsPage(probe({ entries: () => [{ store: {} }] }), routeOptions({ schedule: flush }))).toBe(false)
   })
 
   it('reports FALSE when create() or a baked action THROWS', () => {
     // Another bundle's code. A composed profile can replace `slots` with
     // something that refuses, and the press must survive it.
+    document.body.innerHTML = ''
     expect(openPluginSettingsPage(probe({
       entries: () => [{ store: { create: () => { throw new Error('refused') } } }],
-    }))).toBe(false)
+    }), routeOptions({ schedule: flush }))).toBe(false)
     expect(openPluginSettingsPage(probe({
       entries: () => [{ store: { create: () => ({ actions: { openSection: () => { throw new Error('no') } } }) } }],
-    }))).toBe(false)
+    }), routeOptions({ schedule: flush }))).toBe(false)
   })
 
   it('probes the service on EVERY call, so a shell that appears later is found', () => {
     // The shell is provided by another bundle whose apply order is not ours to
     // assume. Probing once in `apply` would capture `undefined` permanently and
     // leave the button dead for the whole session.
+    document.body.innerHTML = ''
     let served: unknown
     const get = (name: string): unknown => (name === 'slots' ? served : undefined)
 
-    expect(openPluginSettingsPage(get)).toBe(false)
+    expect(openPluginSettingsPage(get, routeOptions({ schedule: flush }))).toBe(false)
     const seat = shellSeat()
     served = seat
-    expect(openPluginSettingsPage(get)).toBe(true)
+    expect(openPluginSettingsPage(get, routeOptions())).toBe(true)
     expect(seat.openSection).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('openPluginSettingsPage: route 2, driving the chrome', () => {
+  it('clicks this plugin\'s row when the panel is already open', () => {
+    document.body.innerHTML = ''
+    let jumped = 0
+    const panel = panelWith(['通用', 'dsh-connect-trae', '插件'])
+    document.body.append(panel)
+    panel.children[1]?.addEventListener('click', () => { jumped += 1 })
+
+    // No trigger anywhere: an already-open panel must not be toggled shut.
+    const result = openPluginSettingsPage(() => undefined, routeOptions({ schedule: flush }))
+    expect(result, 'the panel was there but the jump reported nothing to drive').toBe(true)
+    expect(jumped, 'the row was never clicked').toBe(1)
+  })
+
+  it('drives the trigger first when no panel is mounted', () => {
+    document.body.innerHTML = ''
+    let triggerClicks = 0
+    // The shell mounts the panel in response to the trigger, which is what the
+    // retry loop exists for: the rows are not queryable on the same frame.
+    const button = trigger('false')
+    button.addEventListener('click', () => {
+      triggerClicks += 1
+      document.body.append(panelWith(['通用', 'dsh-connect-trae']))
+    })
+    document.body.append(button)
+
+    expect(openPluginSettingsPage(() => undefined, routeOptions({ schedule: flush }))).toBe(true)
+    expect(triggerClicks).toBe(1)
+  })
+
+  it('does NOT click a trigger that is already expanded', () => {
+    // Clicking an expanded trigger CLOSES the dialog, which would read as the
+    // settings window flickering shut instead of opening.
+    document.body.innerHTML = ''
+    let triggerClicks = 0
+    const button = trigger('true')
+    button.addEventListener('click', () => { triggerClicks += 1 })
+    document.body.append(button)
+    document.body.append(panelWith(['dsh-connect-trae']))
+
+    openPluginSettingsPage(() => undefined, routeOptions({ schedule: flush }))
+    expect(triggerClicks, 'an already-open panel was toggled shut').toBe(0)
+  })
+
+  it('matches the row by EXACT label, not by substring', () => {
+    // 「模型」 is a substring of 「模型与预设」 on a differently worded shell; a
+    // loose match would click the wrong row and the user lands on someone
+    // else's page with no explanation.
+    document.body.innerHTML = ''
+    let right = 0
+    let wrong = 0
+    const panel = panelWith(['模型与预设', 'dsh-connect-trae'])
+    document.body.append(panel)
+    panel.children[0]?.addEventListener('click', () => { wrong += 1 })
+    panel.children[1]?.addEventListener('click', () => { right += 1 })
+
+    openPluginSettingsPage(() => undefined, routeOptions({ schedule: flush }))
+    expect(right).toBe(1)
+    expect(wrong).toBe(0)
+  })
+
+  it('calls onGiveUp when there is no trigger at all', () => {
+    // A host with no settings panel (or a sidebar collapsed to the rail). Do
+    // not guess: take the caller's fallback rather than leaving a dead button.
+    document.body.innerHTML = ''
+    const giveUp = vi.fn()
+    const result = openPluginSettingsPage(() => undefined, routeOptions({ schedule: flush, onGiveUp: giveUp }))
+    expect(result).toBe(false)
+    expect(giveUp).toHaveBeenCalledTimes(1)
+  })
+
+  it('calls onGiveUp after the LAST retry, not the first miss', () => {
+    // A panel that has mounted while its rows are still rendering is normal;
+    // giving up on the first attempt would abandon a shell that was about to
+    // work.
+    document.body.innerHTML = ''
+    document.body.append(panelWith(['通用', '插件']))  // mounted, no row for us
+    const giveUp = vi.fn()
+    const scheduled: Array<() => void> = []
+    openPluginSettingsPage(() => undefined, routeOptions({
+      onGiveUp: giveUp,
+      schedule: (run) => { scheduled.push(run) },
+    }))
+    // Run the retries one by one: the fallback must not fire on the first.
+    for (const run of scheduled) {
+      expect(giveUp, 'gave up before the retry budget was spent').not.toHaveBeenCalled()
+      run()
+    }
+    expect(giveUp).toHaveBeenCalledTimes(1)
+  })
+
+  it('re-reads the label on every press, so a language switch still matches', () => {
+    document.body.innerHTML = ''
+    let jumped = 0
+    const panel = panelWith(['dsh-connect-trae'])
+    document.body.append(panel)
+    panel.children[0]?.addEventListener('click', () => { jumped += 1 })
+
+    let language = 'zh'
+    const label = (): string => (language === 'zh' ? 'dsh-connect-trae' : 'Trae')
+    expect(openPluginSettingsPage(() => undefined, routeOptions({ label, schedule: flush }))).toBe(true)
+    expect(jumped).toBe(1)
+
+    // Switched language: the same thunk must now resolve to the new row.
+    document.body.innerHTML = ''
+    let jumpedEn = 0
+    const enPanel = panelWith(['Trae'])
+    document.body.append(enPanel)
+    enPanel.children[0]?.addEventListener('click', () => { jumpedEn += 1 })
+    language = 'en'
+    expect(openPluginSettingsPage(() => undefined, routeOptions({ label, schedule: flush }))).toBe(true)
+    expect(jumpedEn, 'the label was captured instead of re-read').toBe(1)
+  })
+
+  it('never throws, whatever the shell looks like', () => {
+    // Every path runs from a click handler on a render path; a throw here would
+    // take out the whole readout, not one button.
+    document.body.innerHTML = ''
+    const hostile = {
+      querySelector: () => { throw new Error('nope') },
+      querySelectorAll: () => { throw new Error('nope') },
+    } as unknown as Document
+    expect(() => openPluginSettingsPage(() => undefined, routeOptions({ doc: hostile, schedule: flush }))).not.toThrow()
   })
 })
 
