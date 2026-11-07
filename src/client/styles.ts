@@ -108,6 +108,12 @@ export const TRAE_CARD_CSS = `
 /* No top margin of its own: the strip above already carries a border, and the
    card's 16px stack gap would double the separation. */
 .dsm-trae-panel{margin-top:0}
+/* The one-line note at the top of a section that holds controls but no Save
+ * button. A section with switches and no footer is the first thing a reader
+ * doubts — "did that press stick?" — so the note answers it before the doubt
+ * forms, and it is styled as a muted paragraph rather than a warning because
+ * "takes effect immediately" is a fact, not a caveat. */
+.dsm-trae-panel-note{margin:0 0 4px;padding:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#9aa0a8)}
 /* DIAGNOSTICS: a two-column fact table rather than prose. Each row is one thing
  * the card actually READ, so a bug report can quote a line instead of
  * paraphrasing the UI. No control lives here on purpose — a diagnostics panel
@@ -706,7 +712,23 @@ export const TRAE_CARD_CSS = `
    reads as a selection control, and the checkbox beside it already is one. */
 .dsm-trae-pool-row-current{background:rgba(86,134,254,.07);box-shadow:inset 3px 0 0 var(--dsw-alias-brand-primary,#5686fe)}
 .dsm-trae-pool-row-ghost{opacity:.7}
-.dsm-trae-pool-row-actions{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end}
+/* The row's buttons: RIGHT side of the row, pulled there by the auto margin
+ * (learned from dsh-connect-workbuddy, which had the same complaint).
+ *
+ * WHY THE AUTO MARGIN AND NOT JUST justify-content. In the wide grid this cell
+ * IS the last track, so justify-content:flex-end was enough. But in the
+ * NARROW form the row becomes a wrapping flex line, and this cell is a sibling
+ * of the account line rather than a track beside it -- so it claimed a line of
+ * its own and the row spent a whole line on two small buttons.
+ *
+ * margin-inline-start:auto moves it to the END of whatever line has room. In
+ * the narrow form that is the account line, which is the SHORTEST line in the
+ * row, so the buttons land beside the account name where the eye already is
+ * instead of under it.
+ *
+ * flex:none is load-bearing: the account name may truncate, the buttons may
+ * not, and a shrunken button is unclickable. */
+.dsm-trae-pool-row-actions{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end;flex:none;margin-inline-start:auto}
 .dsm-trae-pool-account{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;gap:2px 8px;min-width:0}
 .dsm-trae-pool-check{display:inline-flex;align-items:center;flex:none;grid-column:1;grid-row:1;cursor:pointer}
 .dsm-trae-pool-check input{flex:none;margin:0;cursor:pointer;accent-color:var(--dsw-alias-brand-primary,#5686fe)}
@@ -786,11 +808,24 @@ export const TRAE_CARD_CSS = `
 @container (max-width:700px){
   .dsm-trae-pool-row{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px;padding:var(--dsm-trae-pool-pad-y) 12px}
   .dsm-trae-pool-row-head{display:none}
-  .dsm-trae-pool-account{flex:1 1 100%;align-items:center}
+  /* The account line does NOT claim the whole width: it leaves room on the right
+   * for the row's buttons, which join it via their own auto margin.
+   *
+   * 原先这里是 flex:1 1 100%（整行独占），所以按钮的 auto 外边距没有东西可推，
+   * 只能换到下一行。改成 0 1 auto：名称按内容取宽，剩余空间留给按钮。 */
+  .dsm-trae-pool-account{flex:0 1 auto;align-items:center}
   .dsm-trae-pool-credit{flex:0 1 auto;flex-direction:row;flex-wrap:wrap;align-items:baseline;gap:2px 8px}
   .dsm-trae-pool-probe{flex:1 1 auto}
   .dsm-trae-pool-checkin{flex:none}
-  .dsm-trae-pool-row-actions{flex:1 1 100%;justify-content:flex-start;padding-top:4px}
+  /* The buttons ride the ACCOUNT line, not a line of their own.
+   *
+   * 这里原先是 flex:1 1 100% + justify-content:flex-start —— 表现是按钮独占一行、
+   * 靠左，整行因此多出一行高度（截图里那个被框出来的块）。workbuddy 的解法是让
+   * 它们跟着名称行走：名称行本来就是行内最短的一行，右侧总有空位，而 auto 外边距
+   * 会把按钮推到那条线的末端。
+   *
+   * 不写 flex 值：基础规则的 flex:none 必须保留——名称可以截断，按钮不能。 */
+  .dsm-trae-pool-row-actions{justify-content:flex-start;padding-top:0}
   /* THE PROBE CELL'S OWN COLUMN, collapsed to one line.
    *
    * 这一条是最容易漏掉的：.dsm-trae-pool-probe 只是个 min-width:0 的外层包装，

@@ -110,14 +110,16 @@ async function renderOpen(document: Record<string, unknown> = usageOf()): Promis
  * an id selector occasionally resolves to null for an element that is plainly in
  * the tree. Matching the class list and comparing `el.id` is deterministic.
  */
-function panel(id: 'accounts' | 'models' | 'diag'): HTMLElement {
+function panel(id: PanelId): HTMLElement {
   const found = Array.from(document.querySelectorAll<HTMLElement>('.dsm-trae-panel'))
     .find(element => element.id === `dsm-trae-panel-${id}`)
   if (found === undefined) throw new Error(`no panel dsm-trae-panel-${id}`)
   return found
 }
 
-function tab(id: 'accounts' | 'models' | 'diag'): HTMLButtonElement {
+type PanelId = 'accounts' | 'capabilities' | 'models' | 'diag'
+
+function tab(id: PanelId): HTMLButtonElement {
   const found = Array.from(document.querySelectorAll<HTMLButtonElement>('.dsm-trae-panels [role="tab"]'))
     .find(element => element.id === `dsm-trae-tab-${id}`)
   if (found === undefined) throw new Error(`no tab dsm-trae-tab-${id}`)
@@ -169,7 +171,29 @@ describe('the card splits into three sections', () => {
     fireEvent.click(tab('models'))
     expect(panel('models').querySelector('.dsm-trae-model-list')).not.toBeNull()
     // The account section is likewise still there behind the models panel.
-    expect(panel('accounts').querySelector('.dsm-trae-prefs')).not.toBeNull()
+    // Its marker is the pool/roster block, NOT `.dsm-trae-prefs`: the
+    // preference switches moved to their own 「能力」 section, so asserting the
+    // old marker here would fail for the right reason but describe the wrong
+    // thing — "the account panel is mounted" is what this test is about.
+    expect(panel('accounts').querySelector('.dsm-trae-pool-card, .dsm-trae-accounts')).not.toBeNull()
+    // ...and the capabilities panel is mounted too, holding those switches.
+    expect(panel('capabilities').querySelector('.dsm-trae-prefs')).not.toBeNull()
+  })
+
+  it('gives the preference switches their own section, with nothing that saves', async () => {
+    await renderOpen()
+    const caps = panel('capabilities')
+    // The switches are HERE...
+    expect(caps.querySelector('.dsm-trae-prefs')).not.toBeNull()
+    expect(caps.textContent).toContain('row.panelCapabilitiesHint')
+    // ...and NOT in the account section, which is about who is serving.
+    expect(panel('accounts').querySelector('.dsm-trae-prefs')).toBeNull()
+    // Every switch in this section commits on its own click, so there is no
+    // Save/Reset footer. Asserted on the FOOTER's own classes rather than on
+    // "any button", which is what this test wrongly said at first — the
+    // sidebar-row switch needs no footer but the section still has controls.
+    expect(caps.querySelector('.dsm-trae-model-actions')).toBeNull()
+    expect(caps.querySelector('.dsm-trae-pool-save-row')).toBeNull()
   })
 
   it('marks exactly one tab selected and points each tab at its panel', async () => {

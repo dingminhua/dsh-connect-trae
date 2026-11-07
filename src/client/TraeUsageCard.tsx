@@ -366,7 +366,7 @@ export function TraeUsageCard({ t, settingsScope, view, surface, backToConversat
    * inactive panel out of the accessibility tree, which is exactly what
    * `role="tabpanel"` wants.
    */
-  const [panel, setPanel] = useState<'accounts' | 'models' | 'diag'>('accounts')
+  const [panel, setPanel] = useState<'accounts' | 'capabilities' | 'models' | 'diag'>('accounts')
   /**
    * Last-known usage per region, so tab dots survive tab switches.
    *
@@ -1988,6 +1988,29 @@ export function TraeUsageCard({ t, settingsScope, view, surface, backToConversat
             >
               {t('row.panelAccounts')}
             </button>
+            {/* 「能力」 sits SECOND, right after the account. The three switches
+                it holds authorize what this plugin may do on the user's behalf
+                (show a readout, add a sidebar row), which is a different
+                question from "which account is serving" and a different one
+                again from "which models are enabled". They used to sit inside
+                the account section, between the roster and the pool, so reading
+                a balance meant scrolling past settings.
+
+                This is the sibling dsh-connect-workbuddy's split, adopted for
+                the same reason: a control that GRANTS something belongs with the
+                other things that grant something, not mixed into a list of
+                facts. */}
+            <button
+              type="button"
+              role="tab"
+              id="dsm-trae-tab-capabilities"
+              aria-controls="dsm-trae-panel-capabilities"
+              aria-selected={panel === 'capabilities'}
+              className={`dsm-trae-panel-tab${panel === 'capabilities' ? ' dsm-trae-panel-tab-active' : ''}`}
+              onClick={() => { setPanel('capabilities') }}
+            >
+              {t('row.panelCapabilities')}
+            </button>
             <button
               type="button"
               role="tab"
@@ -2032,6 +2055,7 @@ export function TraeUsageCard({ t, settingsScope, view, surface, backToConversat
         <TraeAccountPanel
           t={t}
           settingsScope={settingsScope}
+          section="accounts"
           panel={activeRegion}
           status={status}
           statusLabel={label}
@@ -2072,6 +2096,63 @@ export function TraeUsageCard({ t, settingsScope, view, surface, backToConversat
             if (fresh !== undefined) setStatusByRegion(current => ({ ...current, [activeRegion]: fresh }))
           }}
           onPoolRefresh={async () => {
+            const fresh = await refreshUsage(activeRegion)
+            if (fresh !== undefined) setStatusByRegion(current => ({ ...current, [activeRegion]: fresh }))
+          }}
+          creditsUnavailable={status.status === 'signed-in' ? status.creditsUnavailable : undefined}
+          creditsExpiry={status.status === 'signed-in' ? status.credits?.expiry : undefined}
+          alternatives={status.status === 'signed-in' ? status.alternatives : undefined}
+          onSwitchToAlternative={accountId => { void switchAccount(accountId) }}
+        />
+      </div>
+
+      {/* CAPABILITIES — what the plugin may do on the user's behalf.
+          No 「保存」 of its own, for the same reason the account section has
+          none: every switch writes on its own click. The panel note says that
+          out loud because a section with settings and no Save button is the
+          first thing a reader doubts. */}
+      <div
+        className="dsm-trae-panel"
+        role="tabpanel"
+        id="dsm-trae-panel-capabilities"
+        aria-labelledby="dsm-trae-tab-capabilities"
+        /* `signedIn &&` for the same reason the account panel uses it: a
+           signed-out card renders no section tabs, so nothing may hide that one
+           screen behind a tab the user cannot see or change. */
+        hidden={signedIn && panel !== 'capabilities'}
+      >
+        <p className="dsm-trae-panel-note">{t('row.panelCapabilitiesHint')}</p>
+        {/* The SAME component as the account section, drawing ONLY its
+            preference block. One implementation, two sections: the switches are
+            identical, and duplicating their markup would let the two copies
+            drift in the first revision that touches either. */}
+        <TraeAccountPanel
+          t={t}
+          settingsScope={settingsScope}
+          section="prefs"
+          panel={activeRegion}
+          status={status}
+          statusLabel={label}
+          credentialRegionIsAi={credentialRegionIsAi}
+          regionOn={activeRegionOn}
+          showPointsInMainUi={settingsEdits.showPointsInMainUi}
+          onToggleShowPoints={value => { void writePreference('showPointsInMainUi', value) }}
+          creditPosition={creditPositionOn(activeRegion)}
+          onCreditPositionChange={position => { void changeCreditPosition(activeRegion, position) }}
+          sidebarPanelOn={sidebarPanelOn}
+          sidebarPanelBusy={sidebarPanelBusy}
+          onToggleSidebarPanel={value => { void writeSidebarPanel(value) }}
+          savingPreferences={savingSettings}
+          creditsLabelId={creditsLabelId}
+          creditsHintId={creditsHintId}
+          rows={accountRows}
+          busy={busy}
+          rescanNote={rescanNote}
+          onRescan={() => { void rescanAccounts() }}
+          switchingAccount={switchingAccount}
+          onSwitchAccount={accountId => { void switchAccount(accountId) }}
+          onClaim={accountId => { void claimFor(accountId) }}
+          onTransferChanged={async () => {
             const fresh = await refreshUsage(activeRegion)
             if (fresh !== undefined) setStatusByRegion(current => ({ ...current, [activeRegion]: fresh }))
           }}

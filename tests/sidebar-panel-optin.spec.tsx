@@ -99,12 +99,23 @@ function sidebarSwitch(): HTMLInputElement {
   return box
 }
 
-/** Open the card and wait for its first document to land. */
+/**
+ * Open the card, land on the 「能力」 section, and wait for its first document.
+ *
+ * The sidebar-row switch moved out of the account section: it grants something
+ * the plugin may do, which is not "which account is serving". So these tests
+ * have to open that section first — the switch being unreachable from the
+ * default tab is the point of the move, not an accident of it.
+ */
 async function renderOpen(scope: unknown): Promise<void> {
   stubUsage(usageDocument())
   render(<TraeUsageCard t={t} settingsScope={scope as never} />)
   fireEvent.click(screen.getByRole('button', { name: /row\.title/ }))
   await screen.findByText('row.tabHint')
+  const capabilities = Array.from(document.querySelectorAll<HTMLButtonElement>('.dsm-trae-panels [role="tab"]'))
+    .find(element => element.id === 'dsm-trae-tab-capabilities')
+  if (capabilities === undefined) throw new Error('no capabilities tab')
+  fireEvent.click(capabilities)
 }
 
 describe('the switch reads OFF unless explicitly on', () => {
@@ -180,6 +191,12 @@ describe('the card switch', () => {
     render(<TraeUsageCard t={t} />)
     fireEvent.click(screen.getByRole('button', { name: /row\.title/ }))
     await screen.findByText('row.tabHint')
+    // The switch lives in 「能力」 now, so that section must be shown before the
+    // box exists in the accessibility tree.
+    const capabilities = Array.from(document.querySelectorAll<HTMLButtonElement>('.dsm-trae-panels [role="tab"]'))
+      .find(element => element.id === 'dsm-trae-tab-capabilities')
+    if (capabilities === undefined) throw new Error('no capabilities tab')
+    fireEvent.click(capabilities)
     expect(sidebarSwitch().checked).toBe(true)
   })
 
@@ -218,6 +235,10 @@ describe('the card switch', () => {
     render(<TraeUsageCard t={t} settingsScope={scope as never} />)
     fireEvent.click(screen.getByRole('button', { name: /row\.title/ }))
     await screen.findByText('row.tabHint')
+    const capabilities = Array.from(document.querySelectorAll<HTMLButtonElement>('.dsm-trae-panels [role="tab"]'))
+      .find(element => element.id === 'dsm-trae-tab-capabilities')
+    if (capabilities === undefined) throw new Error('no capabilities tab')
+    fireEvent.click(capabilities)
     fireEvent.click(sidebarSwitch())
     await screen.findByRole('alert')
     // The store must NOT be published on a write that did not land.

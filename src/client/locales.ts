@@ -23,6 +23,8 @@ export const en = {
   // names a section and never a provider.
   'row.panelAria': 'Card sections',
   'row.panelAccounts': 'Account',
+  'row.panelCapabilities': 'Capabilities',
+  'row.panelCapabilitiesHint': 'What the plugin may do on your behalf. These switches take effect on the click \u2014 there is no Save button for them.',
   'row.panelModels': 'Models',
   'row.panelDiag': 'Diagnostics',
   // DIAGNOSTICS — facts the card actually READ, so a bug report can quote a
@@ -509,6 +511,8 @@ export const zh: Record<TraeSettingsKey, string> = {
   // 「栏」，不是「供应商」。
   'row.panelAria': '卡片分栏',
   'row.panelAccounts': '账号',
+  'row.panelCapabilities': '能力',
+  'row.panelCapabilitiesHint': '插件可以替你做什么。这些开关点一下立即生效 —— 开关没有保存按钮。',
   'row.panelModels': '模型',
   'row.panelDiag': '诊断',
   // 诊断栏：卡片真的读到过的事实，贴进反馈就能用。这一栏没有任何会改设置的控件。

@@ -74,6 +74,20 @@ export interface TraeRowClaim {
 
 export interface TraeAccountPanelProps {
   t: (key: TraeSettingsKey, params?: Record<string, unknown>) => string
+  /**
+   * WHICH part of this panel to draw.
+   *
+   * The card grew a 「能力」 section (learned from dsh-connect-workbuddy): the
+   * preference switches authorize what the plugin does on the user's behalf,
+   * which is a different question from "which account is serving right now".
+   * Mixing them put three standing preferences between the account list and the
+   * pool, so a user reading their balance scrolled past settings to find it.
+   *
+   * `'all'` (the default) keeps the pre-split layout for the CARD surface, where
+   * there are no section tabs at all — splitting content with nothing to
+   * navigate by would hide the preferences entirely.
+   */
+  section?: 'all' | 'prefs' | 'accounts'
   settingsScope?: TraeUsageCardInjected['settingsScope'] | undefined
   /** The panel (provider) this section is about. */
   panel: TraePanel
@@ -120,13 +134,21 @@ export interface TraeAccountPanelProps {
   onTransferChanged(): void | Promise<unknown>
 
   /** The pool document, when the Host serves one. */
-  poolDetails: Record<string, TraePoolRowDetail>
+  /**
+   * Pool-only inputs. OPTIONAL because the 「能力」 section draws this component
+   * with `section: 'prefs'`, where none of them are read — the switches above
+   * are region-level preferences and the pool belongs to the account section.
+   * Making them required would force the capabilities caller to fabricate pool
+   * state it never renders, which is how a prop that means "what the pool knows"
+   * turns into "something the caller had to invent".
+   */
+  poolDetails?: Record<string, TraePoolRowDetail>
   poolClaims?: Record<string, TraePoolRowClaim> | undefined
   /** Every model of this panel, for the pool's target select. */
-  models: readonly TraeWebModel[]
-  deviceClaimed: boolean
-  onPoolChanged(): void | Promise<unknown>
-  onPoolRefresh(): void | Promise<unknown>
+  models?: readonly TraeWebModel[]
+  deviceClaimed?: boolean
+  onPoolChanged?(): void | Promise<unknown>
+  onPoolRefresh?(): void | Promise<unknown>
 
   /** Notices that are about the ACCOUNT, so they live in this section. */
   creditsUnavailable?: 'enterprise' | undefined
@@ -216,8 +238,10 @@ export function TraeAccountPanel({
   sidebarPanelOn, sidebarPanelBusy, onToggleSidebarPanel,
   savingPreferences, creditsLabelId, creditsHintId,
   rows, busy, rescanNote, onRescan, switchingAccount, onSwitchAccount, onClaim, onTransferChanged,
-  poolDetails, poolClaims, models, deviceClaimed, onPoolChanged, onPoolRefresh,
+  poolDetails, poolClaims, models = [], deviceClaimed = false,
+  onPoolChanged = () => {}, onPoolRefresh = () => {},
   creditsUnavailable, creditsExpiry, alternatives, onSwitchToAlternative,
+  section = 'all',
 }: TraeAccountPanelProps): ReactElement | null {
   const writable = settingsScope?.getSnapshot().writable === true
   const signedIn = status.status === 'signed-in'
@@ -225,8 +249,15 @@ export function TraeAccountPanel({
   const accounts = signedIn ? status.accounts : []
   const pool = signedIn ? status.pool : undefined
 
-  return (
-    <>
+  // The 「能力」 section draws ONLY the switches: this component owns the account
+  // roster, the pool and the credential notices, none of which belong under
+  // "what may the plugin do". Returning early (rather than gating each block
+  // below) is what keeps those blocks from rendering a SECOND copy of the
+  // roster in the capabilities panel — which they did, and which surfaced as
+  // "Found multiple elements with the text: demo-user" across a dozen tests.
+  if (section === 'prefs') {
+    return (
+      <>
       {/* The preference switches, as BARE LINES — no bordered box, no heading,
           no 「保存」/「放弃」 footer.
           
@@ -239,6 +270,10 @@ export function TraeAccountPanel({
           
           The label IS the checkbox's own <label>, so the text is a larger click
           target and the accessible name needs no ARIA. */}
+      {/* The preference switches live in their own 「能力」 section now. `'prefs'`
+          draws ONLY this block; `'accounts'` skips it; `'all'` (the card) keeps
+          both, because a card has no section tabs to navigate by — splitting
+          content with nothing to navigate by would hide the switches entirely. */}
       <div className="dsm-trae-prefs">
         {/* REGION-AGNOSTIC: a readout exists on either side (CN credits,
             international plan), so the switch that turns it on belongs on either
@@ -319,7 +354,12 @@ export function TraeAccountPanel({
           </span>
         </label>
       </div>
+      </>
+    )
+  }
 
+  return (
+    <>
       {/* ONE account table, not two. Once the pool document exists the pool's
           member table below lists the same accounts with the same credits and the
           same check-in state, so this roster would be a verbatim second copy of
