@@ -351,21 +351,35 @@ function PromoChip(props: { badge: TraePromoBadge, copy: Record<TraeSettingsKey,
  * different priority to shadow it (lowest renders)". Priority 0 is the DEFAULT,
  * so it is the one value that is guaranteed to be contested.
  *
- * WHY `-0.25` AND NOT 0. Measured on the live desktop host (0.2.1-rc.5) the
- * cell is already shared:
+ * WHY `-102` AND NOT `-0.25`, WHICH THIS USED TO BE. The old value was picked
+ * from a reading of the siblings that was WRONG — and the comment said so with
+ * confidence, which is how a wrong reading survives a code review. Re-measured
+ * from the three plugins' sources:
  *
- *   dsh-connect-qoder-client     priority -1    (active — lowest renders)
- *   dsh-connect-workbuddy-client priority -0.5
- *   dsh-connect-trae-client      priority  0    (this plugin)
+ *   dsh-connect-qoder-client     priority -101   (active — lowest renders)
+ *   dsh-connect-workbuddy-client priority -100
+ *   dsh-connect-trae-client      priority  -0.25  ← never rendered
  *
- * -1 and -0.5 are the two sibling connectors' seats and must NOT be reused —
- * two plugins on one priority collide for exactly the reason 0 did. `-0.25`
- * sits between them, legal, and collides with neither. The value only has to be
- * DISTINCT from whatever else claims the cell; it deliberately does not read the
- * slot ledger or negotiate with other plugins (this repository's §零 invariant,
- * and the host's own shipped README reaches the same conclusion — its documented
- * remedy for a same-priority conflict is a configuration decision, not a runtime
- * handshake).
+ * The previous note claimed qoder `-1` and workbuddy `-0.5`, i.e. that `-0.25`
+ * sat "between them". Both numbers were stale: the siblings had each moved DOWN
+ * a hundred while this file still described the arrangement they had left. The
+ * consequence was exactly the report that started this change — "the model
+ * picker has no capsule" — because `-0.25` is the HIGHEST of the three, and a
+ * `single` slot renders the LOWEST.
+ *
+ * `-102` is chosen to sit just under qoder, not at some far negative number
+ * like `-1000`: this only needs the one seat, and a needlessly extreme value
+ * would push any future plugin that picks a reasonable number behind us forever.
+ * qoder made the same call when it took `-101` under workbuddy's `-100`.
+ *
+ * WHAT THIS COSTS. Winning a `single` slot means the losers do not render at
+ * all here: qoder's own capsule disappears from the picker the moment this
+ * registers. That is the documented trade-off of the slot, not a bug — and it
+ * is why {@link TraeModelLabel} must reproduce the host's presentation (catalog
+ * name plus the model's own badge) for anything that is not this plugin's
+ * model, rather than drawing nothing for foreign rows. A picker whose every row
+ * lost its name because a connector won the cell would be a much worse outcome
+ * than a lost promotion chip.
  *
  * WHAT WINNING/HOLDING COSTS. This cell is `single`, so the other registrants'
  * decorations on the rows this plugin claims are not composed. That is the
@@ -383,7 +397,7 @@ function PromoChip(props: { badge: TraePromoBadge, copy: Record<TraeSettingsKey,
  * disposes its previous entry before every attempt. Priority alone would have
  * made the throw rarer and harder to read, not absent.
  */
-export const MODEL_LABEL_PRIORITY = -0.25
+export const MODEL_LABEL_PRIORITY = -102
 
 /**
  * One selector badge, as DSH 0.2.2 publishes it on `LlmModelInfo.badge`.
