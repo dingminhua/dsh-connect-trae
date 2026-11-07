@@ -36,7 +36,7 @@ import type { TraeCreditPosition } from '../status-paths.ts'
 import { TRAE_USAGE_PATH, withTraeRegion } from '../status-paths.ts'
 import { en, zh } from './locales.ts'
 import type { TraeSettingsKey } from './locales.ts'
-import { TRAE_PLUGIN_ICON } from './icon.ts'
+import { PluginIcon } from './plugin-icon.tsx'
 import {
   setSidebarPanelWanted, sidebarPanelWanted, subscribeSidebarPanelWanted,
 } from './panel-switch.ts'
@@ -526,13 +526,9 @@ export function apply(ctx: ClientContext): void {
      */
     function TraePanelIcon(props: { size?: number }): JSX.Element {
       const edge = typeof props.size === 'number' && props.size > 0 ? props.size : 16
-      return h('img', {
+      return h(PluginIcon, {
         className: 'dsm-trae-panel-icon',
-        src: TRAE_PLUGIN_ICON,
-        alt: '',
-        width: edge,
-        height: edge,
-        'aria-hidden': 'true',
+        size: edge,
       })
     }
 
@@ -555,14 +551,10 @@ export function apply(ctx: ClientContext): void {
      */
     function SettingsSectionIcon(props: { size?: number, active?: boolean }): JSX.Element {
       const edge = typeof props.size === 'number' && props.size > 0 ? props.size : 16
-      return h('img', {
+      return h(PluginIcon, {
         className: 'dsm-trae-section-icon',
-        src: TRAE_PLUGIN_ICON,
-        alt: '',
-        width: edge,
-        height: edge,
+        size: edge,
         style: { opacity: props.active === false ? 0.75 : 1 },
-        'aria-hidden': 'true',
       })
     }
 

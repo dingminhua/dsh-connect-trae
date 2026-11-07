@@ -251,7 +251,19 @@ describe('the section surface', () => {
     // SCOPED to .dsm-trae-section. The strip element is shared by three
     // surfaces; an unscoped sticky shipped in 4.9.0 and, on the card (which has
     // no scrolling ancestor), laid down a layer-2 band over a layer-3 card.
-    const body = /\.dsm-trae-section \.dsm-trae-panels\{([^}]*)\}/.exec(TRAE_CARD_CSS)?.[1] ?? ''
+    //
+    // SPECIFICITY MATTERS, and this is the second time it has bitten. The
+    // series layout (`series-layout.ts`) appends a `.dsm-trae-usage .dsm-trae-panels`
+    // rule at the END of this stylesheet — same 0,2,0 weight as the plain
+    // `.dsm-trae-section .dsm-trae-panels`, but later in source order, so it
+    // silently won: `top` measured 0px instead of -1px and the strip gained a
+    // stray 8px of top padding. Every assertion below still passed, because they
+    // only ask whether the rule TEXT exists, never whether it takes effect. The
+    // selector therefore carries the extra `.dsm-trae-usage` hop (0,3,0) to beat
+    // the appended rule — assert the hop itself, not just the declarations.
+    const selector = '\.dsm-trae-section \.dsm-trae-usage \.dsm-trae-panels'
+    const body = new RegExp(`${selector}\\{([^}]*)\\}`).exec(TRAE_CARD_CSS)?.[1] ?? ''
+    expect(body, 'the section strip rule').not.toBe('')
     expect(body).toContain('position:sticky')
     expect(body).toMatch(/top:-?\d/u)
     expect(body).toMatch(/z-index:\s*\d/u)
@@ -339,7 +351,12 @@ describe('the section surface', () => {
     //   row 1: [account]              [checkin] [credit]
     //   row 2: [probe ...]                      [actions]
     const narrow = /@container \(max-width:700px\)\{([\s\S]*?)\n\}/.exec(TRAE_CARD_CSS)?.[1] ?? ''
-    const row = /\n  \.dsm-trae-pool-row:not\(\.dsm-trae-pool-row-head\)\{([^}]*)\}/.exec(TRAE_CARD_CSS)?.[1] ?? ''
+    // The `.dsm-trae-usage` hop is required — series-layout.ts appends a
+    // `.dsm-trae-usage .dsm-trae-pool-row{display:flex}` inside the same
+    // container query and, at 0,2,0, beat the plain selector. Asserting the hop
+    // is what keeps this layout from silently reverting to flex again.
+    const row = /\n  \.dsm-trae-usage \.dsm-trae-pool-row:not\(\.dsm-trae-pool-row-head\)\{([^}]*)\}/.exec(TRAE_CARD_CSS)?.[1] ?? ''
+    expect(row, 'the two-row grid rule').not.toBe('')
     expect(row).toContain('display:grid')
     // The flexible column first, then the two auto tracks: check-in and credit.
     expect(row).toMatch(/grid-template-columns:\s*minmax\(0,1fr\)\s+auto\s+auto/u)

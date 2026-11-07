@@ -131,6 +131,7 @@ describe('the card stylesheet behind the 3.2.0 settings and account blocks', () 
     // The tab hint is part of the block under test and only renders expanded.
     await screen.findByText('row.tabHint')
 
+    expect(TRAE_CARD_CSS).toContain('.dsm-trae-page[data-tabs-stuck=')
     const defined = styledClasses()
     const rendered = renderedClasses()
     // The new blocks are really in the DOM (an empty collection would make the
@@ -276,12 +277,13 @@ describe('the stylesheet cannot be silently dead', () => {
   it('exports exactly the CSS variables, and nothing truncated from the literal', () => {
     const source = stylesSource()
     const sf = ts.createSourceFile('styles.ts', source, ts.ScriptTarget.ESNext, true)
-    const strays = sf.statements.filter(st => !ts.isVariableStatement(st))
+    const strays = sf.statements.filter(st => !ts.isVariableStatement(st) && !ts.isImportDeclaration(st))
     // A leftover expression statement is a fragment of the truncated literal.
     expect(strays.map(st => ts.SyntaxKind[st.kind])).toEqual([])
     // The veil CSS lives INSIDE the TRAE_CARD_CSS literal, so the healthy count
     // stays at 2 even with the veil shipped. Anything else is a truncation.
-    expect(sf.statements.length).toBe(2)
+    expect(sf.statements.filter(ts.isVariableStatement).length).toBe(2)
+    expect(sf.statements.filter(ts.isImportDeclaration).map(st => st.moduleSpecifier.getText(sf))).toEqual(["'./series-layout.ts'"])
   })
 
   it('only asks DSH for tokens that actually exist', () => {
