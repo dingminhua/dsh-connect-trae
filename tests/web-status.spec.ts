@@ -1296,3 +1296,19 @@ describe('enterprise panel exposes no credit figure', () => {
     expect(result.checkin).toBeUndefined()
   })
 })
+
+
+describe('completed daily check-in progress', () => {
+  it('does not query or claim again after a restart with a completed device day', async () => {
+    const deps = makeRoute({ fetchImpl: async () => { throw new Error('unexpected upstream request') } })
+    const date = new Date()
+    deps.autoCheckinProgress = async () => ({ day: `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`, done: ['account-1'], deviceBlocked: true, failures: 0, retryAt: 0 })
+    let queries = 0
+    const client = deps.client('cn')
+    client.checkinStatus = async () => { queries++; throw new Error('HTTP 444') }
+    deps.client = () => client
+    const result = await traeWebUsage(deps, 'cn')
+    expect(queries).toBe(0)
+    expect(result).not.toHaveProperty('checkinError')
+  })
+})

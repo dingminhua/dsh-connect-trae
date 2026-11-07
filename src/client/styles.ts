@@ -1,3 +1,4 @@
+import { seriesLayoutCss } from './series-layout.ts'
 /**
  * Client styles for the Trae plugin card.
  * Copied verbatim from `dsh-subagent-default-model`'s SETTINGS_CSS so the two
@@ -6,6 +7,16 @@
  */
 
 export const TRAE_CARD_CSS = `
+.dsm-icon-preference{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;padding:12px 0;color:var(--dsw-alias-label-primary,#e6e6e6)}
+.dsm-icon-preference-copy{display:flex;flex-direction:column;gap:4px;flex:1;min-width:180px;font-size:13px}
+.dsm-icon-preference-copy>span{font-size:12px;line-height:1.5;color:var(--dsw-alias-label-tertiary,#999)}
+.dsm-icon-choices{display:flex;flex-wrap:wrap;gap:6px}
+.dsm-icon-choices>button{appearance:none;display:inline-flex;align-items:center;gap:8px;font:inherit;font-size:12px;line-height:20px;color:inherit;background:transparent;border:1px solid var(--dsw-alias-border-l2,#777);border-radius:8px;padding:7px 10px;cursor:pointer}
+.dsm-icon-choices>button[aria-checked="true"]{border-color:var(--dsw-alias-brand-primary,#cf795b);background:var(--dsw-alias-bg-layer-2,#25262b)}
+.dsm-icon-choices>button:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#cf795b);outline-offset:2px}
+.dsm-icon-save-error{flex-basis:100%;margin:0;color:var(--dsw-alias-state-error-primary,#c33);font-size:12px}
+.dsm-trae-pool-auto-checkin{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+.dsm-trae-pool-auto-checkin-status{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#999)}
 .dsm-plugin-card{border:1px solid var(--dsw-alias-border-l2,#36373b);background:var(--dsw-alias-bg-layer-3,#202126);border-radius:12px;list-style:none;transition:border-color .16s,background .16s}
 .dsm-plugin-card:hover{border-color:var(--dsw-alias-label-dimmed,#777)}
 .dsm-plugin-card-open{background:var(--dsw-alias-bg-layer-2,#25262b);border-color:var(--dsw-alias-label-dimmed,#777)}
@@ -913,7 +924,7 @@ export const TRAE_CARD_CSS = `
 .dsm-trae-section-title{margin:0;font-size:15px;font-weight:600;line-height:22px}
 .dsm-trae-section-desc{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#999)}
 .dsm-trae-panel-icon{display:block;border-radius:4px;flex:none}
-`
+` + seriesLayoutCss('trae')
 
 
 /**

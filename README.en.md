@@ -34,6 +34,11 @@ A [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness) bund
 
 > **Boundary: this plugin does not interoperate with any other plugin.** Accounts, credentials, the model directory, the account pool and the settings namespace belong to this plugin alone; a `trae` failure never borrows another plugin's account or credit, and vice versa. Why, and what that rules out, is in [Relationship to other plugins](#relationship-to-other-plugins).
 
+### Icon style
+
+In the account pool, open **More settings** and choose **Claude style** or **Default icon**. The sidebar and page icons update immediately. The choice is stored in the current browser; other browsers keep their own choice.
+
+
 ## Features
 
 - **Three parallel providers** — the CN side registers as the `trae` provider (e.g. `DeepSeek-V4-Flash`, `DeepSeek-V4-Pro`), the enterprise side as `trae-enterprise`, and the international side as `trae-global` (the Gemini/GPT/MiniMax roster); **all three rosters appear in the DSH model picker simultaneously**: different sessions can each pick a side without interfering.
@@ -67,6 +72,10 @@ A [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness) bund
 
 
 - **Secure loopback shim** — one random port + in-process random secret per region; the real Trae token is never handed to pi-ai.
+
+### Daily automatic check-in
+
+The domestic personal account pool offers automatic check-in, disabled by default. Enable and save to check in selected members while DSH runs. Progress survives restarts and failed attempts retry with backoff. This setting is independent of automatic billing selection. Trae limits daily rewards per device, so not every member can receive a reward. Global and enterprise panels do not offer automatic check-in.
 
 ## How it works
 

@@ -1,3 +1,4 @@
+import { IconStylePreference } from './plugin-icon.tsx'
 /**
  * The account-pool card UI for Trae, ported from the WorkBuddy sibling.
  *
@@ -254,6 +255,7 @@ export function AccountPool({ panel, pool, models, t, settingsScope, onChanged, 
     const base = regionPoolOf(settingsScope?.getSnapshot().value, panel)
     return {
       enabled: base.enabled === true,
+      autoCheckin: base.autoCheckin === true,
       targetModelId: base.targetModelId ?? pool.targetModelId ?? pool.staleTargetModelId ?? '',
       memberAccountIds: [...(base.memberAccountIds ?? [])],
       // 0 is a real choice ("minimal probe"), so it must not fall back to the
@@ -276,6 +278,7 @@ export function AccountPool({ panel, pool, models, t, settingsScope, onChanged, 
   // The draft the user edits. The membership checkbox binds HERE (NON-NEGOTIABLE
   // #4), never to `account.member`.
   const [enabled, setEnabled] = useState(saved.enabled)
+  const [autoCheckin, setAutoCheckin] = useState(saved.autoCheckin)
   const [targetModelId, setTargetModelId] = useState(saved.targetModelId ?? '')
   const [probeInputTokens, setProbeInputTokens] = useState(saved.probeInputTokens)
   const [selected, setSelected] = useState(() => new Set(saved.memberAccountIds ?? []))
@@ -335,6 +338,7 @@ export function AccountPool({ panel, pool, models, t, settingsScope, onChanged, 
 
   // Dirty compares enabled / targetModelId / membership ids ORDER-INSENSITIVELY (#3).
   const dirty = enabled !== saved.enabled
+    || autoCheckin !== saved.autoCheckin
     || (targetModelId ?? '') !== (saved.targetModelId ?? '')
     || (probeSupported && probeInputTokens !== saved.probeInputTokens)
     || !sameIds([...selected], saved.memberAccountIds)
@@ -346,6 +350,7 @@ export function AccountPool({ panel, pool, models, t, settingsScope, onChanged, 
   // whole saved value would also fire for the in-row 移除, which writes ONLY the
   // membership, and would silently revert a switch or target model the user is
   // still editing but has not saved.
+  useEffect(() => { setAutoCheckin(saved.autoCheckin) }, [panel, saved.autoCheckin])
   const savedMemberKey = useMemo(() => [...(saved.memberAccountIds ?? [])].sort().join('\u0000'), [saved])
   useEffect(() => { setEnabled(saved.enabled) }, [panel, saved.enabled]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { setTargetModelId(saved.targetModelId ?? '') }, [panel, saved.targetModelId]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -370,6 +375,7 @@ export function AccountPool({ panel, pool, models, t, settingsScope, onChanged, 
 
   const discard = () => {
     setEnabled(saved.enabled)
+    setAutoCheckin(saved.autoCheckin)
     setTargetModelId(saved.targetModelId ?? '')
     setProbeInputTokens(saved.probeInputTokens)
     setSelected(new Set(saved.memberAccountIds ?? []))
@@ -385,6 +391,7 @@ export function AccountPool({ panel, pool, models, t, settingsScope, onChanged, 
     try {
       const next: TraePoolPreferences = {
         enabled,
+        autoCheckin,
         ...(targetModelId === '' ? {} : { targetModelId }),
         memberAccountIds: [...selected],
         ...(probeSupported ? { probeInputTokens } : {}),
@@ -395,7 +402,8 @@ export function AccountPool({ panel, pool, models, t, settingsScope, onChanged, 
         nextRegionPool(settingsScope.getSnapshot().value, panel, next),
         readBack => {
           const readPool = regionPoolOf(readBack, panel)
-          return readPool.enabled === (next.enabled ?? false)
+          return readPool.autoCheckin === next.autoCheckin
+            && readPool.enabled === (next.enabled ?? false)
             && sameIds(readPool.memberAccountIds, next.memberAccountIds)
             && (readPool.targetModelId ?? '') === (next.targetModelId ?? '')
             && (!probeSupported || (readPool.probeInputTokens ?? 0) === probeInputTokens)
@@ -717,7 +725,23 @@ export function AccountPool({ panel, pool, models, t, settingsScope, onChanged, 
         {/* ONE line, and only one. The same paragraph used to stand under the
             switch at the bottom of the page as well, which read as a developer
             note that had leaked into the card. */}
-        <p className="dsm-trae-pool-note">{t('row.poolEnabledHint')}</p>
+        <p className="dsm-trae-pool-note">{t('row.poolEnabledHint')} {t('row.poolFailoverHint')}</p>
+        {panel === 'cn' && pool.checkinSupported && typeof pool.autoCheckin === 'boolean' ? <div className="dsm-trae-pool-auto-checkin">
+          <div className="dsm-trae-pool-modebar-row">
+            <label className="dsm-trae-switch dsm-trae-switch-pill">
+              <input type="checkbox" checked={autoCheckin} disabled={busy !== undefined || !writable}
+                aria-label={t('row.poolAutoCheckin')} onChange={event => { setAutoCheckin(event.target.checked) }} />
+            </label>
+            <b className="dsm-trae-pool-modebar-label">{t('row.poolAutoCheckin')}</b>
+          </div>
+          <p className="dsm-trae-pool-note">{t('row.poolAutoCheckinHint')}</p>
+          <p className="dsm-trae-pool-note">{t('row.poolAutoCheckinDeviceHint')}</p>
+          {pool.autoCheckin === true ? <p className="dsm-trae-pool-auto-checkin-status" role="status">{
+            pool.autoCheckinState?.deviceBlocked === true ? t('row.poolAutoCheckinDeviceDone')
+              : pool.autoCheckinState !== undefined ? t(pool.autoCheckinState.failures > 0 ? 'row.poolAutoCheckinRetry' : 'row.poolAutoCheckinProgress', { count: pool.autoCheckinState.done })
+                : t('row.poolAutoCheckinWaiting')
+          }</p> : null}
+        </div> : null}
       </div>
 
       {/* "Billing now" and "in the pool" are orthogonal, and a row cannot say
@@ -861,6 +885,7 @@ export function AccountPool({ panel, pool, models, t, settingsScope, onChanged, 
         {tools === undefined ? null : <div className="dsm-trae-pool-tools dsm-trae-pool-tools-dashed">{tools}</div>}
         <div className="dsm-trae-pool-head">
           <h3 className="dsm-trae-pool-title">{t('row.poolSettingsTitle')}</h3>
+          <IconStylePreference t={t} />
         </div>
         {/* Reference text, folded. Three paragraphs used to sit here as a wall of
             grey — where the copies live, when settings take effect, what Delete

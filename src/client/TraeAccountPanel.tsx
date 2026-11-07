@@ -581,9 +581,9 @@ export function TraeAccountPanel({
             {status.checkin !== undefined && !status.checkin.enabled
               ? <p className="dsm-trae-usage-error">{t('row.checkinDisabled')}</p>
               : null}
-            {status.checkinError === undefined
+            {status.checkinError === undefined || status.checkin?.checkedIn === true || status.checkin?.didCheckedIn === true || status.pool?.autoCheckinState?.deviceBlocked === true
               ? null
-              : <p className="dsm-trae-usage-error">{t('row.checkinError', { message: status.checkinError })}</p>}
+              : <p className="dsm-trae-usage-error">{t('row.checkinStatusError', { message: status.checkinError })}</p>}
           </>
         : null}
     </>

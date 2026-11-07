@@ -1,3 +1,6 @@
+import type { AutoCheckinState } from './auto-checkin.ts'
+import { readAutoCheckin } from './auto-checkin-store.ts'
+import { checkinDay } from './auto-checkin.ts'
 /**
  * Same-origin usage route for the Trae plugin card: sign-in state and the
  * read-only usage/credit summary, fetched by the browser half. The route
@@ -66,6 +69,7 @@ const CHECKIN_DEVICE_ALREADY_CLAIMED = 9095
  * user is on.
  */
 export interface TraeUsageRouteOptions {
+  autoCheckinProgress?(): Promise<AutoCheckinState | undefined>
   /** The panel-scoped credential store backing each region's requests. */
   store(panel: TraePanel): TraeCredentialStore
   /** The panel-scoped usage client (CN work credits / international pay status). */
@@ -773,9 +777,12 @@ export async function traeWebUsage(
   // a broken check-in endpoint still leaves the credit panel usable, and vice
   // versa. Each failure degrades to its own error field rather than taking the
   // whole document down.
+  const checkinProgress = await deps.autoCheckinProgress?.()
+  const checkinCompleted = checkinProgress?.day === checkinDay(Date.now())
+    && (checkinProgress.deviceBlocked || checkinProgress.done.includes(account.accountId))
   const [snapshotResult, checkinResult] = await Promise.allSettled([
     client.snapshot(),
-    client.checkinStatus(),
+    checkinCompleted ? Promise.resolve(undefined) : client.checkinStatus(),
   ])
   const credits = snapshotResult.status === 'fulfilled' ? toCredits(snapshotResult.value) : undefined
   // Only when the BOUND account is actually empty do the other accounts get
@@ -790,7 +797,7 @@ export async function traeWebUsage(
       ? { creditsError: snapshotResult.status === 'rejected' ? safeMessage(snapshotResult.reason) : 'unknown' }
       : { credits },
     ...checkinResult.status === 'fulfilled'
-      ? { checkin: toCheckin(checkinResult.value) }
+      ? checkinResult.value === undefined ? {} : { checkin: toCheckin(checkinResult.value) }
       : { checkinError: safeMessage(checkinResult.reason) },
     ...alternatives === undefined ? {} : { alternatives },
   }
@@ -1041,9 +1048,12 @@ export async function traeWebPool(
     rows.filter(row => row.member).map(row => row.account.id),
     new Set(members.map(member => member.account.id)),
   )
+  const automatic = panel === 'cn' && preferences.autoCheckin === true ? await readAutoCheckin() : undefined
   const copies = await deps.copiesOf?.(panel).catch((): undefined => undefined)
   return {
     enabled: preferences.enabled === true,
+    autoCheckin: preferences.autoCheckin === true,
+    ...(automatic?.day === checkinDay(Date.now()) ? { autoCheckinState: { done: automatic.done.length, deviceBlocked: automatic.deviceBlocked, failures: automatic.failures } } : {}),
     checkinSupported: pool.checkin !== undefined && regionOfPanel(panel) === 'cn',
     ...deps.deleteAccountOf === undefined ? {} : { deleteSupported: true },
     ...copies === undefined ? {} : { copies },

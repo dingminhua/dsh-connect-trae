@@ -284,6 +284,8 @@ export interface TraeWebPoolAccount {
  * card must render "no free model" rather than silently substituting a paid one.
  */
 export interface TraeWebPool {
+  autoCheckinState?: { done: number; deviceBlocked: boolean; failures: number }
+  autoCheckin?: boolean
   enabled: boolean
   /**
    * Whether this panel offers the daily check-in at all.
@@ -454,6 +456,8 @@ export interface TraeWebPoolDeleteAnswer {
  * slot must still load, and a missing `enabled` means OFF rather than ON.
  */
 export interface TraePoolPreferences {
+  /** 保存后启用国内个人账号池的每日自动签到。 */
+  autoCheckin?: boolean
   /** Whether this panel bills through the pool at all. Default OFF. */
   enabled?: boolean
   /**

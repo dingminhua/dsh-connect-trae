@@ -1,3 +1,5 @@
+import { createAutoCheckin } from './auto-checkin.ts'
+import { readAutoCheckin, writeAutoCheckin } from './auto-checkin-store.ts'
 /**
  * `dsh-connect-trae` — the Host half: one bundle, three providers, no
  * plugin-to-plugin interoperation.
@@ -592,6 +594,7 @@ const regionStateConfig = z.object({
   // is a fixed minimal chat — offering a size selector here would promise a
   // measurement the probe does not make.
   pool: z.object({
+    autoCheckin: z.boolean().default(false).description('每日自动签到：仅国内个人账号，遵守设备每日奖励限制。'),
     enabled: z.boolean().default(false).description('账号池：打开后本面板由池中可用账号轮流计费（关闭时按下面的绑定账号）'),
     targetModelId: z.string().default('').description('账号池测速使用的模型 id（留空 = 自动选择免费模型）'),
     memberAccountIds: z.array(z.string()).default([]).description('加入本面板账号池的账号 id（显式勾选，默认为空）'),
@@ -1805,7 +1808,7 @@ export function apply(ctx: Context, config: Config): void {
    * The bag is built per REQUEST, so it captures the panel and never has to be
    * told which tab asked.
    */
-  const poolDepsOf = (panel: TraePanel): TraePoolDeps => {
+  const poolDepsOf = (panel: TraePanel, checkinDone: readonly string[] = []): TraePoolDeps => {
     // One `chatStream` bridge PER credential for the life of this bag: a test
     // batch must address the account it is measuring, never whichever account is
     // currently selected (issue #25's rule — looking at a neighbour is not a
@@ -1879,7 +1882,7 @@ export function apply(ctx: Context, config: Config): void {
       },
       catalog: stored => poolCatalogOf(stored),
       checkinSupported: stored => regionOfPanel(stored) === 'cn',
-      checkin: async stored => checkinAllAccounts(await poolTargetsOf(stored), probeDeps()),
+      checkin: async stored => checkinAllAccounts((await poolTargetsOf(stored)).filter(target => !checkinDone.includes(target.accountId)), probeDeps()),
       checkinState: async stored => {
         const state = cachedCheckinStateOf(stored)
         const nowMs = Date.now()
@@ -1943,6 +1946,7 @@ export function apply(ctx: Context, config: Config): void {
   // tab it belongs to; the region-scoped accessors below then read (and the
   // save writes back into) that region's own slot.
   ctx.inject(['webServer'], (webCtx) => registerTraeUsageRoute(webCtx, {
+    autoCheckinProgress: readAutoCheckin,
     store: panel => stacks[panel].store,
     client: panel => stacks[panel].usageClient,
     displayModels: panel => displayModels(current(), panel),
@@ -2344,6 +2348,19 @@ export function apply(ctx: Context, config: Config): void {
       applySelection(current())
       syncTraeDrawImageTool(current())
     })
+
+  const automaticCheckin = createAutoCheckin({
+    enabled: () => poolPreferencesOf('cn').autoCheckin === true,
+    read: readAutoCheckin,
+    write: writeAutoCheckin,
+    run: async done => await poolDepsOf('cn', done).checkin?.('cn') ?? [],
+  })
+  ctx.effect(() => {
+    const tick = (): void => { void automaticCheckin.tick().catch(() => ctx.logger.warn('无法读取或保存 Trae 自动签到进度，请检查本地数据目录的访问权限。')) }
+    const timer = setInterval(tick, 30_000)
+    tick()
+    return () => { clearInterval(timer); automaticCheckin.stop() }
+  })
 
   let stopped = false
   ctx.effect(() => () => {
