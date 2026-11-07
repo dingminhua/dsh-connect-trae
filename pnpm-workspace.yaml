@@ -23,9 +23,21 @@ packages:
 overrides:
   '@deepseek-ai/schemastery': 3.19.0
 
+# Which dependencies may run install scripts. pnpm 11 makes this an ERROR by
+# default (`ERR_PNPM_IGNORED_BUILDS` aborts `pnpm install`), while pnpm 10 — what
+# a developer machine here runs — only warns. That asymmetry is why CI failed on
+# eight consecutive commits while `pnpm install` was green locally: nothing in
+# the diff was ever at fault.
+#
+# `tesseract.js` is listed explicitly as FALSE rather than allowed. Its only
+# install script is `opencollective-postinstall` (a funding banner), which the
+# privacy gate's OCR path does not need — it loads the package and reads the
+# traineddata at runtime. Naming it here also stops the next `pnpm install` from
+# re-prompting: an unlisted package is what pnpm reports as an ignored build.
 allowBuilds:
   '@google/genai': false
   protobufjs: false
+  tesseract.js: false
 
 # Disable pnpm 11's supply-chain release-age gate for this repo.
 #

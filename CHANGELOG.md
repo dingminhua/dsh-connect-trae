@@ -1,5 +1,59 @@
 # Changelog
 
+## 4.14.3 (2026-11-07)
+
+### 修复：CI 连续 8 次失败——两处都是配置，与代码无关
+
+`main` 上从 4.13.0 起连续 8 个提交 CI 全红（ubuntu + windows 同时），但
+`pnpm test` 本地一直是绿的。两处原因都在安装阶段，代码从未被跑到。
+
+**第一处：pnpm 11 把「忽略构建脚本」当成错误。**
+
+CI 用 pnpm 11，本地用 pnpm 10。同一个 `pnpm install --frozen-lockfile`：
+
+| 版本 | 遇到未声明的构建脚本 |
+| --- | --- |
+| pnpm 10（本地） | 只警告，继续装 |
+| pnpm 11（CI） | `ERR_PNPM_IGNORED_BUILDS`，**exit 1** |
+
+`pnpm-workspace.yaml` 里的 `allowBuilds` 从初始提交起就有，但只列了
+`@google/genai` 和 `protobufjs`，没列 `tesseract.js`。现在显式写 `false`：
+它的 postinstall 只是 `opencollective-postinstall`（捐款横幅），OCR 不需要它。
+
+**为什么本地永远复现不出来**：pnpm 版本不同。这条教训值得记住——本地绿不等于
+CI 绿，而这里的差异来自**包管理器版本**，不是代码。
+
+**第二处：CI 的 OCR 语言包用了会崩的版本。**
+
+修好安装后，隐私门禁会立刻暴露出下一个问题。CI 下载的是
+`4.0.0_best/eng.traineddata.gz`，tesseract.js 7 加载它直接 abort：
+
+```
+Aborted(missing function: _ZN9tesseract13DotProductSSEEPKfS1_i)
+```
+
+换成 `4.0.0`（tesseract.js 自己会去取的那个版本）就正常。实测对比：
+
+| 文件 | 大小 | 结果 |
+| --- | --- | --- |
+| `4.0.0_best` | 12,821,300 | abort，门禁记 SKIP |
+| `4.0.0` | 10,923,060 | OCR 正常，读出 768 字符 |
+
+这个 SKIP 是个陷阱：`verify-privacy.mjs` 把后端失败记成「无法验证」而不是
+「通过」，所以它不会误报绿——但会挡住发布，且提示语指向 `DSH_TESSDATA`，
+容易让人以为是本地环境问题而不是数据文件问题。
+
+### 验证
+
+在临时副本里用 **pnpm 11.28.11** 复刻 CI 全流程（不是本地 pnpm 10）：
+
+- `pnpm install --frozen-lockfile` → 通过（去掉 `tesseract.js: false` 立刻复现
+  `ERR_PNPM_IGNORED_BUILDS`，证明这条是必需的）
+- `typecheck` / `test`（108 文件 1389 例）/ `build` → 全部通过
+- `verify:privacy` + `DSH_TESSDATA` → 17 项，**无 SKIP**
+
+两处修复分别单独验证过：缺任一条，对应的步骤就失败。
+
 ## 4.14.2 (2026-11-07)
 
 ### 修复：非 loopback 绑定下，同源请求被当成外站（issue #78）

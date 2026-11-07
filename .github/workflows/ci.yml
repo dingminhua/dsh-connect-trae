@@ -60,10 +60,17 @@ jobs:
         shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/tessdata"
+          # `4.0.0`, NOT `4.0.0_best`. The `_best` variant is a different model
+          # file and aborts tesseract.js 7 with
+          #   Aborted(missing function: _ZN9tesseract13DotProductSSEEPKfS1_i)
+          # which surfaces as a SKIP in verify-privacy.mjs — i.e. the gate would
+          # report a hole rather than a pass, but only after install works. The
+          # plain 4.0.0 file is the one tesseract.js fetches for itself and the
+          # one measured to OCR these three images cleanly.
           curl -fsSL -o "$RUNNER_TEMP/tessdata/eng.traineddata.gz" \
-            https://github.com/naptha/tessdata/raw/gh-pages/4.0.0_best/eng.traineddata.gz
+            https://github.com/naptha/tessdata/raw/gh-pages/4.0.0/eng.traineddata.gz
           curl -fsSL -o "$RUNNER_TEMP/tessdata/chi_sim.traineddata.gz" \
-            https://github.com/naptha/tessdata/raw/gh-pages/4.0.0_best/chi_sim.traineddata.gz
+            https://github.com/naptha/tessdata/raw/gh-pages/4.0.0/chi_sim.traineddata.gz
 
       - name: Privacy gate
         shell: bash
