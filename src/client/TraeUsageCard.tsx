@@ -947,8 +947,13 @@ export function TraeUsageCard({ t, settingsScope, view, surface, backToConversat
     } catch (error: unknown) {
       if (mounted.current) {
         const message = error instanceof Error ? error.message : t('row.requestFailed')
+        // ONLY the rescan note (ISSUE #78). This path refreshes the account list;
+        // it writes no setting, so routing the message into `writeError` printed
+        // 「设置未能保存：…」 for something that never touched settings. The
+        // reporter went looking through settings persistence before finding the
+        // real cause, which is exactly the cost of a wrong label. `writeError`
+        // stays for the routes that DO write.
         setRescanNote(t('row.accountsRescanFailed', { message }))
-        setWriteError(message)
       }
     } finally {
       if (mounted.current) setBusy(false)

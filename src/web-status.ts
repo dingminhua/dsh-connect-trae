@@ -401,12 +401,64 @@ async function readTransferBody(req: IncomingMessage): Promise<Record<string, un
   return parsed as Record<string, unknown>
 }
 
-/** Loopback browser origins only; other devices are refused until trusted origins exist. */
-function loopbackOrigin(req: IncomingMessage): boolean {  const origin = req.headers.origin
-  if (origin === undefined) return true
+/**
+ * One hostname spelling: lowercased, IPv6 brackets dropped.
+ *
+ * `new URL('http://[::1]:3080').hostname` is the string `[::1]`, while a socket's
+ * `localAddress` is `::1` — comparing the two without normalising means the
+ * bracketed form never matches, which is why the old predicate listed both
+ * spellings by hand.
+ */
+function bareHostname(value: string): string {
+  const text = value.trim().toLowerCase()
+  return text.startsWith('[') && text.endsWith(']') ? text.slice(1, -1) : text
+}
+
+/**
+ * Whether a request's `Origin` may be honoured (ISSUE #78).
+ *
+ * This used to accept loopback hostnames ONLY, and that was wrong in a way that
+ * hid from every non-browser test: a browser always sends `Origin` on a
+ * same-origin POST, so `dsh web --host 100.64.0.2` served the page from an
+ * address the HOST layer had already accepted (`--trusted-host`) while this
+ * predicate called that page's own origin foreign. All six write routes 403'd
+ * in the real UI, and `curl` — which sends no `Origin` — stayed green. The
+ * plugin's own fetch does not send it either, so nothing on the plugin side
+ * noticed.
+ *
+ * The rule is now "same origin, however this process is addressed": loopback, or
+ * a hostname equal to the `Host` header's, or one equal to the socket's own
+ * local address. Hostnames only — a reverse proxy that changes the PORT must
+ * still be admitted, and the port says nothing about who is asking.
+ *
+ * The `Host` comparison is what the sibling dsh-connect-workbuddy predicate
+ * lacks, and it is here deliberately: a front proxy can rewrite `Host` to a
+ * different trusted spelling than the address the browser used, so neither
+ * `Host` nor `localAddress` alone covers every arrangement.
+ *
+ * Exact equality, never `endsWith`/`startsWith`: a suffix test would admit
+ * `evil-100.64.0.2`, and a prefix test would admit `100.64.0.20`.
+ */
+function loopbackOrigin(req: IncomingMessage): boolean {
+  const origin = req.headers.origin
+  // Absent OR empty: not a browser cross-origin request (curl, the plugin's own
+  // fetch). An empty header is not an origin anyone can claim.
+  if (origin === undefined || origin.trim() === '') return true
   try {
-    const { hostname } = new URL(origin)
-    return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]' || hostname === '::1'
+    const hostname = bareHostname(new URL(origin).hostname)
+    if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1') return true
+    const rawHost = req.headers.host
+    if (typeof rawHost === 'string' && rawHost.trim() !== '') {
+      // Parsed through URL rather than split on ':' so a bracketed IPv6 host and
+      // its port are handled by the same code as everything else.
+      if (hostname === bareHostname(new URL(`http://${rawHost}`).hostname)) return true
+    }
+    // `socket` is always present on a real request; the optional read keeps a
+    // hand-built request (tests, a future caller) from throwing inside the try
+    // and being read as "untrusted" for the wrong reason.
+    const local = req.socket?.localAddress
+    if (typeof local === 'string' && local.trim() !== '' && hostname === bareHostname(local)) return true
+    return false
   } catch {
     return false
   }

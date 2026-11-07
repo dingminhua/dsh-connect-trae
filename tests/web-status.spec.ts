@@ -475,6 +475,143 @@ describe('registerTraeUsageRoute region dispatch', () => {
   })
 
   /**
+   * ISSUE #78 — a browser on a LAN address is refused its OWN same-origin POST.
+   *
+   * The gate used to accept only loopback hostnames, so `dsh web --host
+   * 100.64.0.2` served the page from an address the host layer had already
+   * accepted (via `--trusted-host`) while this predicate called the page's own
+   * Origin foreign. A browser ALWAYS sends `Origin` on a same-origin POST, so
+   * every write route 403'd in the real UI while curl — which sends no Origin —
+   * stayed green. That asymmetry is why it shipped: the tests below send the
+   * Origin a browser would send.
+   */
+  describe('ISSUE #78: same-origin requests from a non-loopback bind', () => {
+    /** The request a browser makes when the page was opened at `host`. */
+    function browserRequest(host: string, origin: string): {
+      method: string
+      url: string
+      headers: Record<string, string>
+      socket: { localAddress: string }
+    } {
+      return {
+        method: 'GET',
+        url: TRAE_USAGE_PATH,
+        headers: { origin, host },
+        // A real LAN bind: the socket's local address IS the address the page
+        // was opened on. Tests that omit this are not modelling the bug.
+        socket: { localAddress: host.split(':')[0]! },
+      }
+    }
+
+    it('admits a same-origin request whose Origin host matches the Host header', async () => {
+      const captured = await mountRoutes()
+      const usage = captured.find(entry => entry.path === TRAE_USAGE_PATH)
+      if (usage === undefined) throw new Error('usage route was not registered')
+      const { res, status } = response()
+      await usage.handler(browserRequest('100.64.0.2:3080', 'http://100.64.0.2:3080'), res)
+      expect(status()).toBe(200)
+    })
+
+    it('admits a same-origin request whose Origin host matches the socket address', async () => {
+      // Reverse proxies rewrite Host to another trusted spelling, so the
+      // Host-header comparison alone is not enough: here Host says
+      // 100.64.0.1:13080 while the browser's page came from 100.64.0.2.
+      const captured = await mountRoutes()
+      const usage = captured.find(entry => entry.path === TRAE_USAGE_PATH)
+      if (usage === undefined) throw new Error('usage route was not registered')
+      const { res, status } = response()
+      await usage.handler({
+        method: 'GET',
+        url: TRAE_USAGE_PATH,
+        headers: { origin: 'http://100.64.0.2:3080', host: '100.64.0.1:13080' },
+        socket: { localAddress: '100.64.0.2' },
+      }, res)
+      expect(status()).toBe(200)
+    })
+
+    it('admits the loopback spellings, bracketed IPv6 included', async () => {
+      const captured = await mountRoutes()
+      const usage = captured.find(entry => entry.path === TRAE_USAGE_PATH)
+      if (usage === undefined) throw new Error('usage route was not registered')
+      for (const origin of ['http://127.0.0.1:3080', 'http://localhost:3080', 'http://[::1]:3080']) {
+        const { res, status } = response()
+        await usage.handler({
+          method: 'GET',
+          url: TRAE_USAGE_PATH,
+          headers: { origin, host: '127.0.0.1:3080' },
+          socket: { localAddress: '127.0.0.1' },
+        }, res)
+        expect(status(), origin).toBe(200)
+      }
+    })
+
+    it('still refuses a foreign origin, and one that only LOOKS like the bind', async () => {
+      // The regression this guards: loosening the check must not turn the gate
+      // into "anything goes". A suffix match (`evil-100.64.0.2`) or a prefix
+      // match (`100.64.0.20` vs `100.64.0.2`) would admit both of these.
+      const captured = await mountRoutes()
+      const usage = captured.find(entry => entry.path === TRAE_USAGE_PATH)
+      if (usage === undefined) throw new Error('usage route was not registered')
+      for (const origin of ['https://evil.example.com', 'http://100.64.0.20:3080', 'http://evil-100.64.0.2:3080', 'http://100.64.0.2.evil.example']) {
+        const { res, status, body } = response()
+        await usage.handler({
+          method: 'GET',
+          url: TRAE_USAGE_PATH,
+          headers: { origin, host: '100.64.0.2:3080' },
+          socket: { localAddress: '100.64.0.2' },
+        }, res)
+        expect(status(), origin).toBe(403)
+        expect(body(), origin).toMatchObject({ error: 'origin-not-trusted' })
+      }
+    })
+
+    it('refuses a null or malformed Origin', async () => {
+      const captured = await mountRoutes()
+      const usage = captured.find(entry => entry.path === TRAE_USAGE_PATH)
+      if (usage === undefined) throw new Error('usage route was not registered')
+      for (const origin of ['null', 'not a url', '']) {
+        const { res, status } = response()
+        await usage.handler({
+          method: 'GET',
+          url: TRAE_USAGE_PATH,
+          headers: { origin, host: '100.64.0.2:3080' },
+          socket: { localAddress: '100.64.0.2' },
+        }, res)
+        // An EMPTY Origin is the "no Origin" case and stays admitted; the other
+        // two are unparseable and must not be.
+        expect(status(), origin).toBe(origin === '' ? 200 : 403)
+      }
+    })
+
+    /**
+     * The OTHER half of issue #78: a failed account refresh used to print TWO
+     * errors, one of them 「设置未能保存」 for a path that writes no setting.
+     *
+     * Asserted against the source because the symptom is a mislabelled message
+     * in a component whose mount needs the whole settings shell; what can
+     * regress is the second call, so that is what is pinned.
+     */
+    it('does not report an account-refresh failure as a settings-write failure', async () => {
+      const { readFile } = await import('node:fs/promises')
+      const source = await readFile(new URL('../src/client/TraeUsageCard.tsx', import.meta.url), 'utf8')
+      // The rescan handler is the one that sets accountsRescanFailed.
+      const handler = /setRescanNote\(t\('row\.accountsRescanFailed'[\s\S]{0,400}?\n\s*\}/.exec(source)?.[0] ?? ''
+      expect(handler, 'the rescan failure handler').not.toBe('')
+      expect(handler).not.toContain('setWriteError')
+    })
+
+    it('keeps admitting requests that carry no Origin at all', async () => {
+      // curl and the plugin's own fetch land here. This is why the bug hid.
+      const captured = await mountRoutes()
+      const usage = captured.find(entry => entry.path === TRAE_USAGE_PATH)
+      if (usage === undefined) throw new Error('usage route was not registered')
+      const { res, status } = response()
+      await usage.handler({ method: 'GET', url: TRAE_USAGE_PATH, headers: {} }, res)
+      expect(status()).toBe(200)
+    })
+  })
+
+  /**
    * The claim route is the only one that changes upstream account state, so it
    * carries the strictest guards in the plugin. Each one is asserted against
    * the CALL COUNT of the upstream claim: a guard that answers 200 without
