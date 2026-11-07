@@ -6,10 +6,23 @@ export type IconStyle = 'claude' | 'original'
 const storageKey = 'dsh-connect-trae.icon-style'
 const changeEvent = storageKey + '.changed'
 
-/** Appearance is local to this browser; account and provider settings are untouched. */
+/**
+ * Appearance is local to this browser; account and provider settings are untouched.
+ *
+ * THE DEFAULT IS THIS PLUGIN'S OWN ICON ('original'), not the Claude skin.
+ *
+ * This shipped the other way round at first — an unset preference read as
+ * 'claude' — which meant every new user got a re-drawn silhouette before they
+ * had asked for anything, and the plugin's own artwork was the option they had
+ * to go find. A preference whose unset state is the non-default is a poor
+ * default: it makes the product's identity something you have to opt back into.
+ *
+ * An explicit 'claude' in storage still wins, so anyone who already chose the
+ * skin keeps it. Only the ABSENT case changed.
+ */
 export function iconStyleSnapshot(): IconStyle {
-  try { return window.localStorage.getItem(storageKey) === 'original' ? 'original' : 'claude' }
-  catch { return 'claude' }
+  try { return window.localStorage.getItem(storageKey) === 'claude' ? 'claude' : 'original' }
+  catch { return 'original' }
 }
 
 function subscribe(listener: () => void): () => void {
@@ -30,7 +43,7 @@ export function setIconStyle(value: IconStyle): void {
 }
 
 export function PluginIcon(props: { className?: string; size?: number; style?: CSSProperties; variant?: IconStyle }): JSX.Element {
-  const saved = useSyncExternalStore(subscribe, iconStyleSnapshot, () => 'claude' as const)
+  const saved = useSyncExternalStore(subscribe, iconStyleSnapshot, () => 'original' as const)
   const variant = props.variant ?? saved
   const shared = { className: props.className, width: props.size ?? 16, height: props.size ?? 16, style: { ...props.style, flexShrink: 0 }, 'aria-hidden': true as const }
   if (variant === 'original') return h('img', { ...shared, src: TRAE_PLUGIN_ICON, alt: '' })
@@ -44,7 +57,7 @@ type CopyKey = 'row.iconStyleLabel' | 'row.iconStyleHint' | 'row.iconStyleClaude
 
 /** Each choice previews the real icon and immediately persists its selection. */
 export function IconStylePreference({ t }: { t: (key: CopyKey) => string }): JSX.Element {
-  const selected = useSyncExternalStore(subscribe, iconStyleSnapshot, () => 'claude' as const)
+  const selected = useSyncExternalStore(subscribe, iconStyleSnapshot, () => 'original' as const)
   const [error, setError] = useState(false)
   return h('div', { className: 'dsm-icon-preference' },
     h('div', { className: 'dsm-icon-preference-copy' },

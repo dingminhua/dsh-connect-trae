@@ -196,6 +196,21 @@ describe('the card splits into three sections', () => {
     expect(caps.querySelector('.dsm-trae-pool-save-row')).toBeNull()
   })
 
+  it('keeps the icon picker in 能力, beside the switches, not in the account section', async () => {
+    // The picker sat in the pool-settings header first, i.e. in 账号. That is the
+    // wrong shelf: everything around it there is about WHICH ACCOUNTS serve, and
+    // this control changes how the plugin is drawn. It also writes on click, so
+    // it belongs with the other click-to-commit switches — not inside a block
+    // whose note says 「点保存才生效」.
+    await renderOpen()
+    expect(panel('capabilities').querySelector('.dsm-icon-preference')).not.toBeNull()
+    expect(panel('accounts').querySelector('.dsm-icon-preference')).toBeNull()
+    // It is the LAST row of the prefs list: the three above change behaviour,
+    // this one changes a drawing.
+    const prefs = panel('capabilities').querySelector('.dsm-trae-prefs')
+    expect(prefs?.lastElementChild?.classList.contains('dsm-icon-preference')).toBe(true)
+  })
+
   it('orders the sections account, models, capabilities, diagnostics', async () => {
     await renderOpen()
     // READING ORDER, not an arbitrary list: who is serving → what can be served

@@ -170,6 +170,20 @@ export const TRAE_CARD_CSS = `
 .dsm-trae-prefs{display:flex;flex-direction:column;gap:14px;padding:2px 2px 0}
 .dsm-trae-pref{display:flex;align-items:flex-start;gap:10px;font-size:13px;line-height:18px;color:var(--dsw-alias-label-secondary,#c6c9d0);cursor:pointer}
 .dsm-trae-pref input{flex:none;cursor:pointer;accent-color:var(--dsw-alias-brand-primary,#5686fe)}
+/* The icon picker inside the 「能力」 list.
+ *
+ * It is a shared component (plugin-icon.tsx) that also renders standalone, so
+ * its own rule carries a 12px block padding for that standalone use. Inside the
+ * prefs column that padding doubles up with the container's 14px gap and the row
+ * drifts away from its three neighbours, which are bare lines with no padding of
+ * their own. Strip it here rather than in the shared rule: the standalone
+ * spacing is still correct wherever else this component is mounted.
+ *
+ * min-width:0 on the copy because the labels here are Chinese sentences, not the
+ * short English words the 180px floor was chosen for; without it a long hint
+ * pushes the two icon buttons out of the 564px column instead of wrapping. */
+.dsm-trae-prefs .dsm-icon-preference{padding:0;align-items:flex-start}
+.dsm-trae-prefs .dsm-icon-preference-copy{min-width:0}
 .dsm-trae-pref-check{inline-size:15px;block-size:15px;margin:3px 0 0}
 /* The label and its explanation used to run together as one wrapped blob
    ("在输入框工具栏显示积分读数 在输入框工具栏显示可点击读数…"), which is what made

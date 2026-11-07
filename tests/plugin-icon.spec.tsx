@@ -30,25 +30,44 @@ async function mount() {
   return element
 }
 describe('plugin icon preference', () => {
-  it('switches all live icons and persists the selected style across remounts', async () => {
+  it('starts on THIS plugin\'s own icon, not the Claude skin', async () => {
+    // The default used to be 'claude', so a first-time user got a re-drawn
+    // silhouette before asking for anything and had to go find the product's
+    // own artwork as an option. An unset preference must mean the shipped icon.
     const element = await mount()
-    expect(element.querySelector('svg.live-icon')).not.toBeNull()
-    const original = element.querySelectorAll<HTMLButtonElement>('[role="radio"]')[1]!
-    await act(async () => { original.click() })
     expect(iconStyleSnapshot()).toBe('original')
     expect(element.querySelector('img.live-icon')).not.toBeNull()
-    const remounted = await mount()
-    expect(remounted.querySelector('img.live-icon')).not.toBeNull()
-    await act(async () => { setIconStyle('claude') })
-    expect(element.querySelector('svg.live-icon')).not.toBeNull()
-    expect(remounted.querySelector('svg.live-icon')).not.toBeNull()
+    expect(element.querySelector('svg.live-icon')).toBeNull()
+    // ...and the radio group must agree with what is drawn.
+    const radios = element.querySelectorAll<HTMLButtonElement>('[role="radio"]')
+    expect(radios[1]!.getAttribute('aria-checked')).toBe('true')
+    expect(radios[0]!.getAttribute('aria-checked')).toBe('false')
   })
+
+  it('switches all live icons and persists the selected style across remounts', async () => {
+    const element = await mount()
+    // Starts as our own icon; the FIRST radio is the Claude skin.
+    expect(element.querySelector('img.live-icon')).not.toBeNull()
+    await act(async () => { element.querySelectorAll<HTMLButtonElement>('[role="radio"]')[0]!.click() })
+    expect(iconStyleSnapshot()).toBe('claude')
+    expect(element.querySelector('svg.live-icon')).not.toBeNull()
+    const remounted = await mount()
+    expect(remounted.querySelector('svg.live-icon')).not.toBeNull()
+    // ...and back to our own icon.
+    await act(async () => { setIconStyle('original') })
+    expect(element.querySelector('img.live-icon')).not.toBeNull()
+    expect(remounted.querySelector('img.live-icon')).not.toBeNull()
+  })
+
   it('keeps the previous choice and reports a browser storage refusal', async () => {
     const element = await mount()
     vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('denied') })
-    await act(async () => { element.querySelectorAll<HTMLButtonElement>('[role="radio"]')[1]!.click() })
+    // Choose the NON-default option, so "kept the previous choice" is a real
+    // assertion: if the refusal fell back to the default it would read as
+    // success and this test would pass while the icon silently reverted.
+    await act(async () => { element.querySelectorAll<HTMLButtonElement>('[role="radio"]')[0]!.click() })
     expect(element.querySelector('[role="alert"]')?.textContent).toBe('row.iconStyleSaveFailed')
-    expect(iconStyleSnapshot()).toBe('claude')
-    expect(element.querySelector('svg.live-icon')).not.toBeNull()
+    expect(iconStyleSnapshot()).toBe('original')
+    expect(element.querySelector('img.live-icon')).not.toBeNull()
   })
 })

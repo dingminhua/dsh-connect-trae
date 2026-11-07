@@ -26,6 +26,7 @@ import type {
   TraeWebUsage,
 } from '../status-paths.ts'
 import type { TraeUsageCardInjected } from './TraeUsageCard.tsx'
+import { IconStylePreference } from './plugin-icon.tsx'
 import { AccountPool } from './AccountPool.tsx'
 import type { TraePoolRowClaim, TraePoolRowDetail } from './AccountPool.tsx'
 import { AccountTransfer } from './AccountTransfer.tsx'
@@ -353,6 +354,18 @@ export function TraeAccountPanel({
             <span className="dsm-trae-pref-hint">{t('row.sidebarPanelHint')}</span>
           </span>
         </label>
+        {/* ICON STYLE — the plugin's appearance, so it belongs with the other
+            「what this plugin does」 switches rather than in the account section.
+
+            It sat in the pool-settings header before, next to 「账号池设置」, and
+            that was the wrong shelf: everything around it there is about the
+            ACCOUNTS (which ones are pooled, what the drafts will do on save),
+            while this one changes how the plugin looks in the sidebar and on its
+            page — no account involved, and nothing to save.
+
+            Last in the block because it is the least consequential of the four:
+            the three above change behaviour, this one changes a drawing. */}
+        <IconStylePreference t={t} />
       </div>
       </>
     )
