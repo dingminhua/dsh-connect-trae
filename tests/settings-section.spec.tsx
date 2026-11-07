@@ -326,4 +326,31 @@ describe('the section surface', () => {
     }
     expect(narrow).toMatch(/grid-column:auto/u)
   })
+
+  it('right-aligns the credit figure so rows compare vertically', () => {
+    // WHY THIS IS PINNED. The balance is the one figure a reader compares
+    // ACROSS rows ("which account still has more?"). While it sat next to the
+    // account name, sized by content, the three rows put it at x=593 / 614 /
+    // 498 — the eye cannot scan a column that does not exist.
+    //
+    // The fix is flex, not a grid: the account line takes the remaining width
+    // and the credit is pushed to that line's end. Measured: all three rows
+    // land on right edge 773.
+    const narrow = /@container \(max-width:700px\)\{([\s\S]*?)\n\}/.exec(TRAE_CARD_CSS)?.[1] ?? ''
+    const credit = /\.dsm-trae-pool-credit\{([^}]*)\}/.exec(narrow)?.[1] ?? ''
+    // `flex:none` — the figure must not shrink; a squeezed number is worse
+    // than a wrapped row.
+    expect(credit).toContain('flex:none')
+    expect(credit).toMatch(/text-align:\s*right/u)
+    // Tabular digits, or the decimal points do not line up even once the boxes do.
+    expect(credit).toContain('tabular-nums')
+    // The account line must be the one that yields width. `flex:1 1 100%`
+    // (which it carried before) leaves nothing beside it, and the credit
+    // would be pushed onto its own line.
+    const account = /\.dsm-trae-pool-account\{([^}]*)\}/.exec(narrow)?.[1] ?? ''
+    expect(account).toContain('flex:1 1 auto')
+    expect(account).not.toContain('100%')
+    // The three availability facts move BELOW, so line 1 is just name + balance.
+    expect(narrow).toMatch(/\.dsm-trae-pool-probe\{flex:1 1 100%;order:5\}/u)
+  })
 })

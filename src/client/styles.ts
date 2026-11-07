@@ -808,15 +808,22 @@ export const TRAE_CARD_CSS = `
 @container (max-width:700px){
   .dsm-trae-pool-row{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px;padding:var(--dsm-trae-pool-pad-y) 12px}
   .dsm-trae-pool-row-head{display:none}
-  /* The account line does NOT claim the whole width: it leaves room on the right
-   * for the row's buttons, which join it via their own auto margin.
+  /* THE CREDIT FIGURE IS RIGHT-ALIGNED, ON ITS OWN, BESIDE THE ACCOUNT NAME.
    *
-   * 原先这里是 flex:1 1 100%（整行独占），所以按钮的 auto 外边距没有东西可推，
-   * 只能换到下一行。改成 0 1 auto：名称按内容取宽，剩余空间留给按钮。 */
-  .dsm-trae-pool-account{flex:0 1 auto;align-items:center}
-  .dsm-trae-pool-credit{flex:0 1 auto;flex-direction:row;flex-wrap:wrap;align-items:baseline;gap:2px 8px}
-  .dsm-trae-pool-probe{flex:1 1 auto}
-  .dsm-trae-pool-checkin{flex:none}
+   * 这是唯一一处真正需要「独立列」的位置：余额是这一行里最常被横向比对的东西
+   * （「哪个账号还剩得多」），而它原先紧跟账号名按内容摆放——三行的积分分别落在
+   * x=593 / 614 / 498，眼睛没法竖着扫。
+   *
+   * 做法：账号行吃掉剩余宽度（flex:1 1 auto），积分以 flex:none + auto 外边距被
+   * 推到该行末端，于是无论是「用户100000001」还是「demo-third」，积分都停在
+   * 同一个右缘（实测三行全部 773）。数字本身用等宽字形，小数点在竖向上也对齐。
+   *
+   * 剩下的三个事实（状态 / 签到 / 按钮）整体换到下一行：它们讲的是「能不能用」，
+   * 与「还剩多少」不是同一个问题，而把三样都挤进第一行反而会把账号名压窄。 */
+  .dsm-trae-pool-account{flex:1 1 auto;min-width:0;align-items:center}
+  .dsm-trae-pool-credit{flex:none;flex-direction:row;align-items:baseline;gap:2px 8px;text-align:right;font-variant-numeric:tabular-nums}
+  .dsm-trae-pool-probe{flex:1 1 100%;order:5}
+  .dsm-trae-pool-checkin{flex:none;order:6}
   /* The buttons ride the ACCOUNT line, not a line of their own.
    *
    * 这里原先是 flex:1 1 100% + justify-content:flex-start —— 表现是按钮独占一行、
@@ -825,7 +832,7 @@ export const TRAE_CARD_CSS = `
    * 会把按钮推到那条线的末端。
    *
    * 不写 flex 值：基础规则的 flex:none 必须保留——名称可以截断，按钮不能。 */
-  .dsm-trae-pool-row-actions{justify-content:flex-start;padding-top:0}
+  .dsm-trae-pool-row-actions{flex:none;order:7;justify-content:flex-end;padding-top:0}
   /* THE PROBE CELL'S OWN COLUMN, collapsed to one line.
    *
    * 这一条是最容易漏掉的：.dsm-trae-pool-probe 只是个 min-width:0 的外层包装，
