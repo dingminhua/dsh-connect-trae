@@ -327,30 +327,41 @@ describe('the section surface', () => {
     expect(narrow).toMatch(/grid-column:auto/u)
   })
 
-  it('right-aligns the credit figure so rows compare vertically', () => {
-    // WHY THIS IS PINNED. The balance is the one figure a reader compares
-    // ACROSS rows ("which account still has more?"). While it sat next to the
-    // account name, sized by content, the three rows put it at x=593 / 614 /
-    // 498 — the eye cannot scan a column that does not exist.
+  it('lays each row out as TWO rows, with the credit pinned right and the check-in on line 1', () => {
+    // WHY A GRID AND NOT flex-wrap. Both goals here are about POSITION, and
+    // flex-wrap decides position by content: with short names the check-in
+    // drifted to its own line, with long ones the credit landed mid-row
+    // (measured x=588 against 773 for its neighbours). A grid pins each fact to
+    // a cell, so the balance sits on the same right edge in every row and the
+    // check-in sits on the name's line regardless of how long the name is.
     //
-    // The fix is flex, not a grid: the account line takes the remaining width
-    // and the credit is pushed to that line's end. Measured: all three rows
-    // land on right edge 773.
+    // The shape being asserted:
+    //   row 1: [account]              [checkin] [credit]
+    //   row 2: [probe ...]                      [actions]
     const narrow = /@container \(max-width:700px\)\{([\s\S]*?)\n\}/.exec(TRAE_CARD_CSS)?.[1] ?? ''
-    const credit = /\.dsm-trae-pool-credit\{([^}]*)\}/.exec(narrow)?.[1] ?? ''
-    // `flex:none` — the figure must not shrink; a squeezed number is worse
-    // than a wrapped row.
+    const row = /\n  \.dsm-trae-pool-row:not\(\.dsm-trae-pool-row-head\)\{([^}]*)\}/.exec(TRAE_CARD_CSS)?.[1] ?? ''
+    expect(row).toContain('display:grid')
+    // The flexible column first, then the two auto tracks: check-in and credit.
+    expect(row).toMatch(/grid-template-columns:\s*minmax\(0,1fr\)\s+auto\s+auto/u)
+
+    const cell = (selector: string): string =>
+      new RegExp(`\\.${selector.replace('.', '\\.')}\\{([^}]*)\\}`).exec(narrow)?.[1] ?? ''
+
+    // Line 1: the account, the check-in, the credit.
+    expect(cell('dsm-trae-pool-account')).toMatch(/grid-row:1/u)
+    expect(cell('dsm-trae-pool-checkin')).toMatch(/grid-row:1/u)
+    const credit = cell('dsm-trae-pool-credit')
+    expect(credit).toMatch(/grid-row:1/u)
+    expect(credit).toMatch(/justify-self:end/u)
+    // The figure must not shrink — a squeezed balance is worse than a wider track.
     expect(credit).toContain('flex:none')
-    expect(credit).toMatch(/text-align:\s*right/u)
     // Tabular digits, or the decimal points do not line up even once the boxes do.
     expect(credit).toContain('tabular-nums')
-    // The account line must be the one that yields width. `flex:1 1 100%`
-    // (which it carried before) leaves nothing beside it, and the credit
-    // would be pushed onto its own line.
-    const account = /\.dsm-trae-pool-account\{([^}]*)\}/.exec(narrow)?.[1] ?? ''
-    expect(account).toContain('flex:1 1 auto')
-    expect(account).not.toContain('100%')
-    // The three availability facts move BELOW, so line 1 is just name + balance.
-    expect(narrow).toMatch(/\.dsm-trae-pool-probe\{flex:1 1 100%;order:5\}/u)
+
+    // Line 2: the probe, and the buttons flush right under the figures.
+    expect(cell('dsm-trae-pool-probe')).toMatch(/grid-row:2/u)
+    const actions = cell('dsm-trae-pool-row-actions')
+    expect(actions).toMatch(/grid-row:2/u)
+    expect(actions).toMatch(/grid-column:2\/-1/u)
   })
 })

@@ -808,31 +808,39 @@ export const TRAE_CARD_CSS = `
 @container (max-width:700px){
   .dsm-trae-pool-row{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px;padding:var(--dsm-trae-pool-pad-y) 12px}
   .dsm-trae-pool-row-head{display:none}
-  /* THE CREDIT FIGURE IS RIGHT-ALIGNED, ON ITS OWN, BESIDE THE ACCOUNT NAME.
+  /* TWO ROWS, EXPLICITLY PLACED. Not "let flex wrap and hope".
    *
-   * 这是唯一一处真正需要「独立列」的位置：余额是这一行里最常被横向比对的东西
-   * （「哪个账号还剩得多」），而它原先紧跟账号名按内容摆放——三行的积分分别落在
-   * x=593 / 614 / 498，眼睛没法竖着扫。
+   * 每一行账号只有两行：
    *
-   * 做法：账号行吃掉剩余宽度（flex:1 1 auto），积分以 flex:none + auto 外边距被
-   * 推到该行末端，于是无论是「用户100000001」还是「demo-third」，积分都停在
-   * 同一个右缘（实测三行全部 773）。数字本身用等宽字形，小数点在竖向上也对齐。
+   *   第一行  [勾选 + 账号名 + 标签]            [签到状态 + 按钮]  [积分]
+   *   第二行  [状态 · 测得时间 · 来源]                            [测速] [删除]
    *
-   * 剩下的三个事实（状态 / 签到 / 按钮）整体换到下一行：它们讲的是「能不能用」，
-   * 与「还剩多少」不是同一个问题，而把三样都挤进第一行反而会把账号名压窄。 */
-  .dsm-trae-pool-account{flex:1 1 auto;min-width:0;align-items:center}
-  .dsm-trae-pool-credit{flex:none;flex-direction:row;align-items:baseline;gap:2px 8px;text-align:right;font-variant-numeric:tabular-nums}
-  .dsm-trae-pool-probe{flex:1 1 100%;order:5}
-  .dsm-trae-pool-checkin{flex:none;order:6}
-  /* The buttons ride the ACCOUNT line, not a line of their own.
+   * 以前是 flex-wrap，由内容决定怎么折——结果是同一个表格里的行落在不同的
+   * 位置（实测三行分别占地 4 / 4 / 3 个纵向位置），有的积分被挤到中间（x=588）。
+   * 网格把每个事实钉在一个格子里：无论账号名多长，积分永远停在同一右缘，
+   * 「签到」永远和名字同一行。
    *
-   * 这里原先是 flex:1 1 100% + justify-content:flex-start —— 表现是按钮独占一行、
-   * 靠左，整行因此多出一行高度（截图里那个被框出来的块）。workbuddy 的解法是让
-   * 它们跟着名称行走：名称行本来就是行内最短的一行，右侧总有空位，而 auto 外边距
-   * 会把按钮推到那条线的末端。
+   * 列的含义：
+   *   1fr   —— 会伸缩的那一列（账号名、状态）。
+   *   auto  —— 签到：宽度由文字决定（「已签到」「未签到」「本设备今日已用」）。
+   *   auto  —— 积分：贴在右缘，flex:none，不许被压缩。
    *
-   * 不写 flex 值：基础规则的 flex:none 必须保留——名称可以截断，按钮不能。 */
-  .dsm-trae-pool-row-actions{flex:none;order:7;justify-content:flex-end;padding-top:0}
+   * 积分为什么单独成列而不是跟在名字后面：余额是这一行里唯一会被**跨行横向比对**
+   * 的数字（「哪个账号还剩得多」），而跟着名字走时三行分别落在 593 / 614 / 498，
+   * 眼睛没法竖着扫。等宽字形让小数点也对齐。
+   *
+   * 状态那一格（probe）独占第二行：它讲的是「能不能用」，与「还剩多少」不是同一个
+   * 问题；按钮也放在第二行，因为第一行已经有三个事实，再塞两个按钮会把账号名压窄。 */
+  .dsm-trae-pool-row:not(.dsm-trae-pool-row-head){
+    display:grid;grid-template-columns:minmax(0,1fr) auto auto;
+    align-items:center;gap:4px 10px}
+  .dsm-trae-pool-account{grid-column:1;grid-row:1;display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 8px;min-width:0}
+  .dsm-trae-pool-checkin{grid-column:2;grid-row:1;justify-self:end;flex:none}
+  .dsm-trae-pool-credit{grid-column:3;grid-row:1;justify-self:end;flex:none;flex-direction:row;align-items:baseline;gap:2px 8px;text-align:right;font-variant-numeric:tabular-nums}
+  .dsm-trae-pool-probe{grid-column:1;grid-row:2;min-width:0}
+  /* Spans from the check-in column to the edge: the buttons sit under the figures
+     they act on, flush with the credit above them. */
+  .dsm-trae-pool-row-actions{grid-column:2/-1;grid-row:2;justify-self:end;justify-content:flex-end;margin-inline-start:0;padding-top:0}
   /* THE PROBE CELL'S OWN COLUMN, collapsed to one line.
    *
    * 这一条是最容易漏掉的：.dsm-trae-pool-probe 只是个 min-width:0 的外层包装，
