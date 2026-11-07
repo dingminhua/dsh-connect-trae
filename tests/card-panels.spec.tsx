@@ -196,6 +196,20 @@ describe('the card splits into three sections', () => {
     expect(caps.querySelector('.dsm-trae-pool-save-row')).toBeNull()
   })
 
+  it('orders the sections account, models, capabilities, diagnostics', async () => {
+    await renderOpen()
+    // READING ORDER, not an arbitrary list: who is serving → what can be served
+    // → what the plugin may do with what it serves → the facts a bug report
+    // needs. 「能力」 moved here (it briefly sat second, right after the
+    // account) because its switches act on what 「模型」 enables.
+    //
+    // On the ids, not the labels: a label is localized text and this test must
+    // not fail in a language we have not shipped.
+    const order = Array.from(document.querySelectorAll<HTMLButtonElement>('.dsm-trae-panels [role="tab"]'))
+      .map(tab => tab.id.replace('dsm-trae-tab-', ''))
+    expect(order).toEqual(['accounts', 'models', 'capabilities', 'diag'])
+  })
+
   it('marks exactly one tab selected and points each tab at its panel', async () => {
     await renderOpen()
     const selected = (): HTMLButtonElement[] =>

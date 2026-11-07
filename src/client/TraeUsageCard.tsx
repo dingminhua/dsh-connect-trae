@@ -1988,29 +1988,6 @@ export function TraeUsageCard({ t, settingsScope, view, surface, backToConversat
             >
               {t('row.panelAccounts')}
             </button>
-            {/* 「能力」 sits SECOND, right after the account. The three switches
-                it holds authorize what this plugin may do on the user's behalf
-                (show a readout, add a sidebar row), which is a different
-                question from "which account is serving" and a different one
-                again from "which models are enabled". They used to sit inside
-                the account section, between the roster and the pool, so reading
-                a balance meant scrolling past settings.
-
-                This is the sibling dsh-connect-workbuddy's split, adopted for
-                the same reason: a control that GRANTS something belongs with the
-                other things that grant something, not mixed into a list of
-                facts. */}
-            <button
-              type="button"
-              role="tab"
-              id="dsm-trae-tab-capabilities"
-              aria-controls="dsm-trae-panel-capabilities"
-              aria-selected={panel === 'capabilities'}
-              className={`dsm-trae-panel-tab${panel === 'capabilities' ? ' dsm-trae-panel-tab-active' : ''}`}
-              onClick={() => { setPanel('capabilities') }}
-            >
-              {t('row.panelCapabilities')}
-            </button>
             <button
               type="button"
               role="tab"
@@ -2021,6 +1998,30 @@ export function TraeUsageCard({ t, settingsScope, view, surface, backToConversat
               onClick={() => { setPanel('models') }}
             >
               {t('row.panelModels')}
+            </button>
+            {/* 「能力」 sits AFTER 「模型」: the catalog decides what can be
+                served, and these switches decide what the plugin may do with
+                what it serves — a sequence, not two unrelated piles. Reading
+                order then runs account → models → capabilities → diagnostics:
+                who is serving, what they serve, what the plugin may do with it,
+                and finally the facts a bug report needs.
+
+                They used to sit inside the account section, between the roster
+                and the pool, so reading a balance meant scrolling past settings.
+                Splitting them out is the sibling dsh-connect-workbuddy's move,
+                adopted for the same reason: a control that GRANTS something
+                belongs with the other things that grant something, not mixed
+                into a list of facts. */}
+            <button
+              type="button"
+              role="tab"
+              id="dsm-trae-tab-capabilities"
+              aria-controls="dsm-trae-panel-capabilities"
+              aria-selected={panel === 'capabilities'}
+              className={`dsm-trae-panel-tab${panel === 'capabilities' ? ' dsm-trae-panel-tab-active' : ''}`}
+              onClick={() => { setPanel('capabilities') }}
+            >
+              {t('row.panelCapabilities')}
             </button>
             <button
               type="button"
