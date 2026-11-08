@@ -218,6 +218,19 @@ export const TRAE_CARD_CSS = `
    question and sits beside the words that ask it. */
 .dsm-trae-credit-position{flex:none;max-width:none;margin-top:0;padding:3px 8px;font-size:12px;line-height:16px;border:1px solid var(--dsw-alias-border-l2,#3a3d45);border-radius:7px;background:var(--dsw-alias-bg-layer-3,#2a2c33);color:var(--dsw-alias-label-primary,#e6e6e6);cursor:pointer}
 .dsm-trae-credit-position:disabled{cursor:default}
+/* The automatic-refresh picker, a sibling of the seat picker above and styled
+   to match it — the two answer the same kind of question ("how this readout
+   behaves") and sit on consecutive lines, so a second visual idiom would read
+   as an unrelated control.
+
+   Its OWN class, deliberately NOT the seat picker's: a test that selects the
+   seat picker by class must not start finding the cadence picker the moment
+   this row is added, which is exactly the failure the seat picker's own comment
+   records. The row borrows the checkbox column's padding for the same reason
+   its sibling does. */
+.dsm-trae-refresh-interval-pref{align-items:flex-start;padding-left:25px}
+.dsm-trae-refresh-interval{flex:none;max-width:none;margin-top:0;padding:3px 8px;font-size:12px;line-height:16px;border:1px solid var(--dsw-alias-border-l2,#3a3d45);border-radius:7px;background:var(--dsw-alias-bg-layer-3,#2a2c33);color:var(--dsw-alias-label-primary,#e6e6e6);cursor:pointer}
+.dsm-trae-refresh-interval:disabled{cursor:default}
 /* The card's checkboxes are the platform's own, styled only with
    accent-color 鈥?the SAME idiom .dsm-trae-mainui-switch-label above already
    uses for the composer-line switch, and the one the sibling

@@ -232,6 +232,13 @@ export const en = {
   'row.creditPositionStats': 'below the input box',
   'row.creditPositionAria': 'Credit readout position for {region}',
   'row.creditPositionHint': 'The default position is on the model picker row. If another connector occupies the same position, the readout loaded later moves left automatically. Choose below the input box to show it beside the round, step and token statistics.',
+  // HOW OFTEN the plugin refreshes on its own (Config.refreshIntervalMinutes).
+  // One cadence for the whole plugin: the card's usage read and the composer
+  // readout hit the same two upstream routes, so they share one number.
+  'row.refreshIntervalLabel': 'refresh every',
+  'row.refreshIntervalOption': '{minutes} min',
+  'row.refreshIntervalAria': 'Automatic refresh interval',
+  'row.refreshIntervalHint': 'How often the card and the composer readout re-read usage by themselves, every 5 minutes by default. Each refresh is two read-only upstream requests, so a shorter interval means more traffic; nothing here spends credits. A change takes effect immediately, and turning a panel off stops its reads.',
   'composer.switchTo': 'Switch to {account}',
   'composer.noAccounts': 'No account in this region',
   'composer.panelTitle': 'Trae credits',
@@ -714,6 +721,12 @@ export const zh: Record<TraeSettingsKey, string> = {
   'row.creditPositionStats': '输入框下方',
   'row.creditPositionAria': '{region} 的积分显示位置',
   'row.creditPositionHint': '默认与模型选择同一行显示；遇到其他连接器占用排序位置时，后加载的读数自动向左排列。也可选择「输入框下方」，与轮次、步数和 token 统计同一行显示。',
+  // 自动刷新间隔（Config.refreshIntervalMinutes）。整个插件共用一个值：卡片的用量
+  // 读取与输入框读数打的是同两条上游路由，所以两处必须同一个节奏。
+  'row.refreshIntervalLabel': '自动刷新',
+  'row.refreshIntervalOption': '{minutes} 分钟',
+  'row.refreshIntervalAria': '自动刷新间隔',
+  'row.refreshIntervalHint': '卡片与输入框读数各自多久重新读取一次用量，默认 5 分钟。每次刷新是两次只读的上游请求，间隔越短请求越频繁；这里不消耗积分。改动即时生效；面板关闭后该面板不再自动读取。',
   'composer.switchTo': '切换到 {account}',
   'composer.noAccounts': '该区域暂无账号',
   'composer.panelTitle': 'Trae 积分',

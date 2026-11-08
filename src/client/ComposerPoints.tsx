@@ -56,7 +56,7 @@ import { expiryHeadlineKey, expiryNotice, expiryToneClass } from './expiry-ladde
 import type { ExpiryNotice } from './expiry-ladder.ts'
 import { planText } from './plan-text.ts'
 import type { TraeWebAccountCredit, TraeWebAccountState, TraeWebCreditExpiry, TraeWebPayStatus, TraeWebUsage } from '../status-paths.ts'
-import { withTraePoolAction } from '../status-paths.ts'
+import { refreshIntervalMsOf, withTraePoolAction } from '../status-paths.ts'
 import { POOL_TEST_TIMEOUT_MS, applyTestLine, outcomeLabel, testLinesOf } from './pool-test.ts'
 import type { TraeRegion } from '../region.ts'
 import type { TraeSettingsKey } from './locales.ts'
@@ -84,9 +84,17 @@ if (typeof document !== 'undefined') {
 }
 
 /**
- * Automatic refresh period. Five minutes, matching the sidebar line: a credit
- * balance moves on the scale of model calls, not seconds, and each read is two
- * read-only upstream calls.
+ * Automatic refresh period when nothing says otherwise.
+ *
+ * Five minutes, matching the sidebar line: a credit balance moves on the scale
+ * of model calls, not seconds, and each read is two read-only upstream calls.
+ *
+ * The LIVE period is the user's `Config.refreshIntervalMinutes` (see
+ * {@link refreshIntervalMsOf}), whose default is this same five minutes — so
+ * this constant is now the fallback for a caller that renders the readout
+ * without a settings scope (a test, or a host that serves none), not the rule.
+ * Both polling surfaces read that ONE field, so the composer row and the card
+ * cannot end up refreshing the same routes at different rates.
  */
 export const COMPOSER_POINTS_REFRESH_INTERVAL_MS = 300_000
 
@@ -232,6 +240,18 @@ export function ComposerPoints(props: ComposerPointsProps) {
   if (t === undefined) throw new Error('Composer points readout requires its translation function')
   const owned = provider === undefined ? undefined : TRAE_COMPOSER_PROVIDERS[provider]
   const activeRegion = region ?? owned
+  /**
+   * The poll period, from the user's own cadence setting.
+   *
+   * Read through the SHARED reader (the card's poll reads the same field the
+   * same way), with the constant above as the fallback when this readout is
+   * rendered with no settings scope at all. It re-reads on every render, so the
+   * scope's notification after a write is enough to rebuild the timer — the
+   * effect below lists it as a dependency for exactly that reason.
+   */
+  const refreshIntervalMs = settingsScope === undefined
+    ? COMPOSER_POINTS_REFRESH_INTERVAL_MS
+    : refreshIntervalMsOf(settingsScope.getSnapshot().value)
 
   const [usage, setUsage] = useState<TraeWebUsage | undefined>(undefined)
   const [accountCredits, setAccountCredits] = useState<TraeWebAccountCredit[] | undefined>(undefined)
@@ -304,6 +324,25 @@ export function ComposerPoints(props: ComposerPointsProps) {
     return () => { mounted.current = false }
   }, [])
 
+  /**
+   * Re-render when the settings document changes, so a cadence picked in the
+   * card reaches THIS readout without a reload.
+   *
+   * The scope is a stable injected reference, so the subscription is set up once
+   * per scope. `settingsRevision` is not read anywhere — bumping it is the whole
+   * point, since `refreshIntervalMs` above is recomputed on every render.
+   *
+   * The gate above (`ComposerPointsGate`) already subscribes for its own two
+   * switches, but a child does not re-render because its PARENT subscribed: this
+   * component is mounted through that gate, so without its own subscription a
+   * cadence change would only land on the next unrelated render.
+   */
+  const [, setSettingsRevision] = useState(0)
+  useEffect(
+    () => settingsScope?.subscribe(() => { setSettingsRevision(revision => revision + 1) }),
+    [settingsScope],
+  )
+
   const position = useAnchoredPosition({
     open: open && activeRegion !== undefined,
     anchorRef: rootRef,
@@ -365,6 +404,12 @@ export function ComposerPoints(props: ComposerPointsProps) {
   // Fetch usage on mount and whenever the region changes, then keep it fresh.
   // The timer starts only after the first fetch settles, so a slow upstream
   // cannot stack overlapping reads.
+  //
+  // `refreshIntervalMs` is a dependency, so changing the cadence REPLACES the
+  // timer: the cleanup below clears the old one and aborts its in-flight read
+  // before the effect re-runs, which is what keeps a change from leaving two
+  // loops ticking. It is read off the settings scope through the shared reader,
+  // i.e. the same number the card's own poll uses.
   useEffect(() => {
     if (owned === undefined) return undefined
     let cancelled = false
@@ -372,14 +417,14 @@ export function ComposerPoints(props: ComposerPointsProps) {
     const controller = new AbortController()
     void fetchUsage(controller.signal).finally(() => {
       if (cancelled) return
-      timer = window.setInterval(() => { void fetchUsage(controller.signal) }, COMPOSER_POINTS_REFRESH_INTERVAL_MS)
+      timer = window.setInterval(() => { void fetchUsage(controller.signal) }, refreshIntervalMs)
     })
     return () => {
       cancelled = true
       if (timer !== undefined) window.clearInterval(timer)
       controller.abort()
     }
-  }, [owned, fetchUsage])
+  }, [owned, fetchUsage, refreshIntervalMs])
 
   /**
    * Every account's PLAN, one status read per account — ai only.

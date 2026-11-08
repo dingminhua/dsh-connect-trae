@@ -39,7 +39,7 @@ import {
 } from './adapter.ts'
 import type { TraeWebAccountState, TraeWebCredits } from './status-paths.ts'
 import type { TraeCheckinClaim, TraeCheckinStatus } from './usage.ts'
-import { configuredAccountsOf, drawImagePanelsOf, unwrapVolatile, unwrapVolatileDeep } from './status-paths.ts'
+import { configuredAccountsOf, drawImagePanelsOf, TRAE_REFRESH_INTERVAL_DEFAULT_MINUTES, TRAE_REFRESH_INTERVAL_MINUTES, unwrapVolatile, unwrapVolatileDeep } from './status-paths.ts'
 import type { TraeAdapter } from './adapter.ts'
 import { isTraeAccountId, traeAccountId, TraeCredentialStore } from './auth.ts'
 import { piAiRuntimeInfo } from './pi-ai-runtime.ts'
@@ -67,7 +67,7 @@ import { TraeDelegatingUpstreamClient } from './delegating-upstream.ts'
 import { MAX_PROBE_INPUT_TOKENS, probeBody, probeModelsSequentially, probeOneModel } from './model-probe.ts'
 import { TraeUsageClient } from './usage.ts'
 import { registerTraeUsageRoute, toCheckin, toCredits, type TraePoolCheckinState, type TraePoolDeps } from './web-status.ts'
-import type { TraePoolPreferences } from './status-paths.ts'
+import type { TraePoolPreferences, TraeRefreshIntervalMinutes } from './status-paths.ts'
 import { billableMembers, effectiveMembersOf, pickAccount, poolKeyOfPanel, rankPool, resolveTargetModel } from './account-pool.ts'
 import type { TraePoolCredits, TraePoolMember, TraePoolOutcome, TraePoolProbe } from './account-pool.ts'
 import { checkinAllAccounts, probeUpdatesOf, testAllAccounts, type TraePoolRunnerDeps } from './account-pool-run.ts'
@@ -346,6 +346,23 @@ export interface Config {
    * where the entry seeds the switch at page load).
    */
   sidebarPanel?: boolean
+  /**
+   * How often the plugin refreshes its own readouts, in MINUTES.
+   *
+   * ONE plugin-wide number rather than one per region, because the thing it
+   * paces is the plugin's background chatter, not a region's data: both
+   * surfaces that poll (the card's usage document and the composer readout)
+   * read the same routes at the same cost, and a per-region copy would let the
+   * same screen refresh at two cadences.
+   *
+   * `undefined` means the default (5 minutes), which is what both surfaces
+   * already used before this was settable — so an upgrade moves nothing.
+   * The accepted values are exactly {@link TRAE_REFRESH_INTERVAL_MINUTES}
+   * (1 / 5 / 10 / 30 / 60); the schema below refuses anything else, and the
+   * readers fall back to the default for a document that never went through
+   * it (a hand-edited file, or a profile written before this field existed).
+   */
+  refreshIntervalMinutes?: TraeRefreshIntervalMinutes
   /**
    * Per-region model state, keyed `cn` | `ai`. The CN and international apps
    * expose different rosters, so each keeps its own directory and selection
@@ -645,6 +662,22 @@ export const Config: z<Config> = z.object({
       .default(false)
       .description('在 DSH 侧边栏显示「Trae」面板：点开是这张卡片的整页版。默认关闭——这一行占的是所有插件共用的全局侧边栏座位，而「插件」页本来就能看到同样的内容。点一下即生效，不用保存。'),
   ) as unknown as z<boolean>,
+  // How often the plugin refreshes on its own, in MINUTES (see
+  // `Config.refreshIntervalMinutes`). Volatile for the same reason as the two
+  // switches above: the card's picker writes it, and a value that paces a
+  // timer must not cost a plugin reload to change.
+  //
+  // The default is 5 because that is what the composer readout already used, so
+  // an upgrade moves nothing; the card's own poll is brought to this cadence in
+  // the same change. The union — not a free number — is what makes the setting
+  // mean something: a hand-edited `7` is refused here instead of quietly
+  // producing a cadence nobody chose, and the reader still falls back to the
+  // default for a document that never went through this schema.
+  refreshIntervalMinutes: asVolatile(
+    z.union(TRAE_REFRESH_INTERVAL_MINUTES)
+      .default(TRAE_REFRESH_INTERVAL_DEFAULT_MINUTES)
+      .description('自动刷新间隔（分钟）：卡片与输入框读数共用。可选 1 / 5 / 10 / 30 / 60，默认 5。每次刷新会读取用量（两次只读的上游请求），间隔越短请求越频繁。'),
+  ) as unknown as z<TraeRefreshIntervalMinutes>,
   accounts: asVolatile(accountSelectionConfig.description('Per-panel account selections, keyed cn | enterprise | ai')) as z<Partial<Record<TraePanel, string>>>,
   regions: asVolatile(z.dict(regionStateConfig).default({}).description('Per-panel model directory and selection, keyed cn | enterprise | ai')),
   lastCatalog: z.array(modelConfig).description('Deprecated: pre-region-split CN model directory') as z<TraeModelInfo[]>,

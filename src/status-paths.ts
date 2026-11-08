@@ -1188,6 +1188,60 @@ export function nextRegionCreditPosition(
 }
 
 /**
+ * The automatic-refresh cadences this plugin offers, in MINUTES.
+ *
+ * The list is the setting's whole value domain: the schema validates against
+ * exactly these, so a hand-edited `7` is refused at write time instead of
+ * silently producing a cadence nobody chose. `1` is the floor because every
+ * usage read costs two upstream requests and a tighter loop would turn a
+ * background refresh into traffic the user never asked for.
+ */
+export const TRAE_REFRESH_INTERVAL_MINUTES = [1, 5, 10, 30, 60] as const
+
+/** One accepted cadence. */
+export type TraeRefreshIntervalMinutes = typeof TRAE_REFRESH_INTERVAL_MINUTES[number]
+
+/**
+ * The cadence used when nothing is stored.
+ *
+ * Five minutes, which is what BOTH polling surfaces already did before this
+ * became a setting (the composer readout polled at 5 minutes; the card polled
+ * at 60s and is brought in line here). So an upgrade changes no one's
+ * behaviour, and the default is the number the copy in the README has always
+ * quoted.
+ */
+export const TRAE_REFRESH_INTERVAL_DEFAULT_MINUTES: TraeRefreshIntervalMinutes = 5
+
+const REFRESH_INTERVAL_SET: ReadonlySet<number> = new Set(TRAE_REFRESH_INTERVAL_MINUTES)
+
+/**
+ * How often the plugin refreshes on its own, in minutes.
+ *
+ * Anything that is not one of {@link TRAE_REFRESH_INTERVAL_MINUTES} reads as
+ * the default — absent (a profile written before the setting existed), a
+ * hand-edited `7`, a string `'5'`, or a live reference that resolves to none of
+ * those. Falling back rather than refusing to refresh is deliberate: a readout
+ * that stops updating because of an unrecognized value is the failure this
+ * setting must never introduce, and the schema already refuses such a value on
+ * the write path.
+ *
+ * `value` is the whole settings section (this field is plugin-wide, not
+ * per-region — see `Config.refreshIntervalMinutes`).
+ */
+export function refreshIntervalMinutesOf(value: unknown): TraeRefreshIntervalMinutes {
+  const unwrapped = unwrapVolatileDeep(value)
+  const stored = (unwrapped as { refreshIntervalMinutes?: unknown } | undefined)?.refreshIntervalMinutes
+  return typeof stored === 'number' && REFRESH_INTERVAL_SET.has(stored)
+    ? stored as TraeRefreshIntervalMinutes
+    : TRAE_REFRESH_INTERVAL_DEFAULT_MINUTES
+}
+
+/** The same cadence as a millisecond period, for `setInterval`. */
+export function refreshIntervalMsOf(value: unknown): number {
+  return refreshIntervalMinutesOf(value) * 60_000
+}
+
+/**
  * One panel's saved pool PREFERENCES, as the card's settings block edits them.
  *
  * Read from the settings document rather than from the usage answer for the same
