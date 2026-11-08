@@ -30,7 +30,8 @@ import { TraeUsageCard } from './TraeUsageCard.tsx'
 import { ComposerPointsGate } from './ComposerPointsGate.tsx'
 import type { ComposerPointsGateProps } from './ComposerPointsGate.tsx'
 import { TRAE_SETTINGS_ID, openPluginSettingsPage } from './settings-route.ts'
-import { MODEL_LABEL_PRIORITY, TraeModelLabel } from './TraeModelLabel.tsx'
+import { MODEL_LABEL_PRIORITY, TRAE_MODEL_LABEL_PROVIDERS, TraeModelLabel } from './TraeModelLabel.tsx'
+import { declaredSlotKind, modelLabelSeats, registerModelLabelSeats } from './model-label-seat.ts'
 import type { TraeUsageCardInjected } from './TraeUsageCard.tsx'
 import type { TraeCreditPosition } from '../status-paths.ts'
 import { TRAE_USAGE_PATH, withTraeRegion } from '../status-paths.ts'
@@ -143,10 +144,19 @@ function releaseSlotEntry(identity: string, entryOnly = false): void {
  * the same priority. That refusal is OUR fault and we can fix it rather than
  * report it, so each run releases whatever this identity already holds.
  *
+ * ONE DISPOSER PER CALL, HOWEVER MANY ENTRIES IT OWNS. A `keyed` host makes this
+ * plugin claim one cell per provider id (see `./model-label-seat.ts`), and those
+ * cells must live and die together — a partial teardown would leave a cell
+ * occupied by a component whose siblings are gone, visible as some rows
+ * decorated and others not. Folding them into one disposer is
+ * `registerModelLabelSeats`'s job, so the contract here stays the simple one:
+ * whatever `register` returns is the whole ownership of this identity, and
+ * `SlotHold` keeps exactly one.
+ *
  * @param ctx - The applying plugin's context (module scope has none).
  * @param identity - Stable key for this seat.
  * @param slotKey - The host slot to register into.
- * @param register - Performs the registration, returning its disposer.
+ * @param register - Performs the registration(s), returning ONE disposer for all.
  * @param describe - Names the seat in the failure log.
  */
 function registerSlotEntry(
@@ -495,23 +505,44 @@ export function apply(ctx: ClientContext): void {
      * non-interactive inline content such as a coloured name or badge" while the
      * picker keeps owning clicks, focus and check marks.
      *
+     * HOW MANY SEATS, AND WHY THAT IS READ AT MOUNT. On a `single` host this slot
+     * holds ONE cell: a second registration at the same priority throws, a second
+     * registration at any other priority is silently discarded, and whoever holds
+     * the cell must draw EVERY provider's rows. On a `keyed` host each
+     * `options.key` is its own cell, so one seat per provider id gives this
+     * plugin exactly its own rows and leaves every other provider to the owner's
+     * own fallback. Which shape is legal is the HOST's declaration, so the kind
+     * is read from `ctx.slots.spec(...)` at mount and the seat list is derived
+     * from it (`./model-label-seat.ts`). One build serves both lines.
+     *
      * Registered unconditionally: the component renders the plain name for a
      * provider that is not ours, so there is nothing to gate on. Its own
      * try/catch keeps a host that does not serve this slot from taking the card
      * down with it.
      */
     const registerModelLabel = (): void => {
-      registerSlotEntry(ctx, 'conversation.input.model.label', 'conversation.input.model.label', () => (ctx.slots as unknown as {
-        register(options: { name: string, priority: number }, component: unknown): () => void
-      }).register(
-        // The priority is not a detail (issue #74): `single` slots throw on a
-        // duplicate at the SAME priority, and 0 — the default, which this used
-        // to take — is the one value guaranteed to be contested, because it is
-        // what every other contributor also gets without asking. See
-        // `MODEL_LABEL_PRIORITY` for the live occupancy that chose this value.
-        { name: 'conversation.input.model.label', priority: MODEL_LABEL_PRIORITY },
-        TraeModelLabel,
-      ), 'model label slot')
+      registerSlotEntry(ctx, 'conversation.input.model.label', 'conversation.input.model.label', () => {
+        const registry = ctx.slots as unknown as {
+          register(options: { name: string, priority: number, key?: string }, component: unknown): () => void
+        }
+        const seats = modelLabelSeats({
+          name: 'conversation.input.model.label',
+          kind: declaredSlotKind(ctx.slots, 'conversation.input.model.label'),
+          providerIds: TRAE_MODEL_LABEL_PROVIDERS,
+          // The priority is not a detail (issue #74): `single` slots throw on a
+          // duplicate at the SAME priority, and 0 — the default, which this used
+          // to take — is the one value guaranteed to be contested, because it is
+          // what every other contributor also gets without asking. See
+          // `MODEL_LABEL_PRIORITY` for the live occupancy that chose this value
+          // and for what the value still means once the host keys the slot.
+          priority: MODEL_LABEL_PRIORITY,
+        })
+        // ATOMIC: 2–3 seats, any one of which can be refused. A plain `.map()`
+        // would strand the seats that already landed (their disposers would die
+        // with the thrown array), leaving live cells nothing can release — see
+        // `registerModelLabelSeats`.
+        return registerModelLabelSeats(seats, seat => registry.register(seat, TraeModelLabel))
+      }, 'model label slot')
     }
 
     registerModelLabel()

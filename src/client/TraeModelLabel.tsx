@@ -58,10 +58,22 @@ import { useEffect, useState } from 'react'
 import type { CSSProperties, ReactElement } from 'react'
 import { selectTraePromoBadge } from '../promo.ts'
 import type { TraePromoBadge, TraePromoKind } from '../promo.ts'
-import { panelOfProvider } from '../region.ts'
+import { panelOfProvider, providerOfPanel, TRAE_PANELS } from '../region.ts'
 import type { TraePanel } from '../region.ts'
 import { TRAE_USAGE_PATH, withTraeRegionFastDetail } from '../status-paths.ts'
 import type { TraeWebModel } from '../status-paths.ts'
+
+/**
+ * Every provider id this plugin owns, in panel order.
+ *
+ * Exported because on a `keyed` host the label seat is one registration PER
+ * provider id — the registration side needs the same list the component uses to
+ * decide "is this row mine", and a second literal would drift from
+ * `providerOfPanel`. Derived rather than typed out: `trae-enterprise` is the id
+ * most easily forgotten, and forgetting it means that panel's rows silently fall
+ * through to the host's plain fallback.
+ */
+export const TRAE_MODEL_LABEL_PROVIDERS: readonly string[] = TRAE_PANELS.map(providerOfPanel)
 import { en, zh } from './locales.ts'
 import type { TraeSettingsKey } from './locales.ts'
 
@@ -387,6 +399,17 @@ function PromoChip(props: { badge: TraePromoBadge, copy: Record<TraeSettingsKey,
  * host's own presentation — catalog name plus that model's optional badge — for
  * any provider that is not ours.
  *
+ * WHAT CHANGES WHEN THE HOST KEYS THE SLOT — and why the number stays. On a host
+ * that declares this slot `keyed`, the seat is registered once per provider id
+ * (`./model-label-seat.ts`), each `key` is its own cell, and priority stops
+ * deciding WHO IS VISIBLE: qoder's `-101` and workbuddy's `-105` no longer share
+ * a cell with this `-102`, so none of the three can shadow another and the
+ * armistice below stops being a race. Priority keeps exactly one meaning inside
+ * a cell — the tie-breaker between two registrations claiming the SAME provider
+ * id, where an equal value throws and the lowest renders. The value is therefore
+ * kept as this plugin's rank for its own rows, not as a bid in an auction that
+ * no longer happens.
+ *
  * WHY A DISTINCT PRIORITY IS NOT ENOUGH ON ITS OWN. It removes the cross-plugin
  * collision, but issue #74's error was a SECOND registration of THIS plugin
  * against its own first one (the report's stack shows
@@ -395,7 +418,9 @@ function PromoChip(props: { badge: TraePromoBadge, copy: Record<TraeSettingsKey,
  * slot's declaration lifetime collapses and re-declares, so a callback that
  * registers unconditionally double-registers. `index.tsx` therefore also
  * disposes its previous entry before every attempt. Priority alone would have
- * made the throw rarer and harder to read, not absent.
+ * made the throw rarer and harder to read, not absent. (On a `keyed` host the
+ * same rule applies per key: re-registering one provider's seat twice at one
+ * priority throws just as loudly.)
  */
 export const MODEL_LABEL_PRIORITY = -102
 
@@ -578,6 +603,15 @@ export function TraeModelLabel(props: {
     // component, so it has to reproduce what that label would have shown — the
     // catalog name and, since 0.2.2, the model's optional badge. `selected` does
     // not participate, it only drives the host's own check mark.
+    //
+    // ON A KEYED HOST THIS BRANCH CANNOT BE REACHED for a provider id this
+    // plugin registered: each seat carries one provider id as its key, and the
+    // owner dispatches per row with `entryKey: provider.id`, so a Trae row finds
+    // the Trae seat. It is still required, because ONE BUILD serves both
+    // contracts (`./model-label-seat.ts` derives the seats from the host's
+    // declaration) and on a `single` host this branch is the whole row — that
+    // host renders one winner for every provider. Reaching it on a keyed host is
+    // also the cheapest signal that a seat key is wrong.
     //
     // THE BADGE IS ALWAYS AFTER THE NAME, ON EVERY PLACEMENT. The host's own
     // fallback moves it BEFORE the name on the trigger and AFTER it in menus;

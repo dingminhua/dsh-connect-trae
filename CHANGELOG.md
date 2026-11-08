@@ -1,5 +1,48 @@
 # Changelog
 
+## 4.16.0 (2026-11-08)
+
+### 模型标签槽：按宿主的声明注册，为 `keyed` 做好准备
+
+`conversation.input.model.label` 的 kind 写在宿主包里（`ui-model-selection`）。
+在它改口之前是 `single`：只有一格，三家连接器只能按 `-101` / `-102` / `-105`
+互相压价。目标形态是 `keyed`——每个 `options.key` 自成一格，宿主按 `provider.id`
+派发 `{ entryKey }`，没人贡献的 provider 落回宿主自己的 fallback。
+
+**本版做的是一件插件侧唯一该做的事：注册几条跟着宿主声明的 kind 走。**
+
+- 新增 `src/client/model-label-seat.ts`：运行时读 `ctx.slots.spec(key)?.kind`，
+  `keyed` 就为 `trae` / `trae-enterprise` / `trae-global` 各注册一格，其余情况
+  （含读不到）保持历史上的单条。**一个构建同时服务两条宿主线**，宿主改口那天
+  不需要重新发版。
+- `registerSlotEntry` 现在接受「多个 disposer」，并把它们合成一个按**反序**释放的
+  组合 disposer：注册是一条命，拆开释放会留下「某几格还占着、兄弟格已消失」的半死状态。
+
+**为什么不能只改宿主。** 两个方向都会**静默**失败，而本仓库的注册路径把一个
+try/catch 包在回调里（issue #74 的修复），于是它们都变成一行 `console.error`：
+
+| 情况 | 结果 |
+| --- | --- |
+| keyed 的两条打到 `single` 宿主 | 第二条抛 `already has a registration`，第一条已落地 → 半注册 |
+| 无 key 的一条打到 `keyed` 宿主 | 抛 `keyed slot … requires options.key` → 标签消失 |
+
+`keyed` **强制要求 `key`**，这是上游提案里没写的第一道陷阱：**此前已发布**的本族每个
+版本都注册一条无 key 的条目，只改宿主声明会让它们一起失效（本版之后的新构建会跟着
+声明走，所以受影响的是「已经装在用户机器上」的那些版本）。第二道陷阱见下一节。
+
+**改声明不够：宿主还必须传 `entryKey`。** 复核实机产物
+（`ui-model-selection@0.2.2-rc.1`）发现，渲染该槽只有一个调用点，第三个参数只有
+`fallback`、**没有 `entryKey`**；而 keyed 分支是
+`find(e => e.options.key === opts?.entryKey)`——`undefined` 匹配不到任何条目，于是
+**每一行**都落到 fallback。本插件的注册会成功、回调也跑、无异常无日志，只是组件再也
+不被调用。上游的最小改动是**两处**：声明 + 调用点补 `{ entryKey: provider.id }`。
+
+`MODEL_LABEL_PRIORITY = -102` 不改。keyed 下它不再决定可见性，只剩「同一格内谁先」；
+三家之间不再有压制关系——停战靠的是换槽的基数，不是再压一次价。
+
+外来行分支保留：keyed 下运行时走不到，但一个构建要同时服务两种宿主，而 `single`
+宿主上它就是整行文字。它同时也是最便宜的哨兵——自己的行若走进那一支，说明 `key` 写错了。
+
 ## 4.15.0 (2026-11-08)
 
 ### 新增：模型选择器里的胶囊，改成「谁都能显示」
