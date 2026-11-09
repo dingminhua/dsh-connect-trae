@@ -129,6 +129,10 @@ const INERT_AUTH: { credentials: CredentialStore; authContext: AuthContext } = {
  *
  * `imageOffloadCountQuantum` must be a positive integer no greater than
  * `maxRequestImages`; 10 ≤ 50 keeps the host's default ratio.
+ *
+ * The BYTE bound is the one field here that is not a host contract: it has to
+ * match the gateway at the other end, and the gateways disagree (issue #81).
+ * See {@link ENTERPRISE_MAX_REQUEST_IMAGE_BYTES}.
  */
 const REQUEST_IMAGE_BUDGETS = {
   maxRequestImageBytes: 20_971_520,
@@ -137,6 +141,60 @@ const REQUEST_IMAGE_BUDGETS = {
   maxRequestImages: 50,
   imageOffloadCountQuantum: 10,
 } as const
+
+/**
+ * Request-image byte bound for the enterprise route, in bytes (8 MiB).
+ *
+ * WHY THE HOST DEFAULT IS WRONG HERE. `maxRequestImageBytes` is not a taste
+ * setting — DSH compares it against the base64 aggregate of every image a
+ * request re-inlines, and raising `IMAGE_OFFLOAD_REQUIRED` is how the oldest
+ * images get replaced by placeholders and the request retried. That only works
+ * if the bound is BELOW what the gateway accepts: a bound above it means the
+ * host believes an unsendable request fits and sends it anyway.
+ *
+ * Measured 2026-11-09 with unauthenticated probes (openresty rejects on body
+ * size before authentication, so no credentials or credits are involved):
+ *
+ *   console.enterprise.trae.cn, /api/agent/v3/create_agent_task AND
+ *   /api/agent/v3/llm_utils_chat:
+ *     10_485_758 bytes -> 401        10_485_762 bytes -> 413
+ *     => the cap is exactly 10 MiB (10_485_760)
+ *
+ * The other two regions have no comparable cap: `trae-api-cn.mchost.guru`
+ * answered 401 at 48 MiB and `coresg-normal.trae.ai` at 20 MiB, so they keep
+ * the host default — lowering them would offload images those gateways accept.
+ *
+ * WHY 8 MiB AND NOT 10. The budget bounds the IMAGES; the request also carries
+ * the system prompt, tool declarations and message text. 8 MiB leaves 2 MiB of
+ * envelope, which the measured requests did not come close to (tool
+ * declarations ~49 KB). The failure this fixes: a real 15-image session reached
+ * 12.32 MB of base64 image payload, under the old 20 MiB budget and over the
+ * 10 MiB cap, and died at step 20 with `413 Request Entity Too Large`.
+ */
+const ENTERPRISE_MAX_REQUEST_IMAGE_BYTES = 8_388_608
+
+/**
+ * Image-request budgets for one route.
+ *
+ * The byte bound is region-specific; every other field is shared. Kept as a
+ * function rather than two constants so the shared fields cannot drift apart.
+ *
+ * The return type is the profile's own field types rather than
+ * `typeof REQUEST_IMAGE_BUDGETS`: that constant is `as const`, so its
+ * `maxRequestImageBytes` is the LITERAL `20_971_520` and the enterprise arm
+ * would not typecheck against it.
+ * @param providerId - the route whose gateway will receive the request.
+ */
+function requestImageBudgets(
+  providerId: string,
+): Pick<
+  ResolvedPiAiProviderProfile,
+  'maxRequestImageBytes' | 'requestImagePixelBudget' | 'requestImageMaxBytes' | 'maxRequestImages' | 'imageOffloadCountQuantum'
+> {
+  return providerId === TRAE_ENTERPRISE_PROVIDER
+    ? { ...REQUEST_IMAGE_BUDGETS, maxRequestImageBytes: ENTERPRISE_MAX_REQUEST_IMAGE_BYTES }
+    : REQUEST_IMAGE_BUDGETS
+}
 
 function toPiModel(info: TraeModelInfo, baseUrl: string, providerId: string, withRate = true): Model<Api> {
   return {
@@ -639,7 +697,7 @@ export function createTraeAdapter(options: TraeAdapterOptions): TraeAdapter {
     // {@link FALLBACK_CONTEXT_WINDOW} itself — that is the guarantee, this is
     // the belt.
     defaultContextWindow: FALLBACK_CONTEXT_WINDOW,
-    ...REQUEST_IMAGE_BUDGETS,
+    ...requestImageBudgets(providerId),
     piProvider: provider,
   }
   // Replacing (not mutating) the map is what `invalidate` uses to force the
