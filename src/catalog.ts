@@ -334,9 +334,12 @@ export interface TraeWireModel {
  */
 export function isPromotableWireModel(model: TraeWireModel): boolean {
   if (model.usage !== 'chat_completion') return false
-  if (model.configSource !== 1) return false
+  // `config_source: 2` is a model the tenant's enterprise console configures.
+  if (model.configSource !== 1 && model.configSource !== 2) return false
   const name = model.name.trim()
   if (name === '' || name === '-') return false
+  // Tenant-configured rows use the config_name as their display name.
+  if (model.configSource === 2) return true
   // The name is the config's OWN id: upstream published no display name for
   // it, and the wire client falls back to the id in that case. Measured: the
   // codename configs `sagitta` and `aquila` are published with the placeholder
@@ -465,6 +468,7 @@ function wireEffortsOf(supported: readonly TraeReasoningEffort[]): Partial<Recor
 export function mergeTraeModelSources(
   remote: readonly TraeDiscoveredModel[],
   wire: readonly TraeWireModel[],
+  options: { allowTenantConfigured?: boolean } = {},
 ): TraeModelInfo[] {
   const wireByName = new Map<string, TraeWireModel>()
   const wireById = new Map<string, TraeWireModel>()
@@ -644,6 +648,8 @@ export function mergeTraeModelSources(
   for (const model of remote) claim(model.name, model.contextWindow)
   for (const wireModel of wire) {
     if (remoteIds.has(displayKey(wireModel.id))) continue
+    // A tenant-configured model is only surfaced by the panel that bills it.
+    if (wireModel.configSource === 2 && options.allowTenantConfigured !== true) continue
     if (!isPromotableWireModel(wireModel)) continue
     // A display name already claimed means this row either aliases a model the
     // catalog exposes or duplicates it. It earns its own row only when it is
