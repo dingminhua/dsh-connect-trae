@@ -418,6 +418,27 @@ describe('mergeTraeModelSources', () => {
     expect(merged.find(model => model.id === 'deepseek-v4.1-flash')).toBeDefined()
   })
 
+  it('promotes a tenant-configured enterprise model (config_source: 2)', () => {
+    // A tenant console can configure models of its own; the Remote skeleton
+    // need not list them, so promotion is the only path that surfaces them.
+    const wire = [
+      { id: 'demo/model-a', name: 'demo/model-a', contextWindow: 200_000, maxTokens: 32_000, function: 'solo_work_lite', usage: 'chat_completion', configSource: 2 },
+      { id: 'demo/model-b', name: 'Demo Model B', contextWindow: 400_000, maxTokens: 64_000, function: 'solo_work_lite', usage: 'chat_completion', configSource: 2 },
+    ]
+    const merged = mergeTraeModelSources([], wire, { allowTenantConfigured: true })
+    expect(merged.map(model => model.id)).toEqual(['demo/model-a', 'demo/model-b'])
+    expect(merged[0]).toMatchObject({ name: 'demo/model-a', contextWindow: 200_000, maxTokens: 32_000, wireFunction: 'solo_work_lite', input: ['text'] })
+    expect(merged[1]).toMatchObject({ name: 'Demo Model B', contextWindow: 400_000, maxTokens: 64_000, wireFunction: 'solo_work_lite' })
+  })
+
+  it('leaves tenant-configured models out unless the panel opts in', () => {
+    const wire = [
+      { id: 'demo/model-a', name: 'demo/model-a', usage: 'chat_completion', configSource: 2, function: 'solo_work_lite' },
+    ]
+    expect(mergeTraeModelSources([], wire).map(model => model.id)).toEqual([])
+    expect(mergeTraeModelSources([], wire, { allowTenantConfigured: false }).map(model => model.id)).toEqual([])
+  })
+
   it('does NOT promote a wire-only row that is a tool config, a custom model, or an alias', () => {
     // The wire roster mixes models with the IDE's own helper configs and with
     // the account's custom models. Measured 2026-10-22 on the live account,
@@ -534,6 +555,18 @@ describe('mergeTraeModelSources', () => {
 describe('isPromotableWireModel', () => {
   it('accepts a Trae preset model with a real display name', () => {
     expect(isPromotableWireModel({ id: 'kimi-k2', name: 'Kimi-K2-0905', usage: 'chat_completion', configSource: 1 })).toBe(true)
+  })
+
+  it('accepts a tenant-configured enterprise model (config_source: 2)', () => {
+    // Tenant-configured rows often use the config_name as the display name.
+    expect(isPromotableWireModel({ id: 'demo/model-a', name: 'demo/model-a', usage: 'chat_completion', configSource: 2 })).toBe(true)
+    expect(isPromotableWireModel({ id: 'demo/model-b', name: 'Demo Model B', usage: 'chat_completion', configSource: 2 })).toBe(true)
+  })
+
+  it('rejects a tenant-configured model without a usable name', () => {
+    expect(isPromotableWireModel({ id: 'demo/model-c', name: ' ', usage: 'chat_completion', configSource: 2 })).toBe(false)
+    expect(isPromotableWireModel({ id: 'demo/model-c', name: '-', usage: 'chat_completion', configSource: 2 })).toBe(false)
+    expect(isPromotableWireModel({ id: 'demo/model-c', name: 'demo/model-c', usage: 'summary', configSource: 2 })).toBe(false)
   })
 
   it('rejects a row whose usage is not chat_completion', () => {

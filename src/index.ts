@@ -1373,7 +1373,8 @@ export function apply(ctx: Context, config: Config): void {
           solo.fetchModels(signal),
           officialRoster.fetch(signal),
         ])
-        const merged = mergeTraeModelSources(remote, wireModels)
+        // Only the enterprise panel bills the tenant-pool models of source 2.
+        const merged = mergeTraeModelSources(remote, wireModels, { allowTenantConfigured: panel === 'enterprise' })
         // A row whose function is a NON-chat roster (solo_agent, builder_v3) is
         // not callable through llm_utils_chat BY THAT FUNCTION — asking answers
         // 4011/4001. The row is KEPT and only the function is cleared, so the
