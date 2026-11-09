@@ -314,13 +314,21 @@ export interface TraeWireModel {
  *    account's custom models (`usage: 'custom_model'`); none of those belong
  *    in a model picker. Measured: this one test removed 23 of 50 wire-only
  *    rows, and every row it removed was a tool or a custom model.
- *  - `config_source === 1` — a Trae preset, not the account's own custom
- *    model (source 3, which carries the user's own base_url and key). The
- *    plugin must not offer to bill a model it does not host.
+ *  - `config_source === 1`, or `2` once the caller opts in — `1` is a Trae
+ *    preset; `2` is a model the tenant's own enterprise console configured
+ *    (see `allowTenantConfigured` on {@link mergeTraeModelSources}, which is
+ *    what decides whether a `2` may pass). `3` is the account's own custom
+ *    model, carrying the user's own base_url and key: the plugin must not
+ *    offer to bill a model it does not host, so `3` never passes.
  *  - a REAL display name — not empty, not the upstream placeholder `-`, not a
  *    bare config identifier (`search_agent_qwen_fast`,
  *    `computer_use_subagent`), and not the config's OWN id. A model with no
  *    name has nothing to show in the picker.
+ *
+ *    A tenant-configured row (`2`) is EXEMPT from the "own id" clause: those
+ *    rows commonly publish the config_name as the display name, so the clause
+ *    would reject precisely the rows the opt-in exists to surface. The other
+ *    name tests still apply to them.
  *
  * The display-name-collision test lives in the merge itself (it needs the
  * Remote rows to compare against); see {@link mergeTraeModelSources}. It is a
@@ -464,6 +472,15 @@ function wireEffortsOf(supported: readonly TraeReasoningEffort[]): Partial<Recor
  * PROMOTED (issue #46) — subject to {@link isPromotableWireModel}. The
  * skeleton systematically omits the dated snapshot configs, so without
  * promotion every snapshot the IDE offers is unreachable from the plugin.
+ *
+ * @param options.allowTenantConfigured - may a `config_source: 2` row (a model
+ * the tenant's enterprise console configured) be promoted? Opt-in, and only
+ * the enterprise panel opts in: those rows bill the tenant pool, so surfacing
+ * them on a consumer panel would offer a model outside the caller's billing
+ * face. The rows also are not callable through `llm_utils_chat` today — they
+ * are client-direct with their own base_url (`use_remote_service: false`) and
+ * the gateway answers `4001` — which the discovery layer does not hide, but
+ * which is why this is a narrow opt-in rather than a default.
  */
 export function mergeTraeModelSources(
   remote: readonly TraeDiscoveredModel[],

@@ -2,6 +2,31 @@
 
 ## 未发布
 
+### 企业面板的发现层收录租户自配模型（`config_source: 2`）
+
+企业租户可以在 Trae 企业控制台配置自己的模型。Trae 自己的选择器能看到它们，插件的企业
+面板一直不列——这批行由企业侧 `get_detail_param` 返回（`config_source: 2` +
+`usage: 'chat_completion'`），**不在**企业侧 Remote 目录里，所以只有「wire 提升」一条路
+能看见它们；而提升门槛只接受 `config_source === 1`，又拒绝「`display_name` 等于
+`config_name`」的行——那恰好是租户配置模型的常见形态。两条门槛各自都足以挡掉它们。
+
+**改法。** 提升门槛接受 `2`，且这类行允许用 `config_name` 当显示名。提升改为 **opt-in**
+（`mergeTraeModelSources(..., { allowTenantConfigured })`），**只有企业面板传 `true`**：
+这些行计费落在租户池，放进消费面板等于让用户选到一个不属于自己计费面的模型。另外两条
+区域本来也取不到它们——它们的 wire 客户端钉在消费网关，那批行只出现在企业网关的名册里。
+
+**这批模型现在调用不通，这是刻意不做的部分。** 租户配置的模型属于
+`custom_openai_compatible`、客户端直连（`use_remote_service: false`、自带 base_url），
+插件没有对应传输通道，实测走 `llm_utils_chat` 返回 `4001`。本次只修发现层，通道另开
+issue 讨论——不做「静默假设能调」这种事。真要选中时，拿到的是桥接层翻译过的可读错误
+（`4001` → 该 SOLO function 不提供此模型），不是一次空白回复。
+
+### Tests
+
+- `tests/catalog.spec.ts` 新增 4 例：租户自配行被提升（含 `config_name` 当显示名的形态）；
+  未 opt-in 时一行都不出（缺省与显式 `false` 两路）；`usage` 非 `chat_completion` 仍被拒；
+  空名与 `-` 仍被拒。变异验证：删掉 `allowTenantConfigured` 门控 → 第二例立刻变红。
+
 ### 企业版图片请求预算降到 8 MiB：网关只有 10 MiB，图文长任务不再 413
 
 **症状。** 企业版跑带图的多步任务，跑到某一步整轮失败：
