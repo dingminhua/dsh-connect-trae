@@ -52,6 +52,19 @@ import {
 /** The enterprise gateway's measured body cap (10 MiB), in bytes. */
 const ENTERPRISE_GATEWAY_CAP = 10_485_760
 
+/**
+ * Floor for the enterprise budget, in bytes (5 MiB — half the measured cap).
+ *
+ * WHY A LOWER BOUND ON A BOUND. The fix is "make it smaller", and an assertion
+ * that only checks "smaller than the cap" is satisfied by *any* smaller number:
+ * 1 MiB would pass it while offloading images the gateway would have accepted —
+ * the same silent quality regression the other two routes are protected from,
+ * just from the conservative side. Half the cap is the loosest floor that still
+ * fails a change that gives up sending most of what fits; the shipped value is
+ * 8 MiB, so this only bites on a real regression.
+ */
+const ENTERPRISE_MIN_USEFUL_BUDGET = 5_242_880
+
 /** The host's own `maxRequestImageBytes` default, which the other routes keep. */
 const HOST_DEFAULT_MAX_REQUEST_IMAGE_BYTES = 20_971_520
 
@@ -92,6 +105,11 @@ describe('createTraeAdapter — request image budget per gateway (issue #81)', (
     // Strictly under, with room for the non-image envelope: at the cap itself
     // the request still carries the system prompt, tool declarations and text.
     expect(profile.maxRequestImageBytes!).toBeLessThan(ENTERPRISE_GATEWAY_CAP)
+    // ... but not so far under that the fix becomes its own regression. Without
+    // this arm, any smaller number passes — including one that offloads images
+    // this gateway accepts, which is exactly what the next test forbids for the
+    // other two routes.
+    expect(profile.maxRequestImageBytes!).toBeGreaterThanOrEqual(ENTERPRISE_MIN_USEFUL_BUDGET)
   })
 
   it('leaves the CN and international routes on the host default', async () => {
