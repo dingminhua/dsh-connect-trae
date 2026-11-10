@@ -1,3 +1,4 @@
+import { normalizeUsageCache } from './usage-cache.ts'
 export interface SseEvent {
   event?: string
   data: string
@@ -131,14 +132,16 @@ export function decodeTraeEvent(event: SseEvent): TraeStreamEvent {
   }
   if (event.event === 'progress_notice') return { type: 'progress', notice: payload }
   if (event.event === 'token_usage') {
+    const normalized = normalizeUsageCache(record)
+    const details = normalized['prompt_tokens_details'] as Record<string, unknown> | undefined
     return {
       type: 'usage',
       ...typeof record['prompt_tokens'] === 'number' ? { inputTokens: record['prompt_tokens'] } : {},
       ...typeof record['completion_tokens'] === 'number' ? { outputTokens: record['completion_tokens'] } : {},
       ...typeof record['total_tokens'] === 'number' ? { totalTokens: record['total_tokens'] } : {},
       ...typeof record['reasoning_tokens'] === 'number' ? { reasoningTokens: record['reasoning_tokens'] } : {},
-      ...typeof record['cache_read_input_tokens'] === 'number' ? { cacheReadTokens: record['cache_read_input_tokens'] } : {},
-      ...typeof record['cache_creation_input_tokens'] === 'number' ? { cacheWriteTokens: record['cache_creation_input_tokens'] } : {},
+      ...typeof details?.['cached_tokens'] === 'number' ? { cacheReadTokens: details['cached_tokens'] } : {},
+      ...typeof details?.['cache_write_tokens'] === 'number' ? { cacheWriteTokens: details['cache_write_tokens'] } : {},
     }
   }
   if (event.event === 'metadata' || event.event === 'timing_cost') {

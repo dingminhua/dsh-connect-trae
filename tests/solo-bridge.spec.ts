@@ -462,8 +462,8 @@ describe('bridgeTraeSoloStreamOrFail: an early refusal becomes a real error resu
     ]), 'glm-5.2')
     expect(result).toEqual({
       ok: false,
-      status: 400,
-      kind: 'client',
+      status: 402,
+      kind: 'hard_credit',
       message: "Trae reports the account's SOLO quota is exhausted for this request · Trae code 4008 · upstream: quota exceeded",
     })
   })
