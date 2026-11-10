@@ -37,4 +37,37 @@ describe('cache usage compatibility', () => {
     expect(normalizeUsageCache({ prompt_tokens_details: [], input_tokens_details: { cached_tokens: 3 } }))
       .toMatchObject({ prompt_tokens_details: { cached_tokens: 3 } })
   })
+
+  /**
+   * A `token_usage` payload that is not an object must not reach the wire as a
+   * usage object, and must not throw either.
+   *
+   * This is a REGRESSION the first cut of this file introduced: normalizing the
+   * whole payload (rather than reading individually type-checked fields, as
+   * `v4.18.0` did) made `data: null` throw `Cannot read properties of null`
+   * inside the stream's `start()`, killing a live answer mid-flight. It passed
+   * every other case here because they all use object payloads, and the stream
+   * tests never sent a malformed one. Measured: released `v4.18.0` completes the
+   * same input with its finish chunk intact.
+   */
+  it('survives a usage payload that is not an object', async () => {
+    for (const payload of ['null', '[1,2]', '"foo"', '42', 'true']) {
+      // The accessor is the same one the decoder uses; `{}` is the honest
+      // answer for "upstream sent something that is not a usage object".
+      expect(normalizeUsageCache(JSON.parse(payload) as unknown), payload).toEqual({})
+      const response = new Response(
+        `event: token_usage\ndata: ${payload}\n\nevent: done\ndata: {"finish_reason":"stop"}\n\n`,
+      )
+      const output = await bridgeTraeSoloStream(response, 'demo-model').text()
+      // The stream must finish rather than reject: a throw here is what killed
+      // the answer, and a missing finish chunk is what pi-ai reports as
+      // "Stream ended without finish_reason".
+      expect(output, payload).toContain('"finish_reason":"stop"')
+      const usage = output.split('\n')
+        .filter(line => line.startsWith('data: {'))
+        .map(line => JSON.parse(line.slice(6)) as { usage?: unknown })
+        .find(chunk => chunk.usage !== undefined)?.usage
+      expect(usage, payload).toEqual({})
+    }
+  })
 })
