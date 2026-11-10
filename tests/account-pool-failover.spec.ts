@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { TraeCredentialStore, type TraeCredential, type TraeRefreshOutcome } from '../src/auth.ts'
 import { TraeCatalog } from '../src/catalog.ts'
 import { createTraeShim, type TraeShim, type TraeShimPool } from '../src/shim.ts'
+import { bridgeTraeSoloStreamOrFail } from '../src/solo-bridge.ts'
 import type { TraeChatResult, TraeUpstreamClient } from '../src/upstream.ts'
 
 /**
@@ -263,6 +264,27 @@ function chat(shim: TraeShim): Promise<{ status: number; body: string }> {
 }
 
 describe('shim failover across pooled accounts', () => {
+  for (const [code, kind] of [[4008, 'hard_credit'], [4017, 'soft_rate']] as const) {
+    it(`fails over an actual SOLO error event ${code} to the next pooled account`, async () => {
+      const error = new Response(`event: error\ndata: ${JSON.stringify({ code, message: 'synthetic account refusal' })}\n\n`)
+      const result = await bridgeTraeSoloStreamOrFail(error, 'glm-5.2')
+      expect(result).toMatchObject({ ok: false, kind })
+      const first = scriptedClient([result])
+      const second = scriptedClient([ok()])
+      const { pool, log } = recordingPool({ next: async tried => {
+        log.push(`next:${tried.join(',')}`)
+        return { accountId: 'account-b', client: second.client }
+      } })
+      const shim = await startShim(first.client, pool)
+      const response = await chat(shim)
+      expect(response.status).toBe(200)
+      expect(response.body).toContain('ok')
+      expect(first.state.calls).toBe(1)
+      expect(second.state.calls).toBe(1)
+      expect(log).toEqual(['prepare', `failed:account-a:${kind}`, 'next:account-a'])
+    })
+  }
+
   it('serves the first attempt and never asks for a failover', async () => {
     const route = scriptedClient([ok()])
     const { pool, log } = recordingPool()

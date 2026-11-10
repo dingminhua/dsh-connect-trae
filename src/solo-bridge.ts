@@ -1,3 +1,4 @@
+import { normalizeUsageCache } from './usage-cache.ts'
 import { randomUUID } from 'node:crypto'
 import { SseDecoder, decodeTraeEvent } from './sse.ts'
 import type { TraeCatalog } from './catalog.ts'
@@ -65,6 +66,7 @@ export interface TraeFailure {
  *    credential, plugin or account fault, and not something to re-login for.
  */
 const TRAE_ERROR_HINTS: Readonly<Record<number, string>> = {
+  4017: 'Trae temporarily restricted this account through risk control',
   1005: 'Trae requires a paid plan for this model; the current account\'s plan does not cover it',
   2001: 'Trae has not published its function config for this route (an upstream condition, not a local credential or config problem)',
   4001: 'Trae does not serve this model under the SOLO function the request used (config_name rejected)',
@@ -119,11 +121,15 @@ export function describeTraeFailure(failure: TraeFailure): string {
  * replay — correct, since a throttled route is not a route-compatibility
  * problem.
  *
+ * `4008` means exhausted SOLO quota and shares the credit failure category.
+ * `4017` restricts the account temporarily and shares the rate-limit category.
+ * These account failures must reach pooled-account failover; replaying another
+ * route for the same account cannot restore quota or remove its restriction.
  * Everything else stays a client-side rejection.
  */
 function classifyTraeFailure(failure: TraeFailure): { status: number; kind: TraeUpstreamErrorKind } {
-  if (failure.code === 1005) return { status: 402, kind: 'hard_credit' }
-  if (failure.code === 4011) return { status: 429, kind: 'soft_rate' }
+  if (failure.code === 1005 || failure.code === 4008) return { status: 402, kind: 'hard_credit' }
+  if (failure.code === 4011 || failure.code === 4017) return { status: 429, kind: 'soft_rate' }
   return { status: 400, kind: 'client' }
 }
 
@@ -190,7 +196,7 @@ function bridgeTraeSource(
   // OpenAI-shaped usage object. It is mostly flat counters, but
   // `prompt_tokens_details` nests the cache breakdown, so the value type is
   // widened beyond `number` rather than narrowing the cache fields away.
-  let usage: Record<string, number | Record<string, number>> | undefined
+  let usage: Record<string, unknown> | undefined
 
   const chunk = (delta: Record<string, unknown>, finishReason: string | null = null): Uint8Array => encoder.encode(`data: ${JSON.stringify({
     id,
@@ -246,28 +252,13 @@ function bridgeTraeSource(
           }
           if (Object.keys(delta).length > 0) controller.enqueue(chunk(delta))
         } else if (decoded.type === 'usage') {
-          // Trae reports cache accounting as `cache_read_input_tokens` /
-          // `cache_creation_input_tokens`, a subset of `prompt_tokens` (OpenAI
-          // convention, verified in docs/ISSUE10_DIAGNOSIS.md). Both are
-          // forwarded under the canonical OpenAI spelling, which is what
-          // pi-ai's parseChunkUsage reads (`prompt_tokens_details.cached_tokens`
-          // / `.cache_write_tokens`); dropping them made every session report
-          // "0 cache" even when Trae was serving a warm prefix cache.
-          const cacheRead = decoded.cacheReadTokens
-          const cacheWrite = decoded.cacheWriteTokens
-          const details = {
-            ...cacheRead === undefined ? {} : { cached_tokens: cacheRead },
-            ...cacheWrite === undefined ? {} : { cache_write_tokens: cacheWrite },
-          }
-          usage = {
-            ...decoded.inputTokens === undefined ? {} : { prompt_tokens: decoded.inputTokens },
-            ...decoded.outputTokens === undefined ? {} : { completion_tokens: decoded.outputTokens },
-            ...decoded.totalTokens === undefined ? {} : { total_tokens: decoded.totalTokens },
-            // Omit the details object entirely when Trae sent neither field, so
-            // a provider that never reports cache keeps its previous wire shape
-            // instead of gaining `prompt_tokens_details: {}`.
-            ...Object.keys(details).length === 0 ? {} : { prompt_tokens_details: details },
-          }
+          // Preserve upstream counters and normalize cache_read_input_tokens /
+          // cache_creation_input_tokens plus compatible aliases into OpenAI's
+          // prompt_tokens_details.cached_tokens / .cache_write_tokens, which
+          // pi-ai reads. These counters are subsets of prompt_tokens (see
+          // docs/ISSUE10_DIAGNOSIS.md); missing counters remain missing and do
+          // not establish whether a billing discount was applied.
+          usage = normalizeUsageCache(JSON.parse(event.data) as Record<string, unknown>)
         } else if (decoded.type === 'done') {
           upstreamEnded = true
           // Trae may send both `event: done` and a trailing `[DONE]`. Emit one
