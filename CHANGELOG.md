@@ -1,9 +1,46 @@
 # Changelog
 
-## Unreleased
+## 未发布
 
-- SOLO 错误码 `4008` 和 `4017` 分别归类为 `hard_credit` 与 `soft_rate`，使号池能够切换账号，而不是将账号限制误报为请求参数错误。
-- 缓存用量兼容多种字段格式，并保留上游原始字段；规范字段中的有效零值优先，缺失值不用于推断计费折扣，无效计数不会进入规范缓存字段。
+### SOLO 的账号级错误交还号池：4008 与 4017 不再被当成请求写错
+
+号池的 `FAILOVER_KINDS` 只认 `authentication` / `hard_credit` / `soft_rate` /
+`server`。而 `4008`（账号 SOLO 额度用完）与 `4017`（账号被风控临时限制）原先都被
+`classifyTraeFailure` 归成 `client`——于是「这个账号不行了」被报成「你这个请求有
+问题」：不换号，失败也只记在当前账号上，然后就没有下文了。
+
+现在 `4008` → `402` / `hard_credit`、`4017` → `429` / `soft_rate`，走的是号池既有的
+冷却与换号路径。这两条都是**账号事实**，不是报文事实：换一条路由重放同一个账号既不会
+把额度变回来，也不会解除风控，所以它们能落到 `FAILOVER_KINDS` 里正是要点。
+
+补了 `4017` 的可读文案。此前它没有 entry，用户只能看到「Trae refused the request」
+加一个裸码，看不出是风控。
+
+### 缓存用量改成一份共享归一化，并容忍非对象载荷
+
+除 `cache_read_input_tokens` / `cache_creation_input_tokens` 之外，还接受
+`prompt_cache_hit_tokens`、`input_tokens_details`、裸 `cached_tokens` 等写法，
+统一投影到 pi-ai 读的 `prompt_tokens_details.cached_tokens` / `.cache_write_tokens`，
+同时**保留上游原始字段**。两个入口（SSE 解码与 SOLO 流转发）共用同一份实现，避免两处
+各写一份而漂移。
+
+优先级上，规范字段里的**显式 0 优先于回退候选**：0 是「这次确实没命中」，与「上游没说」
+是两件事，后者不用于推断计费折扣。负数、NaN、Infinity 与字符串一律丢弃，缺失保持缺失。
+
+**合并时修掉一个该 PR 引入的回归。** `normalizeUsageCache` 收的是刚 `JSON.parse` 出来的
+载荷，却按 `Record` 用；整包归一化之后，`token_usage` 若是 `null`，会在流的 `start()` 里抛
+`Cannot read properties of null`，把**已经开始输出**的回答打死——数组形态还会被展开成
+`{"0":1,"1":2}` 当成 usage 发出去。已发布的 4.18.0 只逐个读类型收窄过的字段，同一输入
+能正常跑完，所以这是新引入的。参数已收成 `unknown`、入口归一化。
+
+### Tests
+
+- `tests/cache-compat.spec.ts`（5 例）：规范字段优先级（含显式 0）、别家字段族、
+  非法计数过滤、缺失保持缺失，以及**非对象载荷**（`null` / `[1,2]` / `"foo"` / `42` /
+  `true`）下流仍能跑完且 usage 为 `{}`。后者换回原实现立刻红。
+- `tests/account-pool-failover.spec.ts` 新增 2 例：构造真实 SSE error 帧，经桥接层与
+  本地 shim，验证 `4008` / `4017` 会切到第二个账号、且失败记录归属第一个账号。
+- 全仓 **115 个文件 / 1476 条测试**通过。
 
 ## 4.18.0 (2026-11-09)
 
