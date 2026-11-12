@@ -229,7 +229,7 @@ npm install dsh-connect-trae
 ## DSH 版本兼容
 
 **要求 DSH 0.1.7-rc.1 及以上**（2.3.0 起不再支持 0.1.7 之前的宿主；peer 依赖范围已按此收窄）。
-**peer 上界为 `<0.3.0-0`：0.1.7 与 0.2 两条线均受支持（含 0.2.2-rc.1，已实测）。**
+**peer 上界为 `<0.3.0-0`：0.1.7 与 0.2 两条线均受支持（含 0.2.2-rc.1 / rc.2，均已实测）。**
 
 ### 同时支持 pi-ai 的两代上下文（3.4.2 起）
 
@@ -363,6 +363,42 @@ stderr、View 标签的 tooltip 只在文字溢出时显示、More 菜单 toolti
   `tests/dsh-peer-range.spec.ts` 的 `MUST_ADMIT` 已补入。
 
 细节见 [`docs/DSH_0.2.2_RC1_SYNC.md`](https://github.com/dingminhua/dsh-connect-trae/blob/main/docs/DSH_0.2.2_RC1_SYNC.md)。
+
+### `0.2.2-rc.2` 同步结论
+
+宿主推进到 `0.2.2-rc.2`。与 rc.1 那次不同，**这一版对插件没有任何接口破坏**：
+`cordis` / `schemastery` / `pi-ai` 三个随包依赖都停在原版本，13 个宿主包里
+**6 个有 `.d.ts` 变化、7 个逐字节相同**，而 rc.2 之后**没有新增的官方升级指南条目**
+（`docs/upgrade-guide/` 的最后一节仍是 `v0.2.2-rc.1`）。
+
+对本插件而言：
+
+- **零契约破坏**：`pnpm typecheck` 零报错，`pnpm run build` 的产物与 rc.1 开发树
+  **逐字节相同**——这是「真的没带出可观察差异」的硬证据，因为 `tsdown` 的 dts 输出
+  对类型变化是敏感的。
+- **唯一的语义级变化是错误基类搬家**：`HarnessError` 从 `dsh-llm` 挪进新包
+  `@deepseek-ai/dsh-error`（`dsh-llm` 仍重新导出，两条 import 路径是同一个类），
+  `AttachmentError` 顺手改成真的继承它。本插件只用 `AttachmentStore` 的**类型**，
+  从不构造或捕获这两类错误，**不击中**。另外 `LlmError` 构造器收窄为只接受内置码
+  （非内置码走新增的 `LlmError.fromFailure()`）——本插件从不构造 `LlmError`，不击中。
+- **`dsh-llm-pi-ai` 的签名 thinking 前缀绑定不击中**：新增的 `prefix-binding` 只对
+  `api === 'anthropic-messages'` 生效，本插件的每一行都钉在 Trae 的
+  `openai-completions` 上，进函数就原样返回。新加的参数（`prefixDigest`、
+  `onThinkingOmitted`）全部是可选的尾部参数，不传即旧行为。
+- **槽位契约仍然不变**：rc.2 给 `SlotKind` 新增了 `'hoc'`，但只在
+  `conversation.chat.markdown.fence` 与 `conversation.hero.frame` 两处声明，本插件
+  不注册也不消费它们。活宿主检视确认本插件声明注册的 7 个槽 kind 一个没变
+  （`single` ×1、`list` ×5、`keyed` ×1；其中 `sidebar.panellist` / `main` 只在侧栏
+  面板开关打开时注册，默认关闭）。
+- **`window-drag-regions` 不击中**：那条只影响覆盖 `data-window-drag` 页头行的浮层；
+  本插件两个 `position: fixed` 元素（积分弹出面板、忙碌遮罩）都不覆盖页头行。
+- **三大价值不受影响**：双区域供应商、用量与积分概览、每日签到领取——1476 条测试全绿，
+  本机 rc.2 实测 usage 路由 200 / `signed-in`。
+- **本次只动版本锚点**：13 个 devDependency rc.1 → rc.2、重新生成 lockfile、
+  `MUST_ADMIT` 补 rc.2、`pnpm-workspace.yaml` 的注释版本号。**源码零改动。**
+- peer 范围**无需改动**：`0.2.2-rc.2` 已被 `>=0.1.7-rc.1 <0.3.0-0` 放行。
+
+细节见 [`docs/DSH_0.2.2_RC2_SYNC.md`](https://github.com/dingminhua/dsh-connect-trae/blob/main/docs/DSH_0.2.2_RC2_SYNC.md)。
 
 ### peer 上界为什么不写 `<0.2.0`
 

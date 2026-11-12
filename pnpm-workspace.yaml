@@ -13,8 +13,9 @@ packages:
 # `tests/dsh-017-compat.spec.ts`) rather than by whatever version happens to be
 # installed.
 #
-# 3.19.0 for the DSH 0.2.2-rc.1 host: `dsh-llm-pi-ai@0.2.2-rc.1` declares
-# `~3.19.0`, so the host runtime now resolves 3.19.0. Keeping the override at
+# 3.19.0 for the DSH 0.2.2 line (rc.2 is the current host; rc.1 pinned the same
+# value): `dsh-llm-pi-ai@0.2.2-rc.2` declares `~3.19.0`, so the host runtime
+# resolves 3.19.0. Keeping the override at
 # 3.18.5 would typecheck and test against a schemastery the host no longer
 # loads — the same "dev tree diverges from the user's" trap this block exists
 # to close. (3.19.0 is 3.18.5's code plus a cosmokit bump; the observable

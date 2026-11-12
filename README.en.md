@@ -210,7 +210,7 @@ Restart the DSH process after install/update/uninstall.
 ## DSH version compatibility
 
 **Requires DSH 0.1.7-rc.1 and up** (since 2.3.0 the plugin no longer targets hosts older than 0.1.7; the peer dependency ranges are narrowed accordingly).
-**The peer upper bound is `<0.3.0-0`, so both the 0.1.7 and the 0.2 line are supported (including 0.2.2-rc.1, verified).**
+**The peer upper bound is `<0.3.0-0`, so both the 0.1.7 and the 0.2 line are supported (including 0.2.2-rc.1 and rc.2, both verified).**
 
 ### Both pi-ai context generations are supported (since 3.4.2)
 
@@ -285,6 +285,23 @@ For **this plugin**:
 - The peer range **needs no change**: `0.2.2-rc.1` is admitted by `>=0.1.7-rc.1 <0.3.0-0`, and `MUST_ADMIT` in `tests/dsh-peer-range.spec.ts` now includes it.
 
 Details: [`docs/DSH_0.2.2_RC1_SYNC.md`](https://github.com/dingminhua/dsh-connect-trae/blob/main/docs/DSH_0.2.2_RC1_SYNC.md).
+
+### `0.2.2-rc.2` sync
+
+The host moved to `0.2.2-rc.2`. Unlike the rc.1 sync, **nothing in this release breaks an interface this plugin uses**: `cordis`, `schemastery` and `pi-ai` all stay on their rc.1 versions, **6 of the 13 host packages carry `.d.ts` changes and 7 are byte-for-byte identical**, and **no upgrade guide was added for rc.2** (the newest section under `docs/upgrade-guide/` is still `v0.2.2-rc.1`).
+
+For **this plugin**:
+
+- **Zero contract breaks**: `pnpm typecheck` is clean, and `pnpm run build` produces artifacts **byte-for-byte identical** to the rc.1 dev tree — hard evidence that nothing observable changed, because `tsdown`'s dts output is sensitive to type changes.
+- **The only semantic change is the error base moving house**: `HarnessError` left `dsh-llm` for a new package, `@deepseek-ai/dsh-error` (`dsh-llm` still re-exports it, so both import paths name the same class), and `AttachmentError` now genuinely extends it. This plugin only uses `AttachmentStore` as a **type** and never constructs or catches either class, so it is untouched. `LlmError`'s constructor also narrowed to built-in codes only (any other code goes through the new `LlmError.fromFailure()`) — this plugin never constructs `LlmError`.
+- **The signed-thinking prefix binding in `dsh-llm-pi-ai` does not apply**: the new `prefix-binding` module only engages when `api === 'anthropic-messages'`, while every row this plugin serves is pinned to Trae's `openai-completions`, where the function returns its input unchanged. The new parameters (`prefixDigest`, `onThinkingOmitted`) are all optional trailing ones; omitting them keeps the old behaviour.
+- **Slot contracts are still unchanged**: rc.2 added `'hoc'` to `SlotKind`, but only `conversation.chat.markdown.fence` and `conversation.hero.frame` declare it, and this plugin registers into neither. Inspecting the live host confirms the kind of all six slots this plugin uses is unchanged.
+- **`window-drag-regions` does not apply**: it only affects custom overlays that cover a `data-window-drag` header row, and neither of this plugin's two `position: fixed` layers (the credits popover and the busy veil) covers one.
+- **The three core values are unaffected**: dual-region providers, usage/credits overview, daily check-in. All 1476 tests are green, and the live rc.2 host answers the usage route with 200 / `signed-in`.
+- **This change only moves version anchors**: 13 devDependencies rc.1 → rc.2, a regenerated lockfile, `MUST_ADMIT` gaining rc.2, and the version note in `pnpm-workspace.yaml`. **No source code changed.**
+- The peer range **needs no change**: `0.2.2-rc.2` is admitted by `>=0.1.7-rc.1 <0.3.0-0`.
+
+Details: [`docs/DSH_0.2.2_RC2_SYNC.md`](https://github.com/dingminhua/dsh-connect-trae/blob/main/docs/DSH_0.2.2_RC2_SYNC.md).
 
 
 ### Why the upper bound is not `<0.2.0`

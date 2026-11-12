@@ -1,5 +1,68 @@
 # Changelog
 
+## 4.18.2 (2026-11-13)
+
+### 同步 DSH 0.2.2-rc.2：零代码改动
+
+宿主从 `0.2.2-rc.1` 推进到 `0.2.2-rc.2`。这一版对插件**没有任何接口破坏**，所以本次
+只动版本锚点，`src/` 下一个字节都没改——这与 rc.1 那次不同，那次必须补两个必填字段。
+
+判据不是「看起来没坏」，而是三件可复核的事实：随包的 `cordis@4.1.0` /
+`schemastery@3.19.0` / `@earendil-works/pi-ai@1.3.0` 三个都停在原版本；`docs/upgrade-guide/`
+里**没有 `v0.2.2-rc.2` 一节**（最新仍是 `v0.2.2-rc.1` 那 19 条，逐条对过，本插件涉及的
+服务/API 一个都没碰）；13 个宿主包里 6 个有 `.d.ts` 变化、7 个逐字节相同。
+
+**`pnpm run build` 的产物与 rc.1 开发树逐字节相同**，这比「类型能过」更强：`tsdown` 的
+dts 输出对类型变化是敏感的，产物不变就意味着那 6 个包的 `.d.ts` 变化没有一个落进本插件
+的消费面。
+
+三处语义级变化，逐条确认不击中：
+
+- **错误基类搬家**：`HarnessError` 从 `dsh-llm` 搬进新包 `@deepseek-ai/dsh-error`
+  （`dsh-llm` 仍重新导出，两条 import 路径是同一个类），`AttachmentError` 顺带改成真的
+  继承它。本插件只用 `AttachmentStore` 的**类型**，从不构造或捕获这两类错误。
+  `LlmError` 构造器同时收窄为只接受内置码（其余走新增的 `fromFailure()`），本插件从不
+  构造 `LlmError`。
+- **签名 thinking 的前缀绑定**：`dsh-llm-pi-ai` 新增的 `prefix-binding` 只在
+  `api === 'anthropic-messages'` 时生效，本插件每一行都钉在 Trae 的 `openai-completions`
+  上，进函数就原样返回。新增的 `prefixDigest` / `onThinkingOmitted` 都是可选的尾部参数，
+  不传即旧行为。
+- **`SlotKind` 多了 `'hoc'`**：但只在 `conversation.chat.markdown.fence` 与
+  `conversation.hero.frame` 两处声明，本插件都不碰。活宿主检视确认本插件注册的 7 个槽
+  kind 一个没变（`single` ×1、`list` ×5、`keyed` ×1）。
+
+`window-drag-regions` 那条看似会击中「浮层」，实则不：它只影响覆盖 `data-window-drag`
+页头行的自定义浮层，而本插件两个 `position: fixed` 元素（积分弹出面板、忙碌遮罩）都不
+覆盖页头行，`src/client/**` 里也没有任何 `app-region` / `no-drag` 依赖。
+
+**开发树同步**：13 个 `@deepseek-ai/dsh-*` devDependency → `0.2.2-rc.2`，`pnpm-lock.yaml`
+重新生成（rc.1 条目 200 处 → rc.2 242 处）。`peerDependencies` **零改动**：`0.2.2-rc.2`
+已被 `>=0.1.7-rc.1 <0.3.0-0` 放行。
+
+### 未采纳（记录理由，免得下次重新讨论）
+
+- **`settings.launcher` 的带参 `openSettings(sectionId)`**：rc.2 给了官方入口，本插件仍走
+  「读 `sidebar.settings` 的 store seat 调 `openSection(id)`」。换过去可以去掉对别的
+  bundle 私有 store 形状的依赖（`src/client/settings-route.ts` 里「No other id-targeted
+  seam exists」这句依据在 rc.2 已不成立），但要为 0.1.7–0.2.2-rc.1 那批宿主保留能力探测，
+  属于下一版的可选优化，不是本次同步的必需项。
+- 其余新增能力（`Modal.tone`、`Menu` 子菜单交互、`FenceCodeBlock` / `FenceMathBlock`、
+  Gemini 模型发现、`onThinkingOmitted` 观测点）本插件都用不到。
+
+### Tests
+
+- `tests/dsh-peer-range.spec.ts` 的 `MUST_ADMIT` 补入 `0.2.2-rc.2`，并把「current host」
+  注释挪过去——这份清单此前漏过「当前正在使用的版本」，那样范围被误收窄也不会变红。
+  变异验证：把上界临时改成 `<0.2.2-rc.2`，该文件立刻 9 例变红，报错原文正是
+  「must admit DSH 0.2.2-rc.2, but the host would SKIP the whole bundle」。
+- 全仓 **115 文件 / 1476 例**通过；`pnpm run build` 产物与 rc.1 开发树逐字节相同。
+
+### Docs
+
+- 新增 `docs/DSH_0.2.2_RC2_SYNC.md`：结论、逐包 `.d.ts` 变化、19 条官方指南的逐条排除
+  理由、验证结果、未采纳项。
+- 中英 README 的兼容表与「同步结论」补 rc.2 一节。
+
 ## 4.18.1 (2026-11-10)
 
 ### SOLO 的账号级错误交还号池：4008 与 4017 不再被当成请求写错
