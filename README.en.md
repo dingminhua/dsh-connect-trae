@@ -210,7 +210,7 @@ Restart the DSH process after install/update/uninstall.
 ## DSH version compatibility
 
 **Requires DSH 0.1.7-rc.1 and up** (since 2.3.0 the plugin no longer targets hosts older than 0.1.7; the peer dependency ranges are narrowed accordingly).
-**The peer upper bound is `<0.3.0-0`, so both the 0.1.7 and the 0.2 line are supported (including 0.2.2-rc.1 and rc.2, both verified).**
+**The peer upper bound is `<0.3.0-0`, so both the 0.1.7 and the 0.2 line are supported (including 0.2.2-rc.1, rc.2 and rc.3, all verified).**
 
 ### Both pi-ai context generations are supported (since 3.4.2)
 
@@ -302,6 +302,20 @@ For **this plugin**:
 - The peer range **needs no change**: `0.2.2-rc.2` is admitted by `>=0.1.7-rc.1 <0.3.0-0`.
 
 Details: [`docs/DSH_0.2.2_RC2_SYNC.md`](https://github.com/dingminhua/dsh-connect-trae/blob/main/docs/DSH_0.2.2_RC2_SYNC.md).
+
+### `0.2.2-rc.3` sync
+
+The host moved to `0.2.2-rc.3`. This one is even lighter than rc.2: the runtime files (`lib/**/*.js`) of **all 13 host packages are byte-for-byte identical**, every README is unchanged, and the bundled `cordis` / `schemastery` / `pi-ai` dependencies did not move. No upgrade guide was added for rc.3 either (the newest section is still `v0.2.2-rc.1`).
+
+For **this plugin**:
+
+- **No real change.** The only `.d.ts` edit is in `dsh-client-ui-primitives`: two new icons, `IconUploadOutlineRegular` and `IconUploadOutlineMedium`. This plugin does not import that package (`src/client/popover.ts` records why it implements the two behaviours locally), it only lists it as a `tsdown` external, so not even the bundle is affected.
+- **The slot catalog went 114 → 116, additions only**: `sidebar.session.action` (`hoc`) and `workspace.picker.directoryFlow` (`single`), neither of which this plugin registers. **Zero removals, zero kind changes**; even the `ownerProps` of the seven slots this plugin registers are character-for-character identical.
+- **`pnpm run build` produces artifacts byte-for-byte identical to the published 4.18.2**, all 1476 tests pass, and typecheck is clean.
+- **Only version anchors move**: 13 devDependencies rc.2 → rc.3, a regenerated lockfile, `MUST_ADMIT` gaining rc.3, and the version note in `pnpm-workspace.yaml`. **No source code changed.**
+- The peer range **needs no change**: `0.2.2-rc.3` is admitted by `>=0.1.7-rc.1 <0.3.0-0`.
+
+Details: [`docs/DSH_0.2.2_RC3_SYNC.md`](https://github.com/dingminhua/dsh-connect-trae/blob/main/docs/DSH_0.2.2_RC3_SYNC.md).
 
 
 ### Why the upper bound is not `<0.2.0`

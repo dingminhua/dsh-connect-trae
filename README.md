@@ -229,7 +229,7 @@ npm install dsh-connect-trae
 ## DSH 版本兼容
 
 **要求 DSH 0.1.7-rc.1 及以上**（2.3.0 起不再支持 0.1.7 之前的宿主；peer 依赖范围已按此收窄）。
-**peer 上界为 `<0.3.0-0`：0.1.7 与 0.2 两条线均受支持（含 0.2.2-rc.1 / rc.2，均已实测）。**
+**peer 上界为 `<0.3.0-0`：0.1.7 与 0.2 两条线均受支持（含 0.2.2-rc.1 / rc.2 / rc.3，均已实测）。**
 
 ### 同时支持 pi-ai 的两代上下文（3.4.2 起）
 
@@ -399,6 +399,28 @@ stderr、View 标签的 tooltip 只在文字溢出时显示、More 菜单 toolti
 - peer 范围**无需改动**：`0.2.2-rc.2` 已被 `>=0.1.7-rc.1 <0.3.0-0` 放行。
 
 细节见 [`docs/DSH_0.2.2_RC2_SYNC.md`](https://github.com/dingminhua/dsh-connect-trae/blob/main/docs/DSH_0.2.2_RC2_SYNC.md)。
+
+### `0.2.2-rc.3` 同步结论
+
+宿主推进到 `0.2.2-rc.3`。这一版比 rc.2 那次还要轻：**13 个宿主包的运行时 `lib/**/*.js`
+逐字节完全相同**，README 全部未变，随包的 `cordis` / `schemastery` / `pi-ai` 三个依赖也
+都没动。官方升级指南同样**没有为 rc.3 新增条目**（最新一节仍是 `v0.2.2-rc.1`）。
+
+对**本插件**而言：
+
+- **零实质变化**。唯一的 `.d.ts` 改动在 `dsh-client-ui-primitives`：新增
+  `IconUploadOutlineRegular` / `IconUploadOutlineMedium` 两个图标——本插件不 import 该包
+  （`src/client/popover.ts` 里写明了「自实现而不 import」的理由），只是把它列在
+  `tsdown` 的 externals 里，所以连打包产物都不受影响。
+- **槽位目录 114 → 116，只增不减**：新增 `sidebar.session.action`（`hoc`）与
+  `workspace.picker.directoryFlow`（`single`），本插件都不注册。**零移除、零 kind 变化**，
+  本插件注册的 7 个槽连 `ownerProps` 都逐字相同。
+- **`pnpm run build` 产物与已发布的 4.18.2 逐字节相同**，1476 条测试全绿，typecheck 零报错。
+- **本次只动版本锚点**：13 个 devDependency rc.2 → rc.3、重新生成 lockfile、
+  `MUST_ADMIT` 补 rc.3、`pnpm-workspace.yaml` 的注释版本号。**源码零改动。**
+- peer 范围**无需改动**：`0.2.2-rc.3` 已被 `>=0.1.7-rc.1 <0.3.0-0` 放行。
+
+细节见 [`docs/DSH_0.2.2_RC3_SYNC.md`](https://github.com/dingminhua/dsh-connect-trae/blob/main/docs/DSH_0.2.2_RC3_SYNC.md)。
 
 ### peer 上界为什么不写 `<0.2.0`
 
