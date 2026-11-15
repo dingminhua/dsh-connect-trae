@@ -1,6 +1,10 @@
 # Changelog
 
-## 未发布
+## 4.18.3 (2026-11-16)
+
+这一版修掉一个把「限流」误读成「请求写错」、又在流中途把原因弄丢的问题（issue #85），
+并顺带把积压的 DSH 0.2.2-rc.3 同步一并记进来——那份同步本身零代码改动，`src/` 一个
+字节都没动。
 
 ### 3004 不再被读成「请求写错」：限流在流中途丢了码，也让号池白白重试同一个号
 
@@ -31,6 +35,14 @@ rate limit`。它此前落到 `classifyTraeFailure` 的默认分支（`400` / `c
    请求之后才启用（一个什么都没说的上游仍然立刻失败）。超时的那次 `reader.read()`
    不能取消（取消就是取消整个 body），所以它连同 promise 一起移交给重放流：字节晚到，
    但不会丢。这条单独有测试——摘掉交接，队列后的第一个 chunk 就消失。
+
+   **预算必须是截止时间，不是「每次 read 的预算」。** 第一版写成后者，独立审查把它
+   揪了出来：Trae 排队期间每隔几秒发一条 `progress_notice`，每条都会重置计时器，于是
+   这个「2.5s 封顶」在最需要它的场景里形同虚设。实测（每秒一条 progress）响应头被
+   扣住 **6.0s**，而按 `PEEK_MAX_CHUNKS × PEEK_SETTLE_MS` 算最坏是 **约 160s**——
+   正好是这次改动要消除的那种干等。现在改为 Trae 首次确认请求时**只盖一次**绝对
+   截止时间，之后按剩余时间等；同一场景回到 2.5s。新增用例把它钉住（变异回旧写法
+   立刻红：`expected 6365 to be less than 6000`）。
 3. 中途失败改成带类型的 `TraeStreamFailure`（`kind` / `status` / `traeCode`）。状态行
    已经发出去了，HTTP 码再也改不了，但 **SSE body 还开着**：shim 现在写一帧 OpenAI
    形状的 `data: {"error":{...}}`，`openai` SDK 会把它抛成 `APIError`，内核按文案
@@ -44,21 +56,67 @@ rate limit`。它此前落到 `classifyTraeFailure` 的默认分支（`400` / `c
 `3004` 在带外）。用已知码集合而不是 `>= 3000`：随便一个正常载荷上的低位 `code` 不能
 因此变成错误。
 
+### 适配：DSH 0.2.2-rc.3（零代码改动）
+
+宿主从 `0.2.2-rc.2` 推进到 `0.2.2-rc.3`，这一版比上次还要轻：插件消费的 **13 个宿主包
+的运行时 `lib/**/*.js` 逐字节完全相同**，全部 README 未变，随包的 `cordis@4.1.0` /
+`schemastery@3.19.0` / `ai-pi@1.3.0` 三个依赖也都没动。官方升级指南同样**没有为 rc.3
+新增条目**（最新一节仍是 `v0.2.2-rc.1`）。
+
+- **唯一的类型面变化不击中**：只有 `dsh-client-ui-primitives` 多了
+  `IconUploadOutlineRegular` / `IconUploadOutlineMedium` 两个图标。本插件不 import 该包
+  （`src/client/popover.ts` 写明了自实现锚定与外点关闭的理由），只把它列在 `tsdown` 的
+  externals 里，所以连打包产物都不受影响。
+- **槽位目录 114 → 116，只增不减**：新增 `sidebar.session.action`（`hoc`）与
+  `workspace.picker.directoryFlow`（`single`），本插件都不注册。**零移除、零 kind 变化**；
+  本插件注册的 7 个槽连 `ownerProps` 都逐字相同。
+- **构建产物与已发布的 4.18.2 逐字节相同**——这是本次最强的证据：没有任何一个被消费的
+  类型或运行时文件变过，所以连 dts 输出都不变。
+- **顺带核对过的仓包**：`dsh-client-ui-settings-general` 的唯一实质差异是把「当前版本」
+  文案里的版本号换成 rc.3；`model-selection` / `plugin-manager` / `deepseek-account`
+  只有 `package.json`；`cordis-client-runner` 的 `slot-catalog.ts` 变化 = 上述 2 个新槽
+  + 源码行号漂移。
+- **开发树同步**：13 个 `@deepseek-ai/dsh-*` devDependency → `0.2.2-rc.3`，
+  `pnpm-lock.yaml` 重新生成（rc.2 条目 242 处 → rc.3 242 处）。`cordis` / `schemastery` /
+  `pi-ai` 与 peerDependencies **零改动**：`0.2.2-rc.3` 已被 `>=0.1.7-rc.1 <0.3.0-0` 放行。
+- `tests/dsh-peer-range.spec.ts` 的 `MUST_ADMIT` 补入 `0.2.2-rc.3`。现在这份「必须放行的
+  版本」清单里同时有 rc.1 / rc.2 / rc.3 三个**实测过**的宿主，任何一次范围误收窄都会变红。
+
+### 未采纳（记录理由，免得下次重新讨论）
+
+- `sidebar.session.action`（`hoc`）：rc.3 新增的侧栏「新建会话」行包装层，本插件不涉及。
+- `workspace.picker.directoryFlow`（`single`）：本插件不注册工作区选择器。
+- `IconUploadOutline*`：本插件不 import `dsh-client-ui-primitives`。
+- `settings.launcher` 的带参 `openSettings(sectionId)`：仍是 rc.2 起就存在的可选优化项，
+  理由见 `docs/DSH_0.2.2_RC2_SYNC.md` 第七节。
+
 ### Tests
 
 - `tests/solo-bridge.spec.ts` 新增 5 例：`3004` 的文案（含「不得出现 quota」）、
   queue 之后到达的 `3004` → `429` / `soft_rate`、queue 事件不再让 peek 提前受理
   （同一例还钉住健康流仍被原样重放）、「先出字后限流」时抛出的确实是
-  `TraeStreamFailure` 且带 `kind`、以及等待预算封顶且**不丢字节**。
+  `TraeStreamFailure` 且带 `kind`、等待预算封顶且**不丢字节**、以及「排队期间持续滴答
+  时预算仍然到期」。
 - `tests/shim.spec.ts` 新增 2 例：失败进入已开的流时客户端收到 SSE 错误帧（含
   `trae_code`，且没有 `[DONE]`）；非上游证书的普通中断仍静默关闭，不凭空造错误帧。
 - `tests/account-pool-failover.spec.ts` 新增 1 例：`200` 之后才失败的请求会被记到
   出事的账号上，且**不触发第二次上游调用**（客户端已经拿到 200，再发就是为没人读的
   答案二次计费）。
-- 变异验证，五处各自都能单独变红：把 `3004` 从限流档摘掉 → 2 例；恢复 peek 的旧判定
+- 变异验证，六处各自都能单独变红：把 `3004` 从限流档摘掉 → 2 例；恢复 peek 的旧判定
   → 1 例；去掉 SSE 错误帧 → 1 例；去掉号池回写 → 1 例；去掉超时读的交接 → 1 例；
-  关掉等待预算 → 该例挂到测试超时（正是它要防的症状）。
-- 全仓 **115 文件 / 1484 例**通过；`pnpm run build` 通过。
+  关掉等待预算 → 该例挂到测试超时（正是它要防的症状）；把截止时间改回「每次 read
+  的预算」→ 1 例（6.4s vs 6.0s 上限）。
+- 适配侧另有既有测试兜底：`tests/dsh-peer-range.spec.ts` 逐条断言 peer 范围必须放行
+  0.1.7 与 0.2 两条线、必须挡住 0.3 线。
+- 全仓 **115 文件 / 1485 例**通过；`pnpm run build` 通过；`verify:privacy` 17 项无跳过。
+- 真实宿主 0.2.2-rc.3：`GET /plugins/dsh-connect-trae/usage` → 200 / `signed-in` /
+  33 个模型 / 2 个账号。
+
+### Docs
+
+- 新增 `docs/DSH_0.2.2_RC3_SYNC.md`：结论、逐包运行时/类型面比对表、槽位目录增量、
+  官方指南缺席的说明、验证结果。
+- 中英 README 的兼容表与「同步结论」补 rc.3 一节。
 
 ## 4.18.2 (2026-11-13)
 
