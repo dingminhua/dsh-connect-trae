@@ -1,6 +1,7 @@
 import { normalizeUsageCache } from './usage-cache.ts'
 import { randomUUID } from 'node:crypto'
 import { SseDecoder, decodeTraeEvent } from './sse.ts'
+import { TraeStreamFailure } from './upstream.ts'
 import type { TraeCatalog } from './catalog.ts'
 import type { TraeChatResult, TraeUpstreamClient, TraeUpstreamErrorKind } from './upstream.ts'
 
@@ -64,8 +65,17 @@ export interface TraeFailure {
  *    empty and then self-resolved later with rows per function, so this is a
  *    TRANSIENT server-side gap the user can wait out or retry — never a local
  *    credential, plugin or account fault, and not something to re-login for.
+ *  - `3004` — Trae's own shared-queue rate limit (issue #85). Its text is
+ *    `We're sorry, your requests have exceeded the rate limit.`, the same
+ *    condition `4011` reports for the SOLO route, and it arrives as an
+ *    `error` event AFTER `request_wait_in_queue` / `progress_notice` — which is
+ *    why it is classified identically but is a distinct code worth keeping (the
+ *    queue is shared, so it says nothing about this account's SOLO route).
+ *    Deliberately NOT read as a quota: the kernel checks quota wording BEFORE
+ *    rate-limit wording, so one stray "quota" would mis-file it as unretryable.
  */
 const TRAE_ERROR_HINTS: Readonly<Record<number, string>> = {
+  3004: 'Trae throttled the shared request queue for this account (a rate limit, not the credit balance)',
   4017: 'Trae temporarily restricted this account through risk control',
   1005: 'Trae requires a paid plan for this model; the current account\'s plan does not cover it',
   2001: 'Trae has not published its function config for this route (an upstream condition, not a local credential or config problem)',
@@ -126,19 +136,35 @@ export function describeTraeFailure(failure: TraeFailure): string {
  * These account failures must reach pooled-account failover; replaying another
  * route for the same account cannot restore quota or remove its restriction.
  * Everything else stays a client-side rejection.
+ *
+ * `3004` joins the rate-limit category for the same reason as `4011` and on the
+ * same evidence (issue #85): Trae's text says "rate limit", the kernel's own
+ * text classifier says RATE_LIMIT, and `soft_rate` is what makes the account
+ * pool try a DIFFERENT account instead of replaying the throttled one. It
+ * previously fell through to `400`/`client` — a non-retryable verdict on a
+ * condition that is retryable by definition.
  */
 function classifyTraeFailure(failure: TraeFailure): { status: number; kind: TraeUpstreamErrorKind } {
   if (failure.code === 1005 || failure.code === 4008) return { status: 402, kind: 'hard_credit' }
-  if (failure.code === 4011 || failure.code === 4017) return { status: 429, kind: 'soft_rate' }
+  if (failure.code === 3004 || failure.code === 4011 || failure.code === 4017) return { status: 429, kind: 'soft_rate' }
   return { status: 400, kind: 'client' }
 }
+
+/**
+ * Trae codes this build has actually measured (`TRAE_ERROR_HINTS`). Used to
+ * recognise a refusal that arrives in an UNNAMED event: the generic rule only
+ * trusts the 4xxx error band, and `3004` sits below it (issue #85). Membership
+ * is the point — an arbitrary low `code` field on a normal payload still does
+ * not become an error.
+ */
+const KNOWN_FAILURE_CODES: ReadonlySet<number> = new Set(Object.keys(TRAE_ERROR_HINTS).map(Number))
 
 /** Recognise an in-stream failure event, or return undefined for anything else. */
 function traeFailureOf(decoded: ReturnType<typeof decodeTraeEvent>): TraeFailure | undefined {
   if (decoded.type !== 'unknown') return undefined
   const payload = decoded.data as Record<string, unknown> | undefined
   const code = typeof payload?.['code'] === 'number' ? payload['code'] : undefined
-  if (decoded.event !== 'error' && !(code !== undefined && code >= 4000)) return undefined
+  if (decoded.event !== 'error' && !(code !== undefined && (code >= 4000 || KNOWN_FAILURE_CODES.has(code)))) return undefined
   return {
     ...code === undefined ? {} : { code },
     message: typeof payload?.['message'] === 'string' ? payload['message'] : '',
@@ -222,7 +248,20 @@ function bridgeTraeSource(
             // {@link bridgeTraeSoloStreamOrFail}, which is the path the bridge
             // actually uses; this arm only covers a failure that interrupts an
             // already-streaming answer.
-            upstreamError = new Error(describeTraeFailure(failure))
+            //
+            // Issue #85: that late failure still has to carry its KIND. The HTTP
+            // status is gone by then, so the shim can only report a failure by
+            // writing an error frame into the stream — and it must know whether
+            // this was a rate limit or a dead socket to do that. A plain `Error`
+            // left it guessing from the text, which is how a 3004 became a
+            // generic `TRANSPORT` retry loop.
+            const classified = classifyTraeFailure(failure)
+            upstreamError = new TraeStreamFailure(
+              describeTraeFailure(failure),
+              classified.kind,
+              classified.status,
+              failure.code,
+            )
           }
           return
         }
@@ -315,19 +354,82 @@ function bridgeTraeSource(
 const PEEK_MAX_CHUNKS = 64
 const PEEK_MAX_BYTES = 262_144
 
+/**
+ * How long the peek may keep waiting once Trae has acknowledged the request
+ * (`queue` / `progress` / diagnostics) but has sent no output yet.
+ *
+ * Issue #85 needs the peek to hold on past a queue event, because the 3004
+ * shared-queue rate limit arrives right after one — but a genuinely queued
+ * request waits for MINUTES, and the loopback answering 200 is what starts the
+ * kernel's own idle clock. So the extra wait is a budget, not an unbounded
+ * block: inside it a refusal becomes a real HTTP status (which the account pool
+ * can act on by switching accounts); past it the stream is handed over exactly
+ * as it arrives, which is the behaviour every queue had before this change.
+ */
+const PEEK_SETTLE_MS = 2_500
+
+/** One `reader.read()` result, named here because the DOM lib is not in scope. */
+type ReadableStreamReadResultOf = Awaited<ReturnType<ReadableStreamDefaultReader<Uint8Array>['read']>>
+
+/** One read, or "not yet" without cancelling the stream or losing the read. */
+type PeekRead =
+  | { kind: 'chunk'; value: ReadableStreamReadResultOf }
+  | { kind: 'timeout'; pending: Promise<ReadableStreamReadResultOf> }
+
+/**
+ * Read with a deadline that does NOT abort the stream.
+ *
+ * `reader.read()` cannot be cancelled without cancelling the body, so a timed-out
+ * read is returned to the caller as `pending` and handed on to
+ * {@link replayTraeSource}: the bytes still arrive, they just arrive after the
+ * peek gave up waiting for them. Without that handoff the first chunk of a slow
+ * answer would sit in a discarded promise and be lost.
+ */
+async function readWithin(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  waitMs: number | undefined,
+): Promise<PeekRead> {
+  const pending = reader.read()
+  // The race below drops the chunk branch on timeout; marking `pending` handled
+  // here keeps a late rejection from becoming an unhandled one before the replay
+  // stream awaits it. It does not swallow the error for that await.
+  void pending.catch(() => {})
+  if (waitMs === undefined) return { kind: 'chunk', value: await pending }
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const expired = new Promise<PeekRead>(resolve => {
+    timer = setTimeout(() => resolve({ kind: 'timeout', pending }), Math.max(0, waitMs))
+  })
+  try {
+    return await Promise.race([pending.then(value => ({ kind: 'chunk' as const, value })), expired])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 /** Replay the bytes the peek consumed, then drain the rest of the upstream. */
 function replayTraeSource(
   buffered: readonly Uint8Array[],
   reader: ReadableStreamDefaultReader<Uint8Array>,
   ended: boolean,
+  pending?: Promise<ReadableStreamReadResultOf>,
 ): ReadableStream<Uint8Array> {
   let index = 0
+  let waiting = pending
   return new ReadableStream<Uint8Array>({
     async pull(controller) {
       const chunk = buffered[index]
       if (chunk !== undefined) {
         index += 1
         controller.enqueue(chunk)
+        return
+      }
+      if (waiting !== undefined) {
+        // The peek's timed-out read: consume it rather than starting a second
+        // read on a locked reader.
+        const settled = await waiting
+        waiting = undefined
+        if (settled.done) { controller.close(); return }
+        controller.enqueue(settled.value)
         return
       }
       if (ended) { controller.close(); return }
@@ -365,27 +467,51 @@ async function openTraeSource(response: Response): Promise<
   const buffered: Uint8Array[] = []
   let bytes = 0
   let ended = false
+  let pending: Promise<ReadableStreamReadResultOf> | undefined
+  /** Set once an event proves Trae accepted the request but produced no output. */
+  let acknowledged = false
   try {
     while (buffered.length < PEEK_MAX_CHUNKS && bytes < PEEK_MAX_BYTES) {
-      const next = await reader.read()
-      if (next.done) { ended = true; break }
-      buffered.push(next.value)
-      bytes += next.value.byteLength
+      // The extra wait is granted only AFTER Trae acknowledged the request: a
+      // silent upstream that has said nothing at all must still fail fast instead
+      // of holding the response headers for the whole budget.
+      const next = await readWithin(reader, acknowledged ? PEEK_SETTLE_MS : undefined)
+      if (next.kind === 'timeout') {
+        // The bytes are not lost: the pending read is handed to the replay stream.
+        pending = next.pending
+        break
+      }
+      const value = next.value
+      if (value.done) { ended = true; break }
+      buffered.push(value.value)
+      bytes += value.value.byteLength
       let answered = false
-      for (const event of sse.push(decoder.decode(next.value, { stream: true }))) {
+      for (const event of sse.push(decoder.decode(value.value, { stream: true }))) {
         const decoded = decodeTraeEvent(event)
         const failure = traeFailureOf(decoded)
         if (failure !== undefined) {
           await reader.cancel().catch(() => {})
           return { ok: false, ...classifyTraeFailure(failure), message: describeTraeFailure(failure) }
         }
-        // Anything Trae itself recognises (`delta`, `usage`, `queue`,
-        // `progress`, `done`) means it accepted the request; stop peeking and
-        // stream from here. `diagnostic` (`metadata` / `timing_cost`) is
-        // deliberately excluded: those arrive BEFORE the answer and a refusal
-        // can still follow them, so treating them as "answered" would let a
-        // refusal escape as a mid-stream error instead of a real HTTP error.
-        if (decoded.type !== 'unknown' && decoded.type !== 'diagnostic') answered = true
+        // Anything Trae itself recognises as OUTPUT means it accepted the
+        // request; stop peeking and stream from here. `diagnostic` (`metadata` /
+        // `timing_cost`) is deliberately excluded: those arrive BEFORE the
+        // answer and a refusal can still follow them, so treating them as
+        // "answered" would let a refusal escape as a mid-stream error instead of
+        // a real HTTP error.
+        //
+        // Issue #85: `queue` and `progress` are excluded for the SAME reason.
+        // They say the request was ACCEPTED INTO A QUEUE, not that an answer is
+        // coming — and Trae's 3004 shared-queue rate limit is emitted right
+        // after them, so reading a queue event as "answered" ended the peek one
+        // event too early and turned a rate limit into a mid-stream truncation.
+        // The extra waiting this costs is bounded by PEEK_SETTLE_MS, and a
+        // genuinely queued request is replayed verbatim from the buffer.
+        if (decoded.type === 'delta' || decoded.type === 'usage' || decoded.type === 'done') answered = true
+        // Any other RECOGNISED event (`queue`, `progress`, `diagnostic`) proves
+        // Trae has begun answering, so from here the peek is on the budget: it
+        // keeps waiting for output, but not for minutes.
+        else if (decoded.type !== 'unknown') acknowledged = true
       }
       if (answered) break
     }
@@ -393,7 +519,7 @@ async function openTraeSource(response: Response): Promise<
     reader.releaseLock()
     return { ok: false, status: 0, kind: 'server', message: `transport error: ${String(error)}` }
   }
-  return { ok: true, source: replayTraeSource(buffered, reader, ended) }
+  return { ok: true, source: replayTraeSource(buffered, reader, ended, pending) }
 }
 
 /**

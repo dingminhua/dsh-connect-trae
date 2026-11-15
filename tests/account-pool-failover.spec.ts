@@ -7,6 +7,7 @@ import { TraeCredentialStore, type TraeCredential, type TraeRefreshOutcome } fro
 import { TraeCatalog } from '../src/catalog.ts'
 import { createTraeShim, type TraeShim, type TraeShimPool } from '../src/shim.ts'
 import { bridgeTraeSoloStreamOrFail } from '../src/solo-bridge.ts'
+import { TraeStreamFailure } from '../src/upstream.ts'
 import type { TraeChatResult, TraeUpstreamClient } from '../src/upstream.ts'
 
 /**
@@ -375,6 +376,38 @@ describe('shim failover across pooled accounts', () => {
     expect(response.status).toBe(429)
     expect(route.state.calls).toBe(1)
     expect(response.body).toContain('no credit left')
+  })
+
+  /**
+   * Issue #85. A failure that arrives AFTER the 200 is still an account fact,
+   * and the pool is the only thing that can act on it. Without this the shim
+   * reports the error to the client but never tells the pool, so the throttled
+   * account stays at the top of the ranking and is chosen again immediately.
+   */
+  it('records a failure that arrives after the 200 against the account that hit it', async () => {
+    const { pool, log } = recordingPool()
+    const streamed = scriptedClient([{
+      ok: true,
+      response: new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('data: {"choices":[{"index":0,"delta":{"content":"partial"}}]}\n\n'))
+          setTimeout(() => {
+            controller.error(new TraeStreamFailure('Trae code 3004 · upstream: rate limit', 'soft_rate', 429, 3004))
+          }, 5)
+        },
+      }), { headers: { 'content-type': 'text/event-stream' } }),
+    }])
+    const shim = await startShim(streamed.client, pool)
+
+    const response = await chat(shim)
+
+    expect(response.status).toBe(200)
+    expect(response.body).toContain('"type":"soft_rate"')
+    expect(response.body).toContain('Trae code 3004')
+    // Recorded after the answer began, and NOT followed by a failover: the
+    // client already holds a 200, so a second upstream call would be a second
+    // bill for an answer nobody reads.
+    expect(log).toEqual(['prepare', 'failed:account-a:soft_rate'])
   })
 })
 

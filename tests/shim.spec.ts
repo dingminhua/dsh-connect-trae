@@ -2,6 +2,7 @@ import { request } from 'node:http'
 import { afterEach, describe, expect, it } from 'vitest'
 import { TraeCatalog } from '../src/catalog.ts'
 import { createTraeShim, type TraeShim } from '../src/shim.ts'
+import { TraeStreamFailure } from '../src/upstream.ts'
 import type { TraeUpstreamClient } from '../src/upstream.ts'
 
 const cleanup: TraeShim[] = []
@@ -98,5 +99,84 @@ describe('Trae loopback shim', () => {
     req.destroy()
     await new Promise(resolve => setTimeout(resolve, 20))
     expect(seenSignal?.aborted).toBe(true)
+  })
+
+  /**
+   * Issue #85. Trae's 3004 (shared-queue rate limit) arrives as an SSE `error`
+   * event after `request_wait_in_queue`, so it can land after the shim has
+   * already answered 200. The failure used to be turned into a bare `res.end()`:
+   * the status line was gone, and the message went with it, leaving the kernel a
+   * truncated stream it could only read as `TRANSPORT` and retry.
+   *
+   * These two cases pin the boundary: a REFUSAL must reach the client as an
+   * error payload, and a plain socket failure must keep closing quietly (no
+   * invented error frame for a local abort).
+   */
+  it('carries a mid-stream upstream failure to the client as an SSE error frame', async () => {
+    const shim = await start({
+      async chatStream() {
+        return {
+          ok: true,
+          response: new Response(new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode('data: {"choices":[{"index":0,"delta":{"content":"partial"}}]}\n\n'))
+              // A real failure arrives while the answer is being consumed, not in
+              // the same tick as the first chunk: `Readable.fromWeb` surfaces a
+              // synchronous error before it drains what was already enqueued,
+              // which would test the ordering of the shim's buffering rather
+              // than the frame it writes.
+              setTimeout(() => {
+                controller.error(new TraeStreamFailure(
+                  'Trae throttled the shared request queue for this account (a rate limit, not the credit balance) · Trae code 3004 · upstream: your requests have exceeded the rate limit',
+                  'soft_rate',
+                  429,
+                  3004,
+                ))
+              }, 5)
+            },
+          }), { headers: { 'content-type': 'text/event-stream' } }),
+        }
+      },
+    })
+    const port = Number(new URL(shim.baseUrl()).port)
+    const response = await raw(port, {
+      method: 'POST',
+      path: '/v1/chat/completions',
+      headers: { host: `127.0.0.1:${port}`, 'content-type': 'application/json', authorization: `Bearer ${shim.token()}` },
+      body: '{}',
+    })
+    // The 200 cannot be taken back; the failure has to travel inside it.
+    expect(response.status).toBe(200)
+    expect(response.body).toContain('"content":"partial"')
+    expect(response.body).toContain('"error":')
+    expect(response.body).toContain('Trae code 3004')
+    expect(response.body).toContain('"type":"soft_rate"')
+    expect(response.body).toContain('"trae_code":3004')
+    // A failure is not a completion: no sentinel may claim the turn finished.
+    expect(response.body).not.toContain('[DONE]')
+  })
+
+  it('closes a stream that dies without an upstream verdict, inventing no error frame', async () => {
+    const shim = await start({
+      async chatStream() {
+        return {
+          ok: true,
+          response: new Response(new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode('data: {"choices":[]}\n\n'))
+              controller.error(new Error('socket hang up'))
+            },
+          }), { headers: { 'content-type': 'text/event-stream' } }),
+        }
+      },
+    })
+    const port = Number(new URL(shim.baseUrl()).port)
+    const response = await raw(port, {
+      method: 'POST',
+      path: '/v1/chat/completions',
+      headers: { host: `127.0.0.1:${port}`, 'content-type': 'application/json', authorization: `Bearer ${shim.token()}` },
+      body: '{}',
+    })
+    expect(response.body).not.toContain('"error":')
   })
 })
