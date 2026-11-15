@@ -163,11 +163,27 @@ function classifyTraeFailure(failure: TraeFailure): { status: number; kind: Trae
  */
 const KNOWN_FAILURE_CODES: ReadonlySet<number> = new Set(Object.keys(TRAE_ERROR_HINTS).map(Number))
 
+/**
+ * Trae's numeric error code, or undefined.
+ *
+ * Accepts the string form too: the wire is JSON and Trae has been inconsistent
+ * about quoting numerics elsewhere (`extra` is a JSON *string*). Reading only
+ * `typeof === 'number'` would make the `3004` fix (issue #85) silently stop
+ * working the day the code arrives as `"3004"` — the failure would fall through
+ * to a codeless `client` verdict with nothing in the logs to say why.
+ */
+function traeCodeOf(payload: Record<string, unknown> | undefined): number | undefined {
+  const raw = payload?.['code']
+  if (typeof raw === 'number' && Number.isFinite(raw)) return raw
+  if (typeof raw === 'string' && /^\d+$/.test(raw)) return Number(raw)
+  return undefined
+}
+
 /** Recognise an in-stream failure event, or return undefined for anything else. */
 function traeFailureOf(decoded: ReturnType<typeof decodeTraeEvent>): TraeFailure | undefined {
   if (decoded.type !== 'unknown') return undefined
   const payload = decoded.data as Record<string, unknown> | undefined
-  const code = typeof payload?.['code'] === 'number' ? payload['code'] : undefined
+  const code = traeCodeOf(payload)
   if (decoded.event !== 'error' && !(code !== undefined && (code >= 4000 || KNOWN_FAILURE_CODES.has(code)))) return undefined
   return {
     ...code === undefined ? {} : { code },
@@ -488,9 +504,12 @@ async function openTraeSource(response: Response): Promise<
   try {
     while (buffered.length < PEEK_MAX_CHUNKS && bytes < PEEK_MAX_BYTES) {
       // The extra wait is granted only AFTER Trae acknowledged the request (the
-      // deadline is undefined until then): a silent upstream that has said
-      // nothing at all must still fail fast instead of holding the response
-      // headers for the whole budget.
+      // deadline is undefined until then): a silent upstream is NOT granted the
+      // budget on top of its own. Before the first event the peek waits with no
+      // timeout at all — that is deliberate and unchanged, because an upstream
+      // that has answered neither way has not yet answered; the caller's own
+      // abort signal bounds that wait. What this line guarantees is narrower than
+      // "fails fast": it does not ADD the settle budget to it.
       const next = await readWithin(reader, settleDeadline === undefined ? undefined : settleDeadline - Date.now())
       if (next.kind === 'timeout') {
         // The bytes are not lost: the pending read is handed to the replay stream.
