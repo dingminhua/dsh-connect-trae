@@ -517,3 +517,60 @@ describe('per-account credential refresh', () => {
     expect(await store.resolveCredentialOf('000000000000000000000000')).toBeUndefined()
   })
 })
+
+/**
+ * Issue #85 follow-up: a mid-stream failure is an ACCOUNT fact only when the
+ * failure is account-scoped.
+ *
+ * The pre-stream path has always guarded its write-back with `FAILOVER_KINDS`
+ * ("a bad model id is not evidence that the account cannot serve"). The
+ * mid-stream path added for #85 first skipped that guard, so a request-shaped
+ * error — a refusal code this build has not measured, or an `error` event with
+ * no code at all — reached the pool as `kind: 'client'`. That maps to the
+ * `failed` outcome, which excludes the account for POOL_UNKNOWN_COOLDOWN_MS
+ * (30 minutes) over a request the account served fine. In a two-account pool it
+ * silently moves billing to the other account; in a one-account pool the
+ * rotation stops with nothing on screen to explain it.
+ */
+describe('issue #85: only account-scoped mid-stream failures reach the pool', () => {
+  /** Stream a little output, then fail with the given verdict. */
+  function streamingThenFailing(message: string, kind: 'soft_rate' | 'client', status: number): TraeUpstreamClient {
+    return {
+      async chatStream() {
+        return {
+          ok: true,
+          response: new Response(new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode('data: {"choices":[{"index":0,"delta":{"content":"partial"}}]}\n\n'))
+              setTimeout(() => { controller.error(new TraeStreamFailure(message, kind, status, 3004)) }, 5)
+            },
+          }), { headers: { 'content-type': 'text/event-stream' } }),
+        }
+      },
+    }
+  }
+
+  it('records a rate limit against the account that hit it', async () => {
+    const { pool, log } = recordingPool()
+    const shim = await startShim(streamingThenFailing('Trae code 3004 · rate limit', 'soft_rate', 429), pool)
+
+    const response = await chat(shim)
+
+    expect(response.status).toBe(200)
+    expect(log).toContain('failed:account-a:soft_rate')
+  })
+
+  it('does not punish the account for a request-shaped failure', async () => {
+    // No failover kind: the account answered, then reported something that is not
+    // evidence about the account itself.
+    const { pool, log } = recordingPool()
+    const shim = await startShim(streamingThenFailing('Trae refused the request · Trae code 9999', 'client', 400), pool)
+
+    const response = await chat(shim)
+
+    // The client still learns about the failure; the pool is left alone.
+    expect(response.status).toBe(200)
+    expect(response.body).toContain('"type":"client"')
+    expect(log).toEqual(['prepare'])
+  })
+})

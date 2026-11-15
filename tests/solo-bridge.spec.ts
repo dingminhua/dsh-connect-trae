@@ -734,3 +734,22 @@ describe('issue #85: the settle budget must be a deadline, not a per-read timeou
     expect(text).toContain('data: [DONE]')
   }, 20_000)
 })
+
+describe('issue #85: a quoted code must not disarm the classification', () => {
+  it('reads 3004 the same whether it is a number or a JSON string', async () => {
+    // The wire is JSON, and Trae already sends `extra` as a JSON *string*. A
+    // numeric-only reader would quietly fall back to a codeless `client` verdict
+    // if the code ever arrives quoted — the rate limit would be misfiled as a bad
+    // request again, with nothing in the logs to explain it.
+    for (const code of [3004, '3004']) {
+      const result = await bridgeTraeSoloStreamOrFail(traeStreamChunks([
+        'event: request_wait_in_queue\ndata: {"position":2}\n\n',
+        `event: error\ndata: {"code":${JSON.stringify(code)},"message":"your requests have exceeded the rate limit"}\n\n`,
+      ]), 'glm-5.3')
+      expect(result.ok).toBe(false)
+      if (result.ok) continue
+      expect({ code: result.kind, status: result.status }).toEqual({ code: 'soft_rate', status: 429 })
+      expect(result.message).toContain('Trae code 3004')
+    }
+  })
+})

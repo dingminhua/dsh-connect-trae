@@ -357,7 +357,19 @@ export function createTraeShim(options: TraeShimOptions): TraeShim {
               // (`soft_rate` is one of FAILOVER_KINDS for exactly this reason).
               // Recorded even when the client already left: the account really was
               // throttled, and that stays true whatever became of the socket.
-              if (result.accountId !== undefined && result.pool !== undefined) {
+              //
+              // Guarded by FAILOVER_KINDS for the reason the pre-stream path
+              // states — a mid-stream failure can still be `client` (an unmeasured
+              // code, or an `error` event with no code at all). Recording that
+              // would exclude a healthy account for 30 minutes over one bad
+              // request: billing moves to the other account in a two-account pool,
+              // and in a one-account pool the rotation stops with nothing on
+              // screen to explain it.
+              if (
+                FAILOVER_KINDS.has(error.kind)
+                && result.accountId !== undefined
+                && result.pool !== undefined
+              ) {
                 void result.pool.failed(result.accountId, error.kind, error.message).catch(() => {})
               }
               // The frame itself is pointless once the client is gone, and writing
