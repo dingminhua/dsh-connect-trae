@@ -1,12 +1,66 @@
 # Changelog
 
-## 4.18.3 (2026-11-16)
+## 4.18.4 (2026-11-16)
 
 这一版修掉一个把「限流」误读成「请求写错」、又在流中途把原因弄丢的问题（issue #85），
 并顺带把积压的 DSH 0.2.2-rc.3 同步一并记进来——那份同步本身零代码改动，`src/` 一个
 字节都没动。
 
-### 3004 不再被读成「请求写错」：限流在流中途丢了码，也让号池白白重试同一个号
+**它还包含 4.18.3 的全部内容**，并修掉那一版里的一个缺陷：中途失败回写号池时少了
+`FAILOVER_KINDS` 守卫，一次「请求形状」的中途错误会把健康账号冻 30 分钟。4.18.3 的
+tag 已推送、包**从未发布**，按 `RELEASING.md`「已推送的 tag 是历史锚点」不移动它，
+于是把修复随这个版本发出；4.18.3 那一节保留在下方，原样不动，并注明它没发布。
+
+### 中途失败的号池回写补上 FAILOVER_KINDS 守卫
+
+4.18.3 让「中途失败也回写号池」是对的，但它只判断了 `accountId` / `pool` 是否存在，
+对 `kind` 不做过滤——而**同一个文件里开流前的路径**早就有这道守卫，注释也写明了理由
+（「a bad model id is not evidence that the account cannot serve」）。
+
+中途失败的 `kind` 可以是 `client`：`classifyTraeFailure` 对未列入的码、以及**没有数值
+code 的 `error` 事件**都返回 `{ 400, client }`。链路是 `kind=client` →
+`POOL_OUTCOME_BY_KIND.client='failed'` → 写入不带 `retryAtMs` 的探针 →
+`exclusionOf` 的 `'failed'` 分支 → `atMs + POOL_UNKNOWN_COOLDOWN_MS`（**30 分钟**）。
+
+后果按池的形态不同：双账号池里，这半小时的请求被记到另一个账号（**动了计费归属**）；
+单账号池里 `pickAccount` 返回 `undefined`、轮换静默停摆，界面上没有任何提示。而起因
+只是一个请求形状的中途错误。`soft_rate` 本就在 `FAILOVER_KINDS` 里，所以 #85 真正要
+兜住的限流场景不受影响。
+
+顺带两个稳健性缺口：
+
+- `traeFailureOf` 原先只认 `typeof code === 'number'`。上游哪天把 `3004` 发成字符串
+  `"3004"`，修复会**静默失效**并退回 `client`，日志里看不出原因。新增 `traeCodeOf`
+  同时接受数字与纯数字字符串——本仓库别处已经在处理这种不一致（`extra` 就是 JSON
+  字符串）。
+- peek 里「a silent upstream must still fail fast」这句注释不实：第一读是无超时
+  `await`，真正兜底的是调用方的 abort signal。改成它实际保证的窄范围——不额外授予预算。
+
+### Tests
+
+- 新增「请求形状的中途失败不该惩罚账号」一例：摘掉 `FAILOVER_KINDS` 守卫立刻红，
+  `log` 变成 `['prepare','failed:account-a:client']`。
+- 新增「`3004` 是数字还是 JSON 字符串都同样分类」一例：去掉字符串分支立刻红 ——
+  `expected { code: 'client', status: 400 } to deeply equal { code: 'soft_rate', status: 429 }`。
+- 4.18.3 的用例全部保留，见下方那一节的 Tests。
+- 全仓 **115 文件 / 1488 例**通过；typecheck 与构建通过；
+  `DSH_STRICT_PRIVACY=1 verify:privacy` 17 项无跳过（不是 SKIP —— 发布门禁要求）。
+
+### 已知的未做项（写下来免得被当成已保证）
+
+`3004` 是否会被内核真正判成 `RATE_LIMIT` 而不是 `QUOTA`，取决于内核的额度措辞正则，
+而它在宿主 `app.asar` 里、本仓库读不到。本版的依据是「文案里不出现 quota」这一条
+可复核的事实，而不是在真宿主上打日志确认过。要钉死这一条，只能在真宿主上对一次
+3004 抓日志。
+
+## 4.18.3 (2026-11-16) —— **未发布，被 4.18.4 取代**
+
+> **这一版没有发布到 npm。** tag `v4.18.3` 已推送到 `3f9dc0e`，但发布前的独立审查
+> 拦下了它（中途失败的号池回写少了守卫，见 4.18.4 一节）。按 `RELEASING.md`，已推送
+> 的 tag 不移动，修复随 4.18.4 发出。本节的代码内容全部包含在 4.18.4 里，保留原文
+> 只为让历史可回溯。
+
+3004 不再被读成「请求写错」：限流在流中途丢了码，也让号池白白重试同一个号
 
 Trae 的共享队列限流用 `code: 3004` 上报，原文是 `your requests have exceeded the
 rate limit`。它此前落到 `classifyTraeFailure` 的默认分支（`400` / `client`），
@@ -109,6 +163,7 @@ rate limit`。它此前落到 `classifyTraeFailure` 的默认分支（`400` / `c
 - 适配侧另有既有测试兜底：`tests/dsh-peer-range.spec.ts` 逐条断言 peer 范围必须放行
   0.1.7 与 0.2 两条线、必须挡住 0.3 线。
 - 全仓 **115 文件 / 1485 例**通过；`pnpm run build` 通过；`verify:privacy` 17 项无跳过。
+  （这是 4.18.3 当时的数字。4.18.4 的实际数字见本节上方。）
 - 真实宿主 0.2.2-rc.3：`GET /plugins/dsh-connect-trae/usage` → 200 / `signed-in` /
   33 个模型 / 2 个账号。
 
