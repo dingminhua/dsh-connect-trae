@@ -156,6 +156,10 @@ function classifyTraeFailure(failure: TraeFailure): { status: number; kind: Trae
  * trusts the 4xxx error band, and `3004` sits below it (issue #85). Membership
  * is the point — an arbitrary low `code` field on a normal payload still does
  * not become an error.
+ *
+ * DEPENDS ON: every entry in `TRAE_ERROR_HINTS` being a FAILURE code. Adding a
+ * hint for a code that is not a failure would silently widen the unnamed-event
+ * rule to cover it, so the two tables must keep the same purpose.
  */
 const KNOWN_FAILURE_CODES: ReadonlySet<number> = new Set(Object.keys(TRAE_ERROR_HINTS).map(Number))
 
@@ -468,14 +472,26 @@ async function openTraeSource(response: Response): Promise<
   let bytes = 0
   let ended = false
   let pending: Promise<ReadableStreamReadResultOf> | undefined
-  /** Set once an event proves Trae accepted the request but produced no output. */
-  let acknowledged = false
+  /**
+   * Absolute deadline for the extra wait, fixed the FIRST time Trae
+   * acknowledges the request.
+   *
+   * A per-read timeout would not bound anything: Trae keeps a queued request
+   * alive with a `progress_notice` every few seconds, so a 2.5s-per-read budget
+   * would reset forever and hold the response headers for up to
+   * `PEEK_MAX_CHUNKS × PEEK_SETTLE_MS` (~160s) — the exact stall this change
+   * exists to avoid. Measured before the fix: a queue event followed by one
+   * progress notice per second kept the headers held for 6.0s. The deadline is
+   * therefore absolute and set once, so the total extra wait is one budget.
+   */
+  let settleDeadline: number | undefined
   try {
     while (buffered.length < PEEK_MAX_CHUNKS && bytes < PEEK_MAX_BYTES) {
-      // The extra wait is granted only AFTER Trae acknowledged the request: a
-      // silent upstream that has said nothing at all must still fail fast instead
-      // of holding the response headers for the whole budget.
-      const next = await readWithin(reader, acknowledged ? PEEK_SETTLE_MS : undefined)
+      // The extra wait is granted only AFTER Trae acknowledged the request (the
+      // deadline is undefined until then): a silent upstream that has said
+      // nothing at all must still fail fast instead of holding the response
+      // headers for the whole budget.
+      const next = await readWithin(reader, settleDeadline === undefined ? undefined : settleDeadline - Date.now())
       if (next.kind === 'timeout') {
         // The bytes are not lost: the pending read is handed to the replay stream.
         pending = next.pending
@@ -510,8 +526,9 @@ async function openTraeSource(response: Response): Promise<
         if (decoded.type === 'delta' || decoded.type === 'usage' || decoded.type === 'done') answered = true
         // Any other RECOGNISED event (`queue`, `progress`, `diagnostic`) proves
         // Trae has begun answering, so from here the peek is on the budget: it
-        // keeps waiting for output, but not for minutes.
-        else if (decoded.type !== 'unknown') acknowledged = true
+        // keeps waiting for output, but not for minutes. The deadline is stamped
+        // ONCE — a queue keeps ticking, and a per-event budget would never expire.
+        else if (decoded.type !== 'unknown' && settleDeadline === undefined) settleDeadline = Date.now() + PEEK_SETTLE_MS
       }
       if (answered) break
     }

@@ -355,8 +355,16 @@ export function createTraeShim(options: TraeShimOptions): TraeShim {
               // ACCOUNT fact. The pool must learn it before the next request
               // ranks accounts, or it walks straight back into the same limit
               // (`soft_rate` is one of FAILOVER_KINDS for exactly this reason).
-              if (result.accountId !== undefined && result.pool !== undefined && !controller.signal.aborted) {
+              // Recorded even when the client already left: the account really was
+              // throttled, and that stays true whatever became of the socket.
+              if (result.accountId !== undefined && result.pool !== undefined) {
                 void result.pool.failed(result.accountId, error.kind, error.message).catch(() => {})
+              }
+              // The frame itself is pointless once the client is gone, and writing
+              // to a destroyed response is at best a no-op — so close quietly then.
+              if (controller.signal.aborted) {
+                if (!res.writableEnded) res.end()
+                return
               }
               writeStreamError(res, error)
               return

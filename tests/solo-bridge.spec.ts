@@ -682,3 +682,55 @@ describe('issue #85: a 3004 rate limit that arrives after the queue events', () 
     expect(text).toContain('data: [DONE]')
   }, 20_000)
 })
+
+describe('issue #85: the settle budget must be a deadline, not a per-read timeout', () => {
+  it('gives the stream back while a queued upstream keeps ticking', async () => {
+    // A per-read budget bounds nothing: Trae keeps a queued request alive with a
+    // `progress_notice` every few seconds, and each one resets the clock.
+    // Measured against the per-read version, this exact stream held the response
+    // headers 6.0s while the budget claimed 2.5s — the stall the budget exists to
+    // prevent, and the worst real case is PEEK_MAX_CHUNKS × PEEK_SETTLE_MS ≈ 160s.
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const encoder = new TextEncoder()
+    const timers: ReturnType<typeof setInterval>[] = []
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode('event: request_wait_in_queue\ndata: {"position":9}\n\n'))
+        let tick = 0
+        // One progress notice per 100ms: a long queue that keeps ticking, not a
+        // stalled one.
+        timers.push(setInterval(() => {
+          tick += 1
+          controller.enqueue(encoder.encode(`event: progress_notice\ndata: {"tick":${tick}}\n\n`))
+        }, 100))
+        void (async () => {
+          await gate
+          for (const timer of timers) clearInterval(timer)
+          controller.enqueue(encoder.encode('event: output\ndata: {"response":"late"}\n\n'))
+          controller.enqueue(encoder.encode('event: done\ndata: {"finish_reason":"stop"}\n\n'))
+          controller.close()
+        })()
+      },
+      cancel() { for (const timer of timers) clearInterval(timer) },
+    })
+    const startedAt = Date.now()
+    const result = await bridgeTraeSoloStreamOrFail(new Response(body), 'glm-5.3')
+    const held = Date.now() - startedAt
+    // One 2.5s budget plus slack. The per-read version would still be waiting.
+    expect(held).toBeLessThan(6_000)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const reader = result.response.body!.getReader()
+    release()
+    let text = ''
+    while (true) {
+      const next = await reader.read()
+      if (next.done) break
+      text += new TextDecoder().decode(next.value)
+    }
+    // Ticking progress notices must not truncate the answer that follows them.
+    expect(text).toContain('"content":"late"')
+    expect(text).toContain('data: [DONE]')
+  }, 20_000)
+})
