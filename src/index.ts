@@ -179,7 +179,7 @@ export {
 } from './status-paths.ts'
 import type { TraeCreditPosition } from './status-paths.ts'
 export { createTraeShim, type TraeShim } from './shim.ts'
-export { UnconfiguredTraeUpstreamClient, type TraeChatResult, type TraeUpstreamClient } from './upstream.ts'
+export { TraeStreamFailure, UnconfiguredTraeUpstreamClient, type TraeChatResult, type TraeUpstreamClient, type TraeUpstreamErrorKind } from './upstream.ts'
 export { classifyProbeError, classifyProbeResult, MAX_PROBE_INPUT_TOKENS, probeBody, probeModelsSequentially, probeOneModel, TRAE_PROBE_TIMEOUT_MS, type TraeProbeResult, type TraeProbeVerdict } from './model-probe.ts'
 export { TRAE_MODELS_TEST_PATH, type TraeModelsTestResponse, type TraeModelProbeVerdict } from './status-paths.ts'
 import {

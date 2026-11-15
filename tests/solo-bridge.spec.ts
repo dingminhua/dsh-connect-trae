@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { bridgeTraeSoloStream, bridgeTraeSoloStreamOrFail, describeTraeFailure, TraeSoloBridge, wireTargetsOf } from '../src/solo-bridge.ts'
+import { TraeStreamFailure } from '../src/upstream.ts'
 import type { TraeUpstreamClient } from '../src/upstream.ts'
 
 function traeStream(events: string[]): Response {
@@ -422,6 +423,21 @@ describe('describeTraeFailure: readable in-stream failure text (issue #19)', () 
       .toBe('Trae refused the request · Trae code 4955 · upstream: quota exceeded')
   })
 
+  it('reads 3004 as the upstream rate limit it is, not as a refused request (issue #85)', () => {
+    const message = describeTraeFailure({
+      code: 3004,
+      message: "We're sorry, your requests have exceeded the rate limit. Please wait and try again later or contact our support team for assistance.",
+    })
+    // Trae's own text says "rate limit", and the kernel classifies an error by
+    // its text (`/rate.?limit/i` → RATE_LIMIT). Both must be able to read it.
+    expect(message).toMatch(/rate.?limit/i)
+    expect(message).toContain('Trae code 3004')
+    expect(message).not.toContain('Trae refused the request')
+    // 3004 is a throttle, not a billing fact: the kernel checks quota wording
+    // FIRST, so an accidental "quota" here would mis-file it as QUOTA.
+    expect(message).not.toContain('quota')
+  })
+
   it('describes a codeless error event without inventing a code suffix', () => {
     expect(describeTraeFailure({ message: 'gone away' }))
       .toBe('Trae refused the request · upstream: gone away')
@@ -568,4 +584,101 @@ describe('upstream cache-pool diagnostics (issue #67)', () => {
     expect(result.status).toBe(402)
     expect(result.kind).toBe('hard_credit')
   })
+})
+
+// Issue #85. Trae answers a throttled SOLO request with an SSE `error` event
+// carrying `code: 3004` ("your requests have exceeded the rate limit"), but it
+// emits `request_wait_in_queue` / `progress_notice` FIRST. Those two were read
+// as "Trae accepted the request" by the peek, so the 3004 arriving after them
+// was treated as a mid-stream interruption: classified `client`/400 (wrong),
+// carried out of the loopback as a bare `res.end()` (the message dropped), and
+// the kernel could only see a 200 stream that stopped early — `TRANSPORT`,
+// retried 2-3 times, each retry hitting the same limit.
+describe('issue #85: a 3004 rate limit that arrives after the queue events', () => {
+  const refusal = 'event: error\ndata: {"code":3004,"message":"We\\u0027re sorry, your requests have exceeded the rate limit. Please wait and try again later or contact our support team for assistance."}\n\n'
+
+  it('is classified as a 429 soft_rate, so the account pool can switch accounts', async () => {
+    const result = await bridgeTraeSoloStreamOrFail(traeStreamChunks([
+      'event: request_wait_in_queue\ndata: {"position":3}\n\n',
+      'event: progress_notice\ndata: "Processing_123"\n\n',
+      refusal,
+    ]), 'glm-5.3')
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    // `soft_rate` is in the shim's FAILOVER_KINDS: a throttled route is an
+    // ACCOUNT fact, and replaying the same account cannot clear it.
+    expect(result.kind).toBe('soft_rate')
+    expect(result.status).toBe(429)
+    expect(result.message).toMatch(/rate.?limit/i)
+    expect(result.message).toContain('Trae code 3004')
+  })
+
+  it('does not let a queue event end the peek: the failure must become a real HTTP error', async () => {
+    // The other order (error first) passed even before the fix, so the queue
+    // event in a SEPARATE chunk is what pins the bug down.
+    const healthN = await bridgeTraeSoloStreamOrFail(traeStreamChunks([
+      'event: request_wait_in_queue\ndata: {"position":3}\n\n',
+      'event: output\ndata: {"response":"hello"}\n\n',
+      'event: done\ndata: {"finish_reason":"stop"}\n\n',
+    ]), 'glm-5.3')
+    expect(healthN.ok).toBe(true)
+    if (!healthN.ok) return
+    // A queue event must still not cost the answer: the peeked head is replayed.
+    expect(await healthN.response.text()).toContain('"content":"hello"')
+  })
+
+  it('still surfaces a refusal that lands after output began, typed as a rate limit', async () => {
+    // Nothing can turn this into an HTTP status any more — the 200 and the bytes
+    // are already gone — but the failure must reach the shim with its kind so a
+    // real error frame can be written instead of a silent truncation.
+    const result = await bridgeTraeSoloStreamOrFail(traeStreamChunks([
+      'event: output\ndata: {"response":"partial"}\n\n',
+      refusal,
+    ]), 'glm-5.3')
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const reader = result.response.body!.getReader()
+    const first = await reader.read()
+    expect(new TextDecoder().decode(first.value)).toContain('"content":"partial"')
+    await expect(reader.read()).rejects.toThrow('Trae code 3004')
+    const failure = await reader.read().catch((error: unknown) => error)
+    expect(failure).toBeInstanceOf(TraeStreamFailure)
+    expect(failure).toMatchObject({ kind: 'soft_rate', status: 429 })
+  })
+
+  it('does not hold the response headers past the settle budget, and loses no bytes', async () => {
+    // Waiting past a queue event is what catches a 3004, but a genuinely queued
+    // request waits for MINUTES. The peek must therefore give the stream back
+    // once its budget is spent — and the first chunk that the timed-out read was
+    // still waiting for has to reach the client, not vanish with the promise.
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const encoder = new TextEncoder()
+    const body = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        controller.enqueue(encoder.encode('event: request_wait_in_queue\ndata: {"position":9}\n\n'))
+        await gate
+        controller.enqueue(encoder.encode('event: output\ndata: {"response":"late"}\n\n'))
+        controller.enqueue(encoder.encode('event: done\ndata: {"finish_reason":"stop"}\n\n'))
+        controller.close()
+      },
+    })
+    const startedAt = Date.now()
+    const result = await bridgeTraeSoloStreamOrFail(new Response(body), 'glm-5.3')
+    // The header decision is bounded: it cannot wait for the answer itself.
+    expect(Date.now() - startedAt).toBeLessThan(10_000)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const reader = result.response.body!.getReader()
+    release()
+    let text = ''
+    while (true) {
+      const next = await reader.read()
+      if (next.done) break
+      text += new TextDecoder().decode(next.value)
+    }
+    // The chunk the peek was still waiting for when it gave up is delivered.
+    expect(text).toContain('"content":"late"')
+    expect(text).toContain('data: [DONE]')
+  }, 20_000)
 })
