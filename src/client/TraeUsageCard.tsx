@@ -48,6 +48,7 @@ import type { TraePoolRowDetail } from './AccountPool.tsx'
 import { dotStyle, formatDateTime, formatNumber, refreshTokenWarning } from './display.ts'
 import { planVerdict as payVerdict } from './plan-text.ts'
 import { setSidebarPanelWanted, sidebarPanelEnabledOf } from './panel-switch.ts'
+import { busyNotice, checkinTimeoutMs, errorNotice, timeoutNotice, type ClaimNotice } from './checkin-error.ts'
 import type { TraeSettingsKey } from './locales.ts'
 
 /**
@@ -490,7 +491,7 @@ export function TraeUsageCard({ t, settingsScope, view, surface, backToConversat
    * shown next to the row that caused it rather than in one global error line,
    * because the check-in button now lives per account.
    */
-  const [claimErrorByRegion, setClaimErrorByRegion] = useState<Record<TraePanel, Record<string, string>>>({ cn: {}, enterprise: {}, ai: {} })
+  const [claimNoticeByRegion, setClaimNoticeByRegion] = useState<Record<TraePanel, Record<string, ClaimNotice>>>({ cn: {}, enterprise: {}, ai: {} })
   /**
    * Whether this MACHINE has spent today's check-in for a given account — the
    * "device is spent but this account was never rewarded" state, per account so
@@ -1130,7 +1131,7 @@ export function TraeUsageCard({ t, settingsScope, view, surface, backToConversat
   const claimFor = async (accountId: string): Promise<void> => {
     if (activeRegion !== 'cn') return
     setClaimingFor(accountId)
-    setClaimErrorByRegion(prev => {
+    setClaimNoticeByRegion(prev => {
       const next = { ...prev[activeRegion] }
       delete next[accountId]
       return { ...prev, [activeRegion]: next }
@@ -1140,12 +1141,17 @@ export function TraeUsageCard({ t, settingsScope, view, surface, backToConversat
       delete next[accountId]
       return { ...prev, [activeRegion]: next }
     })
+    // A claim that never answers must not leave the row spinning forever — the
+    // "签到中… 然后没有任何反应" shape of issue #89. Bound the wait and abort.
+    const controller = new AbortController()
+    const timer = setTimeout(() => { controller.abort() }, checkinTimeoutMs())
     try {
       const response = await fetch(withTraeRegion(TRAE_CHECKIN_PATH, activeRegion), {
         method: 'POST',
         headers: { accept: 'application/json', 'content-type': 'application/json' },
         credentials: 'same-origin',
         body: JSON.stringify({ accountId }),
+        signal: controller.signal,
       })
       const body = await response.json().catch(() => undefined) as (TraeWebCheckinClaim & { error?: string }) | undefined
       if (!response.ok) throw new Error(body?.error ?? `HTTP ${response.status}`)
@@ -1157,18 +1163,33 @@ export function TraeUsageCard({ t, settingsScope, view, surface, backToConversat
         return
       }
       if (body?.claimed === false && body.alreadyCheckedIn !== true) {
-        throw new Error(body.message === undefined || body.message === ''
+        // 9074 is Trae's transient "too many participants" overload, not a
+        // rejected request: give it a calmer, actionable "try again shortly"
+        // note instead of dressing a normal upstream condition as a plugin
+        // failure in an easy-to-miss red line (issue #89).
+        const busy = busyNotice(body.code)
+        if (busy !== undefined) {
+          if (mounted.current) setClaimNoticeByRegion(prev => ({ ...prev, [activeRegion]: { ...prev[activeRegion], [accountId]: busy } }))
+          return
+        }
+        const message = body.message === undefined || body.message === ''
           ? t('row.checkinRefused', { code: String(body.code ?? '') })
-          : `${t('row.checkinRefused', { code: String(body.code ?? '') })}: ${body.message}`)
+          : `${t('row.checkinRefused', { code: String(body.code ?? '') })}: ${body.message}`
+        throw new Error(message)
       }
       await refreshUsage(activeRegion)
       await reloadAccountStatuses(activeRegion)
     } catch (error: unknown) {
       if (mounted.current) {
-        const message = error instanceof Error ? error.message : t('row.requestFailed')
-        setClaimErrorByRegion(prev => ({ ...prev, [activeRegion]: { ...prev[activeRegion], [accountId]: message } }))
+        // Distinguish "the request timed out" (another #89 shape) from a real
+        // refusal, so neither is reported as the other.
+        const notice = controller.signal.aborted
+          ? timeoutNotice()
+          : errorNotice(error instanceof Error ? error.message : t('row.requestFailed'))
+        setClaimNoticeByRegion(prev => ({ ...prev, [activeRegion]: { ...prev[activeRegion], [accountId]: notice } }))
       }
     } finally {
+      clearTimeout(timer)
       if (mounted.current) setClaimingFor(undefined)
     }
   }
@@ -1923,7 +1944,7 @@ export function TraeUsageCard({ t, settingsScope, view, surface, backToConversat
         ? account.id === status.accountId
         : account.selected === true
       const state = accountStatusByRegion[activeRegion][account.id]
-      const error = claimErrorByRegion[activeRegion][account.id]
+      const notice = claimNoticeByRegion[activeRegion][account.id]
       return {
         id: account.id,
         accountName: account.accountName,
@@ -1932,7 +1953,8 @@ export function TraeUsageCard({ t, settingsScope, view, surface, backToConversat
         meta: `${editionLabel(account.edition)} · ${sourceLabel(account.source)}`,
         value: rowValue(state),
         refreshExpiresAtMs: account.refreshExpiresAtMs,
-        error: error === undefined ? undefined : t('row.checkinError', { message: error }),
+        error: notice === undefined ? undefined : t(notice.key, notice.params),
+        errorTone: notice?.tone,
         claim: isCnPool
           ? (() => {
               const view = claimViewOf(account.id, state)

@@ -32,6 +32,7 @@ vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => ({
 }))
 
 import { TraeUsageCard } from '../src/client/TraeUsageCard.tsx'
+import { setCheckinTimeoutForTest } from '../src/client/checkin-error.ts'
 import { TRAE_ACCOUNT_STATUS_PATH, TRAE_CHECKIN_PATH, TRAE_USAGE_PATH, withTraeRegion } from '../src/status-paths.ts'
 import type { TraeSettingsKey } from '../src/client/locales.ts'
 
@@ -288,6 +289,67 @@ describe('TraeUsageCard daily check-in', () => {
     fireEvent.click(rowCheckin('demo-user'))
 
     await waitFor(() => { expect(within(accountBlock()).getByText(/row\.checkinError:.*9004/)).toBeTruthy() })
+  })
+
+  it('explains a 9074 overload as transient instead of a plugin failure', async () => {
+    // Issue #89: Trae answers HTTP 200 with code 9074「当前参与用户太多，请稍后
+    // 再试」during brief server-side overload. It is NOT a broken request (9004)
+    // and NOT a plugin fault — telling the user "签到失败：Trae 拒绝了本次签到"
+    // in an 11px grey line is what made the button look like it did nothing.
+    // The UI must name it as a temporary server limit and ask them to retry soon.
+    stubFetch(
+      usageDocument(),
+      { id: 'account-1', checkin: { checkedIn: false, didCheckedIn: false, credits: 150, enabled: true } },
+      { body: { claimed: false, alreadyCheckedIn: false, code: 9074, message: '当前参与用户太多，请稍后再试' } },
+    )
+    const { scope } = makeScope()
+    await renderOpen(scope)
+
+    fireEvent.click(rowCheckin('demo-user'))
+
+    await waitFor(() => { expect(within(accountBlock()).getByText(/row\.checkinBusy/)).toBeTruthy() })
+    // A transient refusal must not be dressed up as a hard failure.
+    expect(within(accountBlock()).queryByText(/row\.checkinError:/)).toBeNull()
+    expect(within(accountBlock()).queryByText(/row\.checkinRefused:/)).toBeNull()
+  })
+
+  it('stops waiting and reports a hung claim request instead of spinning forever', async () => {
+    // Issue #89's「签到中- 然后没有任何日志输出」shape: if the upstream never
+    // answers, the button must not stay in "领取中…" forever with no explanation.
+    // The client aborts the fetch after a bounded timeout and says so.
+    // The pending claim stays alive until its AbortController fires; render and
+    // initial status loads still run on real timers so `waitFor` works normally.
+    let pending: { reject: (reason: unknown) => void; signal: AbortSignal | null | undefined } | undefined
+    vi.stubGlobal('fetch', async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input)
+      if (url.startsWith(TRAE_CHECKIN_PATH)) {
+        return new Promise<Response>((_resolve, reject) => { pending = { reject, signal: init?.signal } })
+      }
+      if (url.startsWith(TRAE_ACCOUNT_STATUS_PATH)) {
+        return new Response(JSON.stringify({ id: 'account-1', checkin: { checkedIn: false, didCheckedIn: false, credits: 150, enabled: true } }), { status: 200 })
+      }
+      if (url.startsWith(TRAE_USAGE_PATH)) return new Response(JSON.stringify(usageDocument()), { status: 200 })
+      throw new Error(`unexpected fetch: ${url}`)
+    })
+    const { scope } = makeScope()
+    // Shorten the bound so the real AbortController fires during the test;
+    // production always uses the 30s constant (see checkin-error.spec.ts).
+    setCheckinTimeoutForTest(40)
+    try {
+      await renderOpen(scope)
+      fireEvent.click(rowCheckin('demo-user'))
+      await waitFor(() => { expect(pending).toBeDefined() })
+
+      // The SAME AbortController from the click must fire, and the UI must
+      // report a timeout instead of leaving the row spinning forever.
+      const signal = pending!.signal
+      expect(signal).not.toBeNull()
+      await waitFor(() => { expect(signal?.aborted).toBe(true) })
+      pending!.reject(new DOMException('aborted', 'AbortError'))
+      await waitFor(() => { expect(within(accountBlock()).getByText(/row\.checkinTimeout/)).toBeTruthy() })
+    } finally {
+      setCheckinTimeoutForTest(undefined)
+    }
   })
 
   it('claims for the ONE row clicked only — never a per-account sweep', async () => {

@@ -299,6 +299,10 @@ export const TRAE_CARD_CSS = `
 .dsm-trae-account-meta{display:flex;align-items:center;gap:5px;flex-wrap:wrap;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary,#9aa0a8);min-width:0}
 .dsm-trae-account-meta i{font-style:normal;opacity:.4}
 .dsm-trae-account-note{font-size:11px;line-height:16px;color:var(--dsw-alias-state-error-primary,#ef4444)}
+/* A transient overload / timeout (issue #89) is not a failure: give it a
+   readable size and a calm warning tone so it cannot be mistaken for a dead
+   button the way the 11px red error line was. */
+.dsm-trae-account-note-busy{font-size:12px;line-height:18px;color:var(--dsw-alias-state-warn-primary,#b45309)}
 /* Its own track, in tabular figures, so digits in different rows sit on the same
    column of the grid instead of jittering with the glyph widths. */
 .dsm-trae-account-worth{display:flex;flex-direction:column;gap:1px;min-width:0;font-variant-numeric:tabular-nums}

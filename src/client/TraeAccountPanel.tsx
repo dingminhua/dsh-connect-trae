@@ -57,6 +57,12 @@ export interface TraeAccountRowView {
   /** Dry of the last claim attempt for this row, already worded by the card. */
   error?: string | undefined
   /**
+   * `busy` is a transient upstream condition (overload / timeout), not a
+   * failure: render it more legibly than the small red error line that made
+   * issue #89 look like a dead button.
+   */
+  errorTone?: 'error' | 'busy' | undefined
+  /**
    * The check-in control for this row. Absent on a panel that has no check-in
    * surface at all (the international one), which is why the whole cell — not
    * just the button — disappears.
@@ -523,7 +529,7 @@ export function TraeAccountPanel({
                               </span>}
                           {row.error === undefined
                             ? null
-                            : <span className="dsm-trae-account-note" role="alert">{row.error}</span>}
+                            : <span className={row.errorTone === 'busy' ? 'dsm-trae-account-note dsm-trae-account-note-busy' : 'dsm-trae-account-note'} role="status">{row.error}</span>}
                         </span>
                       </span>
                       <span className="dsm-trae-account-worth">{row.value}</span>
