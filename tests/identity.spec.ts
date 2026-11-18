@@ -28,6 +28,73 @@ describe('Trae persisted identity', () => {
     expect(identityHeaders(first)['x-device-type']).toBe('mac')
   })
 
+  /**
+   * Issue #92: a real install had TWO icube-dc keys — one `aha-` ldid (not the
+   * check-in judging value) and one numeric did/rdid. `deviceCenterId()` used to
+   * require EXACTLY one key, so it returned undefined and the plugin fell back
+   * to the telemetry UUID, which upstream does not recognise → 9074. The
+   * numeric 16-digit entry is the canonical device id; the `aha-` entry must be
+   * excluded, and its digit count must NOT be assumed (16 is real).
+   */
+  it('picks the numeric icube-dc entry when an aha- ldid key is also present', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'trae-id-')); cleanup.push(root)
+    const storage = join(root, 'User', 'globalStorage', 'storage.json')
+    await mkdir(join(root, 'User', 'globalStorage'), { recursive: true })
+    const numericId = '9990001112223333' // 16 digits — the shape the reporter measured
+    const uuid = '7ac9d0d8-0810-43bc-870b-ffe2b51a8333'
+    await writeFile(storage, JSON.stringify({
+      'telemetry.machineId': 'telemetry-machine',
+      'telemetry.devDeviceId': uuid,
+      [`iCubeAuthInfo://icube-dc:aha-${'a'.repeat(32)}`]: 'ldid-not-the-device',
+      [`iCubeAuthInfo://icube-dc:${numericId}`]: 'encrypted',
+    }))
+    const value = await readTraeIdentity({ edition: 'cn', path: storage, source: 'desktop' }, { platform: 'darwin', home: root, env: {} })
+    expect(value.deviceId).toBe(numericId)
+  })
+
+  /**
+   * Issue #92's second defect: `deviceKeyPairOf()` used `.find()` on the first
+   * icube-dc key while `deviceCenterId()` looked at the whole set, so the device
+   * id and the signing keypair could come from DIFFERENT entries. refresh.ts
+   * sends DeviceInfo.DeviceID and DevicePublicKey in the same body (and rejects
+   * a mismatched proof with 20403), so they must be read from one entry.
+   */
+  it('reads the device id and its signing keypair from the same icube-dc entry', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'trae-id-')); cleanup.push(root)
+    const storage = join(root, 'User', 'globalStorage', 'storage.json')
+    await mkdir(join(root, 'User', 'globalStorage'), { recursive: true })
+    const numericId = '9990001112223333'
+    const keypair = (label: string): string => JSON.stringify({ privateKeyPEM: `PRIVATE-${label}`, publicKeyPEM: `PUBLIC-${label}` })
+    await writeFile(storage, JSON.stringify({
+      'telemetry.machineId': 'telemetry-machine',
+      // The aha entry comes FIRST and carries a different keypair; the old
+      // `.find()` would have paired the numeric device id with THIS key.
+      [`iCubeAuthInfo://icube-dc:aha-${'b'.repeat(32)}`]: keypair('ldid'),
+      [`iCubeAuthInfo://icube-dc:${numericId}`]: keypair('device'),
+    }))
+    const value = await readTraeIdentity({ edition: 'cn', path: storage, source: 'desktop' }, { platform: 'darwin', home: root, env: {} })
+    expect(value.deviceId).toBe(numericId)
+    expect(value.deviceKeyPair).toEqual({ privateKeyPEM: 'PRIVATE-device', publicKeyPEM: 'PUBLIC-device' })
+  })
+
+  it('keeps a lone icube-dc entry even when it is aha-shaped (no behaviour change)', async () => {
+    // Guard against over-correction: a machine with exactly one aha entry
+    // previously used it for both id and keypair. It is not the check-in judge,
+    // but dropping it here would also drop its keypair and downgrade refresh to
+    // the legacy contract. Only the MULTI-entry case is in scope for issue #92.
+    const root = await mkdtemp(join(tmpdir(), 'trae-id-')); cleanup.push(root)
+    const storage = join(root, 'User', 'globalStorage', 'storage.json')
+    await mkdir(join(root, 'User', 'globalStorage'), { recursive: true })
+    const lone = `aha-${'c'.repeat(32)}`
+    await writeFile(storage, JSON.stringify({
+      'telemetry.machineId': 'telemetry-machine',
+      'telemetry.devDeviceId': '7ac9d0d8-0810-43bc-870b-ffe2b51a8333',
+      [`iCubeAuthInfo://icube-dc:${lone}`]: 'encrypted',
+    }))
+    const value = await readTraeIdentity({ edition: 'cn', path: storage, source: 'desktop' }, { platform: 'darwin', home: root, env: {} })
+    expect(value.deviceId).toBe(lone)
+  })
+
   it('falls back to root machineid and derives a deterministic device id only when telemetry IDs are absent', async () => {
     const root = await mkdtemp(join(tmpdir(), 'trae-id-')); cleanup.push(root)
     const storage = join(root, 'User', 'globalStorage', 'storage.json')

@@ -46,10 +46,48 @@ function nonEmpty(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined
 }
 
-function deviceCenterId(storage: Record<string, unknown>): string | undefined {
-  const prefix = 'iCubeAuthInfo://icube-dc:'
-  const ids = Object.keys(storage).filter(key => key.startsWith(prefix)).map(key => key.slice(prefix.length)).filter(Boolean)
-  return ids.length === 1 ? ids[0] : undefined
+const ICUBE_DC_PREFIX = 'iCubeAuthInfo://icube-dc:'
+
+interface DeviceCenterEntry {
+  /** Full storage key, whose VALUE holds this device's registration/keypair. */
+  key: string
+  /** The numeric did/rdid suffix — the value upstream keys check-in on. */
+  deviceId: string
+}
+
+/**
+ * The one canonical `iCubeAuthInfo://icube-dc:<id>` entry for this install.
+ *
+ * A real install can carry MORE THAN ONE such key at once (issue #92): besides
+ * the numeric did/rdid there is an `aha-`-prefixed ldid. The ldid is NOT the
+ * value upstream judges — official logs name the numeric suffix as did/rdid
+ * (`[ICDRS] did:<D>, ldid:aha-…, rdid:<D>`), and sending the aha value returns
+ * `did_checked_in:false` (docs/USAGE_API_RESEARCH.md). The old code required
+ * EXACTLY one key, so with both present it returned undefined and the caller
+ * silently fell back to the telemetry UUID — an id upstream does not know,
+ * which is how a correct account gets 9074 on check-in.
+ *
+ * Selection is by SHAPE only (all digits), never by a guessed digit count: the
+ * numeric id has been observed as 16 digits, not just 15/19. The rule is
+ * deliberately conservative — it changes behaviour ONLY for the case that was
+ * actually broken (several entries at once):
+ *   - exactly one NUMERIC entry → use it (the did/rdid; an aha ldid beside it is
+ *     ignored, which is the issue #92 fix);
+ *   - otherwise, exactly one entry of ANY shape → preserve the old behaviour,
+ *     so a machine carrying only one aha entry keeps its id AND its keypair and
+ *     token refresh is not downgraded to the legacy contract;
+ *   - zero or several entries with no single numeric winner → undefined, and
+ *     the caller's existing fallback applies unchanged.
+ */
+function canonicalDeviceCenterEntry(storage: Record<string, unknown>): DeviceCenterEntry | undefined {
+  const entries = Object.keys(storage)
+    .filter(key => key.startsWith(ICUBE_DC_PREFIX))
+    .map(key => ({ key, suffix: key.slice(ICUBE_DC_PREFIX.length) }))
+    .filter(entry => entry.suffix !== '')
+  const numeric = entries.filter(entry => /^\d+$/.test(entry.suffix))
+  if (numeric.length === 1) return { key: numeric[0]!.key, deviceId: numeric[0]!.suffix }
+  if (entries.length === 1) return { key: entries[0]!.key, deviceId: entries[0]!.suffix }
+  return undefined
 }
 
 /**
@@ -60,10 +98,19 @@ function deviceCenterId(storage: Record<string, unknown>): string | undefined {
  * resolve an identity for the chat/usage paths — only a refresh then degrades.
  * A malformed entry is treated as absent rather than failing the read.
  */
-export function deviceKeyPairOf(storage: Record<string, unknown>): TraeDeviceKeyPair | undefined {
-  const key = Object.keys(storage).find(name => name.startsWith('iCubeAuthInfo://icube-dc:'))
-  if (key === undefined) return undefined
-  const encoded = storage[key]
+export function deviceKeyPairOf(
+  storage: Record<string, unknown>,
+  resolved?: DeviceCenterEntry,
+): TraeDeviceKeyPair | undefined {
+  // Use the SAME entry that supplies x-device-id. The refresh body carries
+  // DeviceInfo.DeviceID and DevicePublicKey together, and upstream refuses a
+  // proof from another device's key (20403 Token device not match); picking the
+  // first key with `.find()` could pair the numeric id with the aha entry's key.
+  // A caller that already resolved the entry (readTraeIdentity) passes it in so
+  // the two reads can never diverge.
+  const entry = resolved ?? canonicalDeviceCenterEntry(storage)
+  if (entry === undefined) return undefined
+  const encoded = storage[entry.key]
   if (typeof encoded !== 'string' || encoded.trim() === '') return undefined
   try {
     const plaintext = parseTraeAuthValue(encoded)
@@ -98,14 +145,17 @@ export async function readTraeIdentity(candidate: TraeStorageCandidate, options:
   const machineFile = nonEmpty(await readFile(join(appRoot, 'machineid'), 'utf8').catch(() => ''))
   const telemetryMachine = nonEmpty(storage['telemetry.machineId'])
   const devDevice = nonEmpty(storage['telemetry.devDeviceId'])
-  const dcDevice = deviceCenterId(storage)
+  // Resolve the single canonical icube-dc entry ONCE: the device id and the
+  // signing keypair must come from the same registration (issue #92).
+  const dcEntry = canonicalDeviceCenterEntry(storage)
   // Historical official chat logs use the 64-char telemetry.machineId as
   // x-machine-id. The root machineid file remains a fallback only.
   const machineId = telemetryMachine ?? machineFile
   if (machineId === undefined) throw new Error(`Trae ${candidate.edition} has no stable machine identity`)
   // The numeric suffix of iCubeAuthInfo://icube-dc:<id> exactly matches the
-  // x-device-id observed in official CN chat logs. Telemetry remains fallback.
-  const deviceId = dcDevice ?? devDevice ?? createHash('sha256').update(machineId).digest('hex').slice(0, 32)
+  // x-device-id observed in official CN chat logs (did/rdid, NOT the aha ldid).
+  // Telemetry remains fallback.
+  const deviceId = dcEntry?.deviceId ?? devDevice ?? createHash('sha256').update(machineId).digest('hex').slice(0, 32)
   const buildVersion = nonEmpty(storage['iCubeLastVersion'])
   // product.json holds the app version that the real client sends as
   // x-app-version / x-ide-version. On macOS the file sits inside the `.app`
@@ -154,7 +204,7 @@ export async function readTraeIdentity(candidate: TraeStorageCandidate, options:
     try { return nonEmpty(userInfo().username) } catch { return undefined }
   })()
   const deviceModel = nonEmpty(env['TRAE_DEVICE_MODEL'])
-  const deviceKeyPair = deviceKeyPairOf(storage)
+  const deviceKeyPair = deviceKeyPairOf(storage, dcEntry)
   return {
     edition: candidate.edition,
     machineId,
