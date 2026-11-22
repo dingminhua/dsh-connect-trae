@@ -15,7 +15,7 @@ import { checkinDay } from './auto-checkin.ts'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
-import { isTraeAccountId, type TraeCredentialStore } from './auth.ts'
+import { isTraeAccountId, traeAccountId, type TraeCredentialStore } from './auth.ts'
 import type { TraeModelInfo } from './catalog.ts'
 import type { TraeUsageClient } from './usage.ts'
 import type { TraeRawDiagnostic } from './raw-diagnostic.ts'
@@ -744,19 +744,66 @@ export async function traeWebUsage(
       ...explained ? {} : { message: safeMessage(error) },
     }
   }
+  // The pool is assembled BEFORE the identity is read, and it is never allowed
+  // to fail this document: it is the one section whose own reads touch every
+  // member account, and a member with a broken balance must not take the
+  // sign-in panel down with it.
+  //
+  // THE ORDER IS LOAD-BEARING (issue #95). The pool section is where the pool's
+  // selection runs — `applyPoolSelection()` points the store at the account the
+  // next request will bill — so the account that owns the credits below is only
+  // known ONCE IT HAS RUN. Reading the identity before it let the document
+  // describe TWO accounts: an id and a name for one, a balance for the other.
+  //
+  // ISSUE #77: on the first paint the pool comes from LOCAL state only, and the
+  // live figures are skipped entirely. That is the whole point of this branch —
+  // the account table used to wait on a billing read per account (several times
+  // over, through the pool's member/name/other-account deps) before it could
+  // appear, which is the 30–60 s the issue reports. Identity, expiry, the model
+  // list and the pool rows are all known locally, so they are enough to paint.
+  const poolSection = await poolSectionOf(deps, panel, fast)
+  /**
+   * The account this document READS — re-read after the pool spoke.
+   *
+   * It used to come from the account LIST's `selected` flag, which names the
+   * saved BINDING, while the name, the expiry and the credits below all come
+   * from the credential the Host actually billed. Those are the same account
+   * only while no pool is running: with a pool on, the billed account is the
+   * pool's pick, and the document then carried an id for one account and a
+   * balance for the other (issue #95).
+   *
+   * So it is read from the store AGAIN, after the pool section has applied the
+   * selection: the store then answers with the account the credits below are
+   * read with, and the document describes ONE account — id, name, expiry and
+   * balance together.
+   *
+   * The id is the CREDENTIAL's own account id — the same derivation
+   * `store.accounts()` uses for the list, so the two agree by construction
+   * rather than by coincidence.
+   *
+   * The list keeps its own `selected` flag, which means something else and
+   * still means it: that is the binding the settings write, and the card's
+   * "save the selected account" button reads it.
+   *
+   * A failure here falls back to the credential resolved above: a document that
+   * names an account it read is worth more than no document at all.
+   */
+  const billed = fast
+    ? (await store.current().catch(() => undefined)) ?? credential
+    : (await store.resolve().catch(() => credential))
   // Only user-facing identity and expiry cross to the browser. Token material
   // and stable user IDs stay on the Host. The requested panel drives which
   // per-panel model directory and selection this document reports, and which
   // usage surface the credits block reads.
   //
   const account = {
-    accountId: accounts.find(item => item.selected)?.id ?? '',
-    accountName: credential.accountName ?? credential.userId,
-    tokenExpiresAtMs: credential.expiresAtMs,
+    accountId: traeAccountId(billed),
+    accountName: billed.accountName ?? billed.userId,
+    tokenExpiresAtMs: billed.expiresAtMs,
     // The horizon that matters: the access token above renews itself until the
     // refresh token lapses, so a card that only reports the former says
     // "auto-renewal" right up to the moment renewal silently stops working.
-    ...credential.refreshExpiresAtMs === undefined ? {} : { refreshExpiresAtMs: credential.refreshExpiresAtMs },
+    ...billed.refreshExpiresAtMs === undefined ? {} : { refreshExpiresAtMs: billed.refreshExpiresAtMs },
     region: regionOfPanel(panel),
     enabled,
     // GLOBAL on every signed-in shape too, because it is spread into all of
@@ -771,18 +818,7 @@ export async function traeWebUsage(
     quarantined,
     ...deps.rawDiagnostic === undefined ? {} : { rawChat: deps.rawDiagnostic(panel) },
   }
-  // The pool is assembled LAST and never allowed to fail this document: it is
-  // the one section whose own reads touch every member account, and a member
-  // with a broken balance must not take the sign-in panel down with it.
-  //
-  // ISSUE #77: on the first paint the pool comes from LOCAL state only, and the
-  // live figures are skipped entirely. That is the whole point of this branch —
-  // the account table used to wait on a billing read per account (several times
-  // over, through the pool's member/name/other-account deps) before it could
-  // appear, which is the 30–60 s the issue reports. Identity, expiry, the model
-  // list and the pool rows are all known locally, so they are enough to paint.
   if (fast) {
-    const poolSection = await poolSectionOf(deps, panel, true)
     return {
       status: 'signed-in',
       ...account,
@@ -793,7 +829,6 @@ export async function traeWebUsage(
       ...panel === 'enterprise' ? { creditsUnavailable: 'enterprise' as const } : {},
     }
   }
-  const poolSection = await poolSectionOf(deps, panel, false)
   const client = deps.client(panel)
   if (regionOfPanel(panel) === 'ai') {
     // The international panel is subscription-based: read its pay status

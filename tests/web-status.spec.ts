@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import type { TraeCredential } from '../src/auth.ts'
+import { traeAccountId } from '../src/auth.ts'
 import { TraeUsageClient, type TraeUsageOptions } from '../src/usage.ts'
 import type { TraePanel, TraeRegion } from '../src/region.ts'
-import type { TraeUsageRouteOptions } from '../src/web-status.ts'
+import type { TraePoolDeps, TraeUsageRouteOptions } from '../src/web-status.ts'
 import { toCredits, traeAccountCredits, traeWebUsage } from '../src/web-status.ts'
 import { TRAE_ACCOUNT_STATUS_PATH, TRAE_CHECKIN_PATH, TRAE_MODELS_TEST_PATH, TRAE_USAGE_PATH } from '../src/status-paths.ts'
 
@@ -18,12 +19,21 @@ const credential: TraeCredential = {
   source: 'desktop',
 }
 
+/**
+ * The fixture credential's OWN account id.
+ *
+ * The same derivation production uses (`traeAccountId`), so a fixture that
+ * lists an account actually lists the account the document resolves — the
+ * document's `accountId` is that credential's id, not a list entry's.
+ */
+const fixtureAccountId = traeAccountId(credential)
+
 function makeRoute(options: { fetchImpl?: typeof fetch } = {}): TraeUsageRouteOptions {
   const fetchImpl = options.fetchImpl ?? (async () => new Response('{}', { status: 200 }))
   const client = new TraeUsageClient({ credential: async () => credential, fetchImpl, baseUrl: 'https://api.trae.cn' })
   return {
     store: () => ({
-      async accounts() { return [{ id: 'account-1', accountName: 'demo-user', edition: 'solo', enterprise: false, region: 'cn', source: 'desktop', tokenExpiresAtMs: expiresAtMs, selected: true }] },
+      async accounts() { return [{ id: fixtureAccountId, accountName: 'demo-user', edition: 'solo', enterprise: false, region: 'cn', source: 'desktop', tokenExpiresAtMs: expiresAtMs, selected: true }] },
       async status() { return { state: 'signed-in', edition: 'solo', expiresAtMs: Date.now() + 1000, source: 'desktop' } },
       async resolve() { return credential },
     }) as unknown as ReturnType<TraeUsageRouteOptions['store']>,
@@ -90,7 +100,7 @@ describe('traeWebUsage', () => {
     // exactly the "one account is missing" shape.
     const deps = makeRoute()
     deps.store = () => ({
-      async accounts() { return [{ id: 'account-1', accountName: 'demo-user', edition: 'solo', enterprise: false, region: 'cn', source: 'desktop', tokenExpiresAtMs: expiresAtMs, selected: true }] },
+      async accounts() { return [{ id: fixtureAccountId, accountName: 'demo-user', edition: 'solo', enterprise: false, region: 'cn', source: 'desktop', tokenExpiresAtMs: expiresAtMs, selected: true }] },
       async status() { return { state: 'signed-in', edition: 'solo', expiresAtMs: Date.now() + 1000, source: 'desktop' } },
       async resolve() { return credential },
       async current() { return credential },
@@ -161,11 +171,11 @@ describe('traeWebUsage', () => {
     expect(result.status).toBe('signed-in')
     if (result.status !== 'signed-in') return
     expect(result).toMatchObject({
-      accountId: 'account-1',
+      accountId: fixtureAccountId,
       accountName: 'demo-user',
       tokenExpiresAtMs: expiresAtMs,
       region: 'cn',
-      accounts: [{ id: 'account-1', accountName: 'demo-user', edition: 'solo', source: 'desktop', tokenExpiresAtMs: expiresAtMs, selected: true }],
+      accounts: [{ id: fixtureAccountId, accountName: 'demo-user', edition: 'solo', source: 'desktop', tokenExpiresAtMs: expiresAtMs, selected: true }],
       models: [{ id: 'DeepSeek-V4-Flash', name: 'DeepSeek-V4-Flash', contextWindow: 168_000, maxTokens: 32_000 }],
       rawChat: { state: 'protocol-gated', status: 400, checkedAtMs: 123 },
       enabledModelIds: ['DeepSeek-V4-Flash'],
@@ -264,7 +274,7 @@ describe('traeWebUsage', () => {
       resolve: async () => { throw new Error('expired selected account') },
     })
     const result = await traeWebUsage(deps, 'cn')
-    expect(result).toMatchObject({ status: 'signed-out', message: 'expired selected account', accounts: [{ id: 'account-1' }] })
+    expect(result).toMatchObject({ status: 'signed-out', message: 'expired selected account', accounts: [{ id: fixtureAccountId }] })
   })
 
   it('degrades a failing credit fetch to creditsError', async () => {
@@ -274,6 +284,104 @@ describe('traeWebUsage', () => {
     expect(result.status).toBe('signed-in')
     if (result.status !== 'signed-in') return
     expect(result.creditsError).toContain('network down')
+  })
+
+  /**
+   * ISSUE #95: the document must name the account whose credits it carries.
+   *
+   * The id used to come from the account LIST's `selected` flag — the saved
+   * BINDING — while the credits came from the credential the Host actually
+   * billed. With an account pool running those are two different accounts, and
+   * the document then described both at once: an id for one account, a name, an
+   * expiry and a balance for the other.
+   *
+   * The composer panel keys its current row on that id, so a mixed-up document
+   * puts one account's balance on another account's row (issue #95).
+   */
+  it('names the account the document READ, not the saved binding', async () => {
+    const served: TraeCredential = { ...credential, userId: 'served-user', accountName: 'served-user' }
+    const servedId = traeAccountId(served)
+    const deps = makeRoute()
+    deps.store = () => ({
+      async accounts() {
+        return [
+          { id: fixtureAccountId, accountName: 'demo-user', edition: 'solo', enterprise: false, region: 'cn', source: 'desktop', tokenExpiresAtMs: expiresAtMs, selected: true },
+          { id: servedId, accountName: 'served-user', edition: 'solo', enterprise: false, region: 'cn', source: 'desktop', tokenExpiresAtMs: expiresAtMs, selected: false },
+        ]
+      },
+      async status() { return { state: 'signed-in', edition: 'solo', expiresAtMs: Date.now() + 1000, source: 'desktop' } },
+      // The Host bills the pooled account, so this is the credential the
+      // document's credits are read with.
+      async resolve() { return served },
+      async current() { return served },
+    }) as unknown as ReturnType<TraeUsageRouteOptions['store']>
+    deps.client = () => new TraeUsageClient({ credential: async () => served, fetchImpl: async () => new Response('{}', { status: 200 }), baseUrl: 'https://api.trae.cn' })
+
+    const result = await traeWebUsage(deps, 'cn')
+    expect(result.status).toBe('signed-in')
+    if (result.status !== 'signed-in') return
+    expect(result.accountId).toBe(servedId)
+    expect(result.accountId).not.toBe(fixtureAccountId)
+  })
+
+  /**
+   * ISSUE #95, the half that is easy to get wrong: the document must describe
+   * ONE account — and the pool's selection happens LATER than the first
+   * credential resolution.
+   *
+   * The pool section is where `applyPoolSelection()` runs, and it runs while the
+   * document is being assembled. So a document that read its identity up front
+   * could name one account (the rotation in force when the route started) while
+   * carrying the credits of another (the account the pool picked a moment
+   * later) — two accounts in one object, which is the confusion this release
+   * removes.
+   *
+   * The identity is therefore read AGAIN after the pool section, and this case
+   * pins that: the store answers with the binding until the pool selects, and
+   * with the pooled account afterwards.
+   */
+  it('names the account the pool picked, not the one in force when the route began', async () => {
+    const binding: TraeCredential = { ...credential, userId: 'binding-user', accountName: 'binding-user' }
+    const pooled: TraeCredential = { ...credential, userId: 'pooled-user', accountName: 'pooled-user' }
+    const bindingId = traeAccountId(binding)
+    const pooledId = traeAccountId(pooled)
+    /** Whether the pool has spoken yet. */
+    let pooledNow = false
+    const deps = makeRoute()
+    deps.store = () => ({
+      async accounts() {
+        return [
+          { id: bindingId, accountName: 'binding-user', edition: 'solo', enterprise: false, region: 'cn', source: 'desktop', tokenExpiresAtMs: expiresAtMs, selected: true },
+          { id: pooledId, accountName: 'pooled-user', edition: 'solo', enterprise: false, region: 'cn', source: 'desktop', tokenExpiresAtMs: expiresAtMs, selected: false },
+        ]
+      },
+      async status() { return { state: 'signed-in', edition: 'solo', expiresAtMs: Date.now() + 1000, source: 'desktop' } },
+      async resolve() { return pooledNow ? pooled : binding },
+      async current() { return pooledNow ? pooled : binding },
+    }) as unknown as ReturnType<TraeUsageRouteOptions['store']>
+    deps.client = () => new TraeUsageClient({
+      credential: async () => pooledNow ? pooled : binding,
+      fetchImpl: async () => new Response('{}', { status: 200 }),
+      baseUrl: 'https://api.trae.cn',
+    })
+    deps.pool = {
+      preferences: () => ({ enabled: true, memberAccountIds: [bindingId, pooledId] }),
+      members: async () => [
+        { account: { id: bindingId, accountName: 'binding-user' }, credits: { total: 5, expiringSoon: 0 }, probe: { outcome: 'ok', atMs: Date.now() } },
+        { account: { id: pooledId, accountName: 'pooled-user' }, credits: { total: 50, expiringSoon: 0 }, probe: { outcome: 'ok', atMs: Date.now() } },
+      ],
+      catalog: () => [{ id: 'free', name: 'Free', creditMultiplier: 0, contextWindow: 128_000 }],
+      // The selection, applied while the pool section is assembled.
+      currentAccountId: async () => { pooledNow = true; return pooledId },
+      checkinSupported: () => true,
+      otherAccounts: async () => [],
+    } as unknown as TraePoolDeps
+
+    const result = await traeWebUsage(deps, 'cn')
+    expect(result.status).toBe('signed-in')
+    if (result.status !== 'signed-in') return
+    expect(result.accountId).toBe(pooledId)
+    expect(result.accountName).toBe('pooled-user')
   })
 
   /**

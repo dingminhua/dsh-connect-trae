@@ -182,7 +182,17 @@ describe('the fast first-paint document (issue #77)', () => {
   it('reads the local credential instead of resolving (refreshing) it', async () => {
     const store = storeSpies()
     await traeWebUsage(deps({ store }), 'cn', { detail: 'fast' })
-    expect(store.currentCalls()).toBe(1)
+    // The LOCAL credential, read twice in this fixture: once up front, and once
+    // after the pool section — the pool's selection runs inside that section,
+    // and the document must name the account the pool picked rather than the
+    // one the rotation happened to point at when the request started (issue
+    // #95). (The real store scans the credential files a third time, inside
+    // `status()`; all three scans are local, none of them upstream.)
+    //
+    // What this case is really about is the SECOND assertion: a first paint
+    // must never RESOLVE, because no token refresh may decide when the account
+    // list appears.
+    expect(store.currentCalls()).toBe(2)
     expect(store.resolveCalls()).toBe(0)
   })
 

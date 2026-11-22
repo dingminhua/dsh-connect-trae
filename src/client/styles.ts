@@ -1185,7 +1185,11 @@ export const COMPOSER_POINTS_CSS = `
   color:inherit;font:inherit;font-size:12px;text-align:left;cursor:pointer;
   white-space:nowrap;overflow:hidden;
 }
-.dsm-trae-composer-panel-switch>span:last-child{overflow:hidden;text-overflow:ellipsis}
+/* The ellipsis the account NAME gets, in both branches: the switchable row and
+   the read-only one. A zero min-width is what lets a flex item shrink far
+   enough for the ellipsis to appear at all. */
+.dsm-trae-composer-panel-switch>span:last-child,
+.dsm-trae-composer-panel-account>span:last-child{overflow:hidden;text-overflow:ellipsis;min-width:0}
 /* Hover belongs to the switch, not the row: the number cell is not clickable,
    so lighting it up would promise an action it cannot perform. */
 .dsm-trae-composer-panel-switch:hover:not(:disabled){
@@ -1195,6 +1199,15 @@ export const COMPOSER_POINTS_CSS = `
   outline:2px solid var(--dsw-alias-brand-primary,#5686fe);outline-offset:-1px;
 }
 .dsm-trae-composer-panel-switch:disabled{cursor:default}
+/* The row without a switch: the account pool is choosing the billing account,
+   so the name is a READOUT and not an action. Same shape as the button, minus
+   the pointer — the dot still marks the account in use. */
+.dsm-trae-composer-panel-account{
+  display:flex;align-items:center;gap:7px;
+  width:100%;padding:4px 6px;margin-left:-6px;
+  font-size:12px;text-align:left;
+  white-space:nowrap;overflow:hidden;
+}
 .dsm-trae-composer-panel-dot{
   flex:none;width:7px;height:7px;border-radius:50%;
   background:var(--dsw-alias-label-dimmed,rgba(127,127,127,.5));

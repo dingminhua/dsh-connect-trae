@@ -72,10 +72,10 @@ function expiryShape(expiry: { earliest: number }): ExpiryShape {
  * document deliberately has none, so the other 20+ cases in this file keep a
  * panel with no expiry row at all.
  */
-function usageDocument(general: number, expiry?: ExpiryShape): Record<string, unknown> {
+function usageDocument(general: number, expiry?: ExpiryShape, accountId = 'account-1'): Record<string, unknown> {
   return {
     status: 'signed-in',
-    accountId: 'account-1',
+    accountId,
     accountName: 'demo-user',
     tokenExpiresAtMs: Date.now() + 3_600_000,
     region: 'cn',
@@ -867,5 +867,231 @@ describe('the same-day refresh stamp follows the READER\'s locale', () => {
       foot.includes(format(before)) || foot.includes(format(after)),
       `the stamp ${JSON.stringify(foot)} is not the reader's locale rendering of ${format(before)}`,
     ).toBe(true)
+  })
+})
+
+/**
+ * ISSUE #95 — the composer's two credit readouts disagreed.
+ *
+ * The report showed the toolbar reading one balance while the panel's row for
+ * THE SAME account read a slightly smaller one — two numbers for one balance,
+ * on one screen. (The figures quoted here are the DEMO ones from
+ * `tools/demo-accounts.ts`; the report's own numbers are in the issue.)
+ *
+ * The cause is that the two readouts answer the question from two different
+ * reads:
+ *
+ *  - the TOOLBAR reads the usage document, on the 5-minute cadence;
+ *  - the panel's TABLE reads every account's balance again, on OPEN.
+ *
+ * So the panel's figure is the newer one and the toolbar's the older, and any
+ * credit spent in between shows up as a difference. The panel also marked the
+ * account by the TABLE's `selected` flag, which is the saved BINDING — while
+ * the document's credits belong to the account the Host actually billed (with
+ * an account pool running, a different account altogether).
+ *
+ * The rule these cases pin: ONE account, ONE number, ONE read.
+ */
+describe('issue #95: one account, one number, one read', () => {
+  /**
+   * Stub the two endpoints with DIFFERENT figures for the same account.
+   *
+   * The divergence is the point: the usage document (what the toolbar shows)
+   * and the per-account table (what the panel's rows show) must not be able to
+   * disagree about the account they share.
+   */
+  function stubDivergent(options: { usageGeneral: number; tableGeneral: number; accountId?: string; pool?: boolean; billingNow?: string }): { calls: string[] } {
+    const calls: string[] = []
+    vi.stubGlobal('fetch', async (input: string | URL | Request) => {
+      const url = String(input)
+      calls.push(url)
+      const body = url.includes('/account-credits')
+        ? {
+            accounts: [
+              { id: 'account-1', accountName: 'demo-user', selected: true, generalAvailable: options.tableGeneral },
+              { id: 'account-2', accountName: 'Backup', selected: false, generalAvailable: 1777 },
+            ],
+          }
+        : {
+            ...usageDocument(options.usageGeneral, undefined, options.accountId ?? 'account-1'),
+            ...options.pool === true
+              ? {
+                  pool: {
+                    enabled: true,
+                    accounts: [
+                      { accountId: 'account-1', accountName: 'demo-user', current: options.billingNow !== 'account-2' },
+                      { accountId: 'account-2', accountName: 'Backup', current: options.billingNow === 'account-2' },
+                    ],
+                  },
+                }
+              : {},
+          }
+      return new Response(JSON.stringify(body), { status: 200 })
+    })
+    return { calls }
+  }
+
+  /** The panel row carrying one account name, or a thrown error. */
+  function rowOf(name: string): HTMLTableRowElement {
+    const rows = Array.from(document.querySelectorAll('tbody tr')) as HTMLTableRowElement[]
+    const found = rows.find(row => row.textContent?.includes(name) === true)
+    if (found === undefined) throw new Error(`expected a panel row for ${name}`)
+    return found
+  }
+
+  /** Open the panel and wait for the table. */
+  async function openPanel(): Promise<void> {
+    await waitFor(() => { expect(screen.getByText(/composer\.points/)).toBeTruthy() })
+    fireEvent.click(screen.getByRole('button', { name: /composer\.points/ }))
+    await waitFor(() => { expect(screen.getByText(/composer\.panelTitle/)).toBeTruthy() })
+  }
+
+  it('shows the toolbar\'s own figure on the toolbar\'s own account', async () => {
+    // The reported shape: one account, two reads, two numbers. The panel's row
+    // must carry the number the trigger beside it carries — otherwise the same
+    // balance is 2,531 on one line and 2,528 on the next.
+    stubDivergent({ usageGeneral: 3400, tableGeneral: 3392 })
+    const { scope } = makeScope(true)
+    render(
+      <ComposerPointsGate
+        t={t}
+        settingsScope={scope as never}
+        useProjection={() => ({ lastUsed: { provider: 'trae' } })}
+      />,
+    )
+    await openPanel()
+
+    expect(screen.getByText('3,400')).toBeTruthy()
+    // The table's own figure for that account is NOT shown: it is the same
+    // balance read at a different moment, and showing both is what made the
+    // panel disagree with the trigger.
+    expect(screen.queryByText('3,392')).toBeNull()
+  })
+
+  it('marks the account the DOCUMENT names, not the one the table marks', async () => {
+    // The account-pool shape: the document's credits belong to the account the
+    // Host billed (the pool's pick), while the table's `selected` flag names
+    // the saved binding. Marking the binding put the trigger's number on
+    // another account's row.
+    stubDivergent({ usageGeneral: 3400, tableGeneral: 3392, accountId: 'account-2' })
+    const { scope } = makeScope(true)
+    render(
+      <ComposerPointsGate
+        t={t}
+        settingsScope={scope as never}
+        useProjection={() => ({ lastUsed: { provider: 'trae' } })}
+      />,
+    )
+    await openPanel()
+
+    // The document's account is the current one: its switch is the disabled one.
+    expect(rowOf('Backup').querySelector('button')?.disabled).toBe(true)
+    expect(rowOf('demo-user').querySelector('button')?.disabled).toBe(false)
+    // And it carries the trigger's figure; the other row keeps its own.
+    expect(rowOf('Backup').textContent).toContain('3,400')
+    expect(rowOf('demo-user').textContent).toContain('3,392')
+  })
+
+  it('re-reads the document when the panel opens', async () => {
+    // The staleness half of the report: the toolbar's number came from the
+    // 5-minute poll, so a credit spent since then left the two readouts
+    // describing different moments. Opening the panel IS the reader asking for
+    // the current balance, so the document is read again then.
+    const { calls } = stubDivergent({ usageGeneral: 3400, tableGeneral: 3400 })
+    const { scope } = makeScope(true)
+    render(
+      <ComposerPointsGate
+        t={t}
+        settingsScope={scope as never}
+        useProjection={() => ({ lastUsed: { provider: 'trae' } })}
+      />,
+    )
+    await openPanel()
+
+    await waitFor(() => {
+      const usageReads = calls.filter(url => !url.includes('/account-credits'))
+      expect(usageReads.length).toBeGreaterThan(1)
+    })
+  })
+
+  it('still re-reads the document when the poll happens to be in flight', async () => {
+    // The 5-minute poll's read is mid-flight when the panel opens. The
+    // panel's own read must NOT be dropped for that reason: then the panel
+    // would show a balance read AFTER the toolbar's — the exact disagreement
+    // this release removes (issue #95).
+    let release: (() => void) | undefined
+    const gate = new Promise<void>(resolve => { release = resolve })
+    let usageReads = 0
+    vi.stubGlobal('fetch', async (input: string | URL | Request) => {
+      const url = String(input)
+      if (url.includes('/account-credits')) {
+        return new Response(JSON.stringify({
+          accounts: [
+            { id: 'account-1', accountName: 'demo-user', selected: true, generalAvailable: 3400 },
+            { id: 'account-2', accountName: 'Backup', selected: false, generalAvailable: 1777 },
+          ],
+        }), { status: 200 })
+      }
+      usageReads += 1
+      // The first read (the poll's) hangs until the test releases it.
+      if (usageReads === 1) await gate
+      return new Response(JSON.stringify(usageDocument(3400)), { status: 200 })
+    })
+    const { scope } = makeScope(true)
+    render(
+      <ComposerPointsGate
+        t={t}
+        settingsScope={scope as never}
+        useProjection={() => ({ lastUsed: { provider: 'trae' } })}
+      />,
+    )
+    await waitFor(() => { expect(usageReads).toBe(1) })
+    fireEvent.click(screen.getByRole('button', { name: /composer\.points/ }))
+    release?.()
+    await waitFor(() => { expect(usageReads).toBeGreaterThan(1) })
+  })
+
+  it('follows the pool\'s "billing now" flag over the document\'s own id', async () => {
+    // The pool section answers "who bills right now", and on a Host with this
+    // release the flag and the document's id name the SAME account. The flag is
+    // consulted FIRST anyway, because it is the answer that survives the one
+    // case the two can disagree in: a client from a newer build against a Host
+    // that has not been reloaded yet. There the ROW stays right; the figure on
+    // it is the document's, which is the best a client can do against an old
+    // Host.
+    stubDivergent({ usageGeneral: 3400, tableGeneral: 3392, accountId: 'account-1', pool: true, billingNow: 'account-2' })
+    const { scope } = makeScope(true)
+    render(
+      <ComposerPointsGate
+        t={t}
+        settingsScope={scope as never}
+        useProjection={() => ({ lastUsed: { provider: 'trae' } })}
+      />,
+    )
+    await openPanel()
+
+    // The pool's "billing now" account is the current one — it carries the dot.
+    expect(rowOf('Backup').className).toContain('dsm-trae-composer-panel-row-current')
+    expect(rowOf('demo-user').className).not.toContain('dsm-trae-composer-panel-row-current')
+    expect(rowOf('Backup').textContent).toContain('3,400')
+  })
+
+  it('does not offer an account switch while the pool is choosing', async () => {
+    // With a pool running the binding does not decide who bills — the pool
+    // does. A switch that cannot change the billing is a control that must not
+    // be drawn (the same rule the pool card follows with its manual picker).
+    stubDivergent({ usageGeneral: 3400, tableGeneral: 3400, pool: true })
+    const { scope } = makeScope(true)
+    render(
+      <ComposerPointsGate
+        t={t}
+        settingsScope={scope as never}
+        useProjection={() => ({ lastUsed: { provider: 'trae' } })}
+      />,
+    )
+    await openPanel()
+
+    expect(screen.queryAllByRole('button', { name: /composer\.switchTo/ })).toHaveLength(0)
+    expect(screen.getByText(/composer\.poolPicks/)).toBeTruthy()
   })
 })
