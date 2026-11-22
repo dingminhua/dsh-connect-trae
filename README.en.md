@@ -210,7 +210,7 @@ Restart the DSH process after install/update/uninstall.
 ## DSH version compatibility
 
 **Requires DSH 0.1.7-rc.1 and up** (since 2.3.0 the plugin no longer targets hosts older than 0.1.7; the peer dependency ranges are narrowed accordingly).
-**The peer upper bound is `<0.3.0-0`, so both the 0.1.7 and the 0.2 line are supported (including 0.2.2-rc.1, rc.2 and rc.3, all verified).**
+**The peer upper bound is `<0.3.0-0`, so both the 0.1.7 and the 0.2 line are supported (including 0.2.2-rc.1 through rc.5, all verified).**
 
 ### Both pi-ai context generations are supported (since 3.4.2)
 
@@ -316,6 +316,17 @@ For **this plugin**:
 - The peer range **needs no change**: `0.2.2-rc.3` is admitted by `>=0.1.7-rc.1 <0.3.0-0`.
 
 Details: [`docs/DSH_0.2.2_RC3_SYNC.md`](https://github.com/dingminhua/dsh-connect-trae/blob/main/docs/DSH_0.2.2_RC3_SYNC.md).
+
+### `0.2.2-rc.5` sync
+
+The host moved to `0.2.2-rc.5` (via rc.4). rc.4 **added one member, `CONTENT_REFUSED`**, to `dsh-llm`'s error-code table (the official `v0.2.2-rc.3` "content refusal code" guide); rc.5 itself changed **none** of the 13 packages this plugin consumes. Both new upgrade guides (refusal code, search default on DeepSeek models) **do not touch** this plugin:
+
+- Every "refusal" in this plugin is a **Trae upstream business rejection** (HTTP 200 + non-zero `code`), classified by its own `classifyTraeFailure`. None of it is a DSH LLM error-termination block, and the plugin contains no `MALFORMED_RESPONSE` literal.
+- The plugin never sets `web.searchProvider` and provides no search provider, so the search-default change is unrelated.
+
+Other checks: **the slot catalog is 116 at rc.3 / rc.4 / rc.5 with zero changes**; the bundled `cordis` / `schemastery` / `pi-ai` dependencies did not move. **`pnpm run build` produces artifacts byte-for-byte identical to 4.18.5**, and typecheck is clean. Only version anchors move (13 devDependencies → rc.5, lockfile, `MUST_ADMIT` gaining rc.4/rc.5, the `pnpm-workspace.yaml` note) — **no source code changed**. The peer range **needs no change**: `0.2.2-rc.4` and `0.2.2-rc.5` are admitted by `>=0.1.7-rc.1 <0.3.0-0` (verified).
+
+Details: [`docs/DSH_0.2.2_RC5_SYNC.md`](https://github.com/dingminhua/dsh-connect-trae/blob/main/docs/DSH_0.2.2_RC5_SYNC.md).
 
 
 ### Why the upper bound is not `<0.2.0`

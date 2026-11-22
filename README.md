@@ -229,7 +229,7 @@ npm install dsh-connect-trae
 ## DSH 版本兼容
 
 **要求 DSH 0.1.7-rc.1 及以上**（2.3.0 起不再支持 0.1.7 之前的宿主；peer 依赖范围已按此收窄）。
-**peer 上界为 `<0.3.0-0`：0.1.7 与 0.2 两条线均受支持（含 0.2.2-rc.1 / rc.2 / rc.3，均已实测）。**
+**peer 上界为 `<0.3.0-0`：0.1.7 与 0.2 两条线均受支持（含 0.2.2-rc.1 / rc.2 / rc.3 / rc.4 / rc.5，均已实测）。**
 
 ### 同时支持 pi-ai 的两代上下文（3.4.2 起）
 
@@ -421,6 +421,26 @@ stderr、View 标签的 tooltip 只在文字溢出时显示、More 菜单 toolti
 - peer 范围**无需改动**：`0.2.2-rc.3` 已被 `>=0.1.7-rc.1 <0.3.0-0` 放行。
 
 细节见 [`docs/DSH_0.2.2_RC3_SYNC.md`](https://github.com/dingminhua/dsh-connect-trae/blob/main/docs/DSH_0.2.2_RC3_SYNC.md)。
+
+### `0.2.2-rc.5` 同步结论
+
+宿主推进到 `0.2.2-rc.5`（经停 rc.4）。rc.4 给 `dsh-llm` 的错误码表**新增了一个
+`CONTENT_REFUSED` 成员**（对应官方 `v0.2.2-rc.3`「内容拒答错误码」指南），rc.5 本身对
+插件消费的 13 个包**零改动**。新增的两条官方指南（拒答错误码、DeepSeek 模型搜索默认）
+都**不击中**本插件：
+
+- 本插件说的 "refusal" 全是 Trae 上游的业务拒绝（HTTP 200 + 非零 `code`），由自有
+  `classifyTraeFailure` 分类，既不是 DSH 的 LLM 错误终止块，也不含 `MALFORMED_RESPONSE`
+  字面量；
+- 插件不设置 `web.searchProvider`、不提供搜索 provider，搜索默认值的改动与它无关。
+
+其余核对：**槽位目录 rc.3 / rc.4 / rc.5 均 116、零变化**；`cordis` / `schemastery` /
+`pi-ai` 三个随包依赖未变。**`pnpm run build` 产物与 4.18.5 逐字节相同**，typecheck 零报错。
+本次只动版本锚点（13 个 devDependency → rc.5、lockfile、`MUST_ADMIT` 补 rc.4/rc.5、
+`pnpm-workspace.yaml` 注释），**源码零改动**。peer 范围**无需改动**：
+`0.2.2-rc.4` / `0.2.2-rc.5` 已被 `>=0.1.7-rc.1 <0.3.0-0` 放行。
+
+细节见 [`docs/DSH_0.2.2_RC5_SYNC.md`](https://github.com/dingminhua/dsh-connect-trae/blob/main/docs/DSH_0.2.2_RC5_SYNC.md)。
 
 ### peer 上界为什么不写 `<0.2.0`
 

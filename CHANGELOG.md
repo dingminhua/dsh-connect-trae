@@ -2,6 +2,58 @@
 
 ## 4.18.5 (2026-11-18)
 
+> 本节在上版发布说明之外补记两件事：issue #92 的多 icube-dc 键修复（代码已随上一个
+> commit 进入工作树，此前漏记），以及对齐宿主 DSH 0.2.2-rc.5 的版本锚点同步。
+> 两者都不改变插件对外契约，构建产物与本节原始发布内容逐字节相同。
+
+### 多 icube-dc 键时选数字设备号，并与签名密钥同源（issue #92）
+
+一台 Trae 安装可以同时存在多个 `iCubeAuthInfo://icube-dc:<id>` 键：除数字的 did/rdid
+外还有一个 `aha-` 前缀的 ldid。旧实现要求**恰好一个**键，两个并存时返回 `undefined`，
+调用方于是退回遥测 UUID——那不是上游认识的设备号，正确账号签到时被判成 `9074`。
+
+`src/identity.ts` 改为按形状选唯一数字后缀作为 device id（不猜位数：线上见过 16 位），
+不再用 `.find()` 随便抓一个键。更关键的是把设备号与签名密钥**绑到同一个条目**：
+刷新请求体同时带 `DeviceInfo.DeviceID` 和 `DevicePublicKey`，若数字 id 配了 aha 条目的
+密钥，上游会回 `20403 Token device not match`；现在解析一次条目、两处共用。
+选择规则刻意保守——只有一个任意形状的键时维持旧行为，避免让只持有单个 aha 条目的机器
+丢失其 keypair。**新增测试**覆盖「数字 + aha 并存选数字」「设备号与 keypair 同源」。
+
+### 适配：DSH 0.2.2-rc.5（零代码改动）
+
+宿主从 `0.2.2-rc.3` 推进到 `0.2.2-rc.5`（经停 rc.4）。逐包比对 npm 三个 tag 的结果：
+**rc.4 只给 `dsh-llm` 的错误码表新增了 `CONTENT_REFUSED` 一个成员**（对应官方
+`v0.2.2-rc.3`「内容拒答错误码」指南），rc.5 本身对插件消费的 13 个包**零改动**；
+卡槽目录 rc.3 / rc.4 / rc.5 均 116、零变化，`cordis` / `schemastery` / `pi-ai` 未动。
+
+两条新增官方升级指南都**不击中**本插件：本仓库说的 "refusal" 全是 Trae 上游业务拒绝
+（HTTP 200 + 非零 `code`，自有 `classifyTraeFailure` 分类），不是 DSH 的 LLM 错误终止块，
+也没有 `MALFORMED_RESPONSE` 字面量；插件不设置 `web.searchProvider`、不提供搜索 provider，
+搜索默认值改动与它无关。故**无需迁移**。
+
+- **开发树同步**：13 个 `@deepseek-ai/dsh-*` devDependency → `0.2.2-rc.5`，
+  `pnpm-lock.yaml` 重新生成（rc.3 条目 0 处 → rc.5 161 处）。`cordis` / `schemastery` /
+  `pi-ai` 与 peerDependencies **零改动**：rc.4 / rc.5 已被 `>=0.1.7-rc.1 <0.3.0-0` 放行。
+- `tests/dsh-peer-range.spec.ts` 的 `MUST_ADMIT` 补入 `0.2.2-rc.4` / `0.2.2-rc.5`，
+  实测过的宿主现在覆盖 rc.1–rc.5 五版。
+- `pnpm-workspace.yaml` 的 override 注释版本号 rc.3 → rc.5（值不变）。
+- **构建产物与本节原始 4.18.5 逐字节相同**（`lib/index.js` / `index.d.ts` / `client.js`
+  SHA-256 不变），这比「类型能过」更强：新增的错误码成员落在插件从未 import 的表上。
+- 新增 `docs/DSH_0.2.2_RC5_SYNC.md`：结论、逐包比对、槽表核对、两条指南的排除理由；
+  中英 README 的兼容表与同步结论补 rc.5 一节。
+
+### Tests
+
+- 全仓 **116 文件 / 1497 例**通过（issue #92 的新增用例计入；上一版 1494 例）；
+  typecheck 与构建通过；`DSH_STRICT_PRIVACY=1 verify:privacy` 17 项无跳过。
+
+### 已知的边界（写下来免得被当成已保证）
+
+- `CONTENT_REFUSED` 是 DSH 自己对新拒答流的分类，本插件不消费该错误码；若将来接入
+  DSH 的 LLM 错误终止块分类，需要再评估是否要单独呈现「提供方已拒答」。
+- issue #92 的选择规则只解决「数字 did + aha ldid 并存」这一实测形态；若上游出现
+  多个数字 did 且无唯一解，仍退回既有遥测 fallback，与修复前一致。
+
 修掉 issue #89「点签到没反应」的体验问题。插件本身没有坏：排查确认上游 Trae 会把
 正常的临时状态用 **HTTP 200 + 非零业务码** 返回，最典型的是 `9074`「当前参与用户
 太多，请稍后再试」（服务端瞬时拥挤/活动名额）。旧版把这类码一律当成硬失败，只在账号
