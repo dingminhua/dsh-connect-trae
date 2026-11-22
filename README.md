@@ -435,9 +435,11 @@ stderr、View 标签的 tooltip 只在文字溢出时显示、More 菜单 toolti
 - 插件不设置 `web.searchProvider`、不提供搜索 provider，搜索默认值的改动与它无关。
 
 其余核对：**槽位目录 rc.3 / rc.4 / rc.5 均 116、零变化**；`cordis` / `schemastery` /
-`pi-ai` 三个随包依赖未变。**`pnpm run build` 产物与 4.18.5 逐字节相同**，typecheck 零报错。
-本次只动版本锚点（13 个 devDependency → rc.5、lockfile、`MUST_ADMIT` 补 rc.4/rc.5、
-`pnpm-workspace.yaml` 注释），**源码零改动**。peer 范围**无需改动**：
+`pi-ai` 三个随包依赖未变。**本次同步本身 `pnpm run build` 产物与已发布的 4.18.5 逐字节
+相同**，typecheck 零报错——本次只动版本锚点（13 个 devDependency → rc.5、lockfile、
+`MUST_ADMIT` 补 rc.4/rc.5、`pnpm-workspace.yaml` 注释），**同步本身源码零改动**。
+（4.18.5 之后还进了 issue #92 与 #93 两个修复，改过 `src/`，所以 **4.18.6 起的随包产物
+不再与 4.18.5 逐字节相同**。）peer 范围**无需改动**：
 `0.2.2-rc.4` / `0.2.2-rc.5` 已被 `>=0.1.7-rc.1 <0.3.0-0` 放行。
 
 细节见 [`docs/DSH_0.2.2_RC5_SYNC.md`](https://github.com/dingminhua/dsh-connect-trae/blob/main/docs/DSH_0.2.2_RC5_SYNC.md)。

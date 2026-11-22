@@ -1,10 +1,78 @@
 # Changelog
 
+## 4.18.6 (2026-11-22)
+
+修掉 issue #93：上游把工具参数**截断**了，桥接层却报 `tool_calls`，下游把一次可恢复的截断
+升级成整轮失败的协议错误（`Tool call "run_code": Unexpected end of JSON input`，
+`MALFORMED_RESPONSE`，工具根本没执行）。
+
+### 不再用 `sawToolCalls` 覆盖上游的真实 `finish_reason`
+
+`src/solo-bridge.ts` 旧代码用一个布尔量决定结尾的 `finish_reason`：只要流里出现过**任意一个**
+`tool_calls` 增量，就把上游真实的原因改写成 `tool_calls`——上游明确说了 `length`（输出被
+上限截断）也一样。两种完全不同的情况因此被抹成同一个值，**截断信号完全丢失**：
+
+- 上游发 `finish_reason: "length"` → 被改写成 `tool_calls`；
+- 上游连接中途断开、`done` 根本没到 → 兜底也写成 `tool_calls`。
+
+下游只认一个理由：`dsh-llm-pi-ai` 在 `toStreamChunks()` 里写死了
+`if (argumentsError !== void 0 && event.message.stopReason !== "length") throw new LlmError(…, "MALFORMED_RESPONSE")` ——
+**只有 `length` 才容忍残缺工具参数**（丢弃这次不完整的调用，让模型重来）。`stopReason` 一旦
+被伪造成 `toolUse`，残缺参数就被当作「完整但畸形」的响应，整轮失败。
+
+改法有两条，缺一不可：
+
+1. **上游给的原因属于「非正常结束」时直接采纳**（`length` / `content_filter` /
+   `network_error`）；桥接层只在**普通结束**（`stop` / `end` / 没有）且工具调用完整时才
+   升级成 `tool_calls`。
+2. **上游没给原因时（EOF 兜底）桥接层自己判断工具调用是否完整**：参数文本里还有没闭合的
+   `{` / `[`，或停在未闭合的字符串里（issue 的现场就是这一种），就是被切断的，报 `length`。
+
+第 2 条刻意**不**用「`JSON.parse` 失败」当判据：那是「畸形」不是「截断」，下游对畸形参数的
+报错比这里猜出来的更准确，伪装成 `length` 只会把一次清晰的失败变成一次静默重试。
+**闭合但非法**的参数仍旧原样交给下游。工具调用**没有名字**也算被切断——下游无法调用一个
+没有名字的工具。
+
+### 事后能分辨「上游截断」与「连接断开」
+
+issue 指出这两种原因事后完全不可分辨。现在桥接层在「有工具调用、且结尾报 `length`」时打一条
+warn，带上**已收到的参数长度**（不是参数本身——那是用户自己的代码）、上游原始原因与缺陷类型
+（`arguments` / `name`）：上游说了 `length` 是一种形态，流在 `done` 之前就断了是另一种。
+
+### Tests
+
+- 新增 `tests/issue93-truncated-tool-call.spec.ts`（13 例），其中两例**回放真实下游**：用真实的
+  pi-ai 客户端读桥接产物，断言 `stopReason === "length"` 且 pi-ai 确实报了 `argumentsError`
+  （参数确实是坏的，但结束原因是唯一能容忍它的那个）；另一例把**修复前的产物**
+  （`finish_reason: "tool_calls"`）喂给同一个客户端，断言 `stopReason === "toolUse"`——
+  这就是 issue 里 `MALFORMED_RESPONSE` 的来处。
+- 其余用例覆盖：上游 `length` 被保留、EOF 无 `done` 时自判、参数没闭合时即便上游说 `stop`
+  也报 `length`、完整调用（整体到达 / 分片到达 / EOF 到达）仍然是 `tool_calls`、没有工具调用
+  时上游原因原样透传、warn 的字段、以及「完整调用不打 warn」。
+- 全仓 **117 文件 / 1510 例**通过；typecheck 与构建通过；
+  `DSH_STRICT_PRIVACY=1 verify:privacy` 17 项无跳过。
+- 新增 `docs/ISSUE93_DIAGNOSIS.md`：现象、根因、三段下游实现（pi-ai / `dsh-llm-pi-ai` /
+  `dsh-llm`）逐条引用、判据取舍、验证方式与已知边界。
+
+### 已知的边界（写下来免得被当成已保证）
+
+- **「闭合但非法」的参数不会被本版兜住**：模型写坏 JSON 时，报错仍来自下游，本版不把它
+  伪装成截断。
+- **截断点恰好落在一个完整 JSON 值之后**（本该 `{"a":1,"b":2}` 却只收到 `{"a":1}`）时，
+  结构判据看不出异常；只有上游自己说了 `length` 才能识破。
+- **上游模型条目没配 `max_tokens`** 是 issue 记录的复现条件之一。本版修的是「截断被升级成
+  协议错误」这件事；输出上限本身仍走上游默认值，配置侧要不要显式配 `max_tokens` 不在本版
+  范围内。
+- `src/raw-chat.ts` 那条原生 raw 通道原样保留上游的 `finish_reason`，没有 `sawToolCalls`
+  这一层覆盖，**没有**同一个缺陷，本版未改。
+
 ## 4.18.5 (2026-11-18)
 
 > 本节在上版发布说明之外补记两件事：issue #92 的多 icube-dc 键修复（代码已随上一个
 > commit 进入工作树，此前漏记），以及对齐宿主 DSH 0.2.2-rc.5 的版本锚点同步。
-> 两者都不改变插件对外契约，构建产物与本节原始发布内容逐字节相同。
+> 两者都不改变插件对外契约。**rc.5 锚点同步本身零代码改动**，以 4.18.5 的 `src/` 构建，
+> 产物与已发布的 4.18.5 逐字节相同；但 issue #92 改了 `src/identity.ts`，
+> **当前（4.18.6 起）随包产物不再与 4.18.5 逐字节相同**。
 
 ### 多 icube-dc 键时选数字设备号，并与签名密钥同源（issue #92）
 
@@ -37,8 +105,10 @@
 - `tests/dsh-peer-range.spec.ts` 的 `MUST_ADMIT` 补入 `0.2.2-rc.4` / `0.2.2-rc.5`，
   实测过的宿主现在覆盖 rc.1–rc.5 五版。
 - `pnpm-workspace.yaml` 的 override 注释版本号 rc.3 → rc.5（值不变）。
-- **构建产物与本节原始 4.18.5 逐字节相同**（`lib/index.js` / `index.d.ts` / `client.js`
-  SHA-256 不变），这比「类型能过」更强：新增的错误码成员落在插件从未 import 的表上。
+- **本次 rc.5 锚点同步本身不产生任何产物差异**：以 4.18.5 的 `src/` 构建，
+  `lib/index.js` / `index.d.ts` / `client.js` 的 SHA-256 不变，这比「类型能过」更强：
+  新增的错误码成员落在插件从未 import 的表上。（issue #92 改了 `src/identity.ts`，
+  4.18.6 的产物因此不再与 4.18.5 逐字节相同——那不是本次同步带来的。）
 - 新增 `docs/DSH_0.2.2_RC5_SYNC.md`：结论、逐包比对、槽表核对、两条指南的排除理由；
   中英 README 的兼容表与同步结论补 rc.5 一节。
 

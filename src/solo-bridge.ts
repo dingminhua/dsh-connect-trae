@@ -1,6 +1,8 @@
 import { normalizeUsageCache } from './usage-cache.ts'
 import { randomUUID } from 'node:crypto'
 import { SseDecoder, decodeTraeEvent } from './sse.ts'
+import { toolCallsDefect } from './tool-call-completeness.ts'
+import type { ToolCallDefect, ToolCallDraft } from './tool-call-completeness.ts'
 import { TraeStreamFailure } from './upstream.ts'
 import type { TraeCatalog } from './catalog.ts'
 import type { TraeChatResult, TraeUpstreamClient, TraeUpstreamErrorKind } from './upstream.ts'
@@ -217,6 +219,87 @@ function normalizeToolCalls(value: unknown): OpenAIToolCallDelta[] {
   return calls
 }
 
+/**
+ * Upstream finish reasons that already say "this turn did not end normally".
+ *
+ * `length` is the one that decides the outcome downstream: it is the ONLY
+ * reason dsh-llm-pi-ai tolerates a half-written tool call for — it drops the
+ * incomplete call instead of raising `MALFORMED_RESPONSE`. Overwriting it
+ * with `tool_calls` turned a recoverable truncation into a dead turn (issue
+ * #93).
+ *
+ * `content_filter` and `network_error` belong to the same set because pi-ai
+ * treats them as failures too: upgrading either to `tool_calls` would run a
+ * tool the upstream had already refused to finish.
+ */
+const HARD_FINISH_REASONS: ReadonlySet<string> = new Set(['length', 'content_filter', 'network_error'])
+
+/**
+ * The `finish_reason` the bridge reports, and what it had to judge to do so.
+ *
+ * The upstream's own reason wins whenever it says the turn ended abnormally.
+ * The bridge only ever *upgrades* a plain completion to `tool_calls`, and only
+ * when the accumulated tool calls are whole — issue #93's whole defect was
+ * upgrading them unconditionally.
+ */
+function decideFinishReason(
+  upstreamReason: string | undefined,
+  drafts: ReadonlyMap<number, ToolCallDraft>,
+): { reason: string, defect: ToolCallDefect | undefined } {
+  const reason = upstreamReason ?? ''
+  const defect = toolCallsDefect(drafts.values())
+  if (HARD_FINISH_REASONS.has(reason)) return { reason, defect }
+  // A call the upstream cut off is reported as `length` even when the upstream
+  // claimed a plain `stop`: its arguments cannot be parsed, and `length` is the
+  // only reason the downstream tolerates. `stop` would make the same broken
+  // arguments fatal for the whole turn.
+  if (defect !== undefined) return { reason: 'length', defect }
+  if (drafts.size > 0) return { reason: 'tool_calls', defect }
+  return { reason: reason === '' ? 'stop' : reason, defect }
+}
+
+/**
+ * The accumulated tool calls, described for a log line.
+ *
+ * The LENGTH of the arguments, never the arguments themselves: they are the
+ * user's own code (issue #93 cut a ~10 KB inline script in half).
+ */
+function describeToolCallDrafts(drafts: ReadonlyMap<number, ToolCallDraft>): Array<{ index: number, name: string, argumentsLength: number }> {
+  return [...drafts.entries()].map(([index, draft]) => ({ index, name: draft.name, argumentsLength: draft.arguments.length }))
+}
+
+/**
+ * Report a turn that ended with a tool call still open.
+ *
+ * Issue #93 asked for this because the two causes are indistinguishable after
+ * the fact: the upstream stopping on its output limit (`finish_reason:
+ * "length"`) and the upstream dropping the connection (no `done` event at
+ * all) both used to arrive as `tool_calls`. The detail carries the received
+ * argument length so the two can be told apart afterwards.
+ */
+function reportTruncatedToolCall(
+  decided: { reason: string, defect: ToolCallDefect | undefined },
+  upstreamReason: string | undefined,
+  drafts: ReadonlyMap<number, ToolCallDraft>,
+  model: string,
+  log?: (message: string, detail?: unknown) => void,
+): void {
+  if (drafts.size === 0 || decided.reason !== 'length') return
+  const cause = upstreamReason === undefined
+    ? 'the stream ended without a done event'
+    : `the upstream reported finish_reason "${upstreamReason}"`
+  const consequence = decided.defect === undefined
+    ? 'the turn ends on the output limit'
+    : 'the incomplete call is dropped instead of failing the turn'
+  log?.(`dsh-connect-trae: ${cause} while a tool call was still open; reporting length so ${consequence}`, {
+    model,
+    finishReason: decided.reason,
+    upstreamFinishReason: upstreamReason ?? null,
+    ...decided.defect === undefined ? {} : { defect: decided.defect },
+    calls: describeToolCallDrafts(drafts),
+  })
+}
+
 /** Convert Trae's named SSE events into OpenAI chat-completion SSE chunks. */
 export function bridgeTraeSoloStream(response: Response, model: string): Response {
   const source = response.body
@@ -235,7 +318,15 @@ function bridgeTraeSource(
   const decoder = new TextDecoder()
   const encoder = new TextEncoder()
   const sse = new SseDecoder()
-  let sawToolCalls = false
+  /**
+   * Every tool call seen so far, accumulated across its deltas.
+   *
+   * Issue #93: the bridge used to keep a single `sawToolCalls` flag and report
+   * `tool_calls` for any stream that had contained one. What the flag could
+   * not say is whether the call was WHOLE — and an upstream that cuts a tool
+   * call in half must not look like one that finished it.
+   */
+  const toolCallDrafts = new Map<number, ToolCallDraft>()
   let emittedFinishReason = false
   let upstreamEnded = false
   let upstreamError: Error | undefined
@@ -306,7 +397,16 @@ function bridgeTraeSource(
           if (decoded.reasoning !== undefined && decoded.reasoning !== '') delta['reasoning_content'] = decoded.reasoning
           const toolCalls = normalizeToolCalls(decoded.toolCalls)
           if (toolCalls.length > 0) {
-            sawToolCalls = true
+            for (const call of toolCalls) {
+              const draft = toolCallDrafts.get(call.index) ?? { name: '', arguments: '' }
+              // A later delta may repeat the name, or send an empty one; the
+              // last NON-EMPTY name is the call's name.
+              const name = call.function?.name
+              if (name !== undefined && name !== '') draft.name = name
+              const args = call.function?.arguments
+              if (args !== undefined) draft.arguments += args
+              toolCallDrafts.set(call.index, draft)
+            }
             delta['tool_calls'] = toolCalls
           }
           if (Object.keys(delta).length > 0) controller.enqueue(chunk(delta))
@@ -331,7 +431,9 @@ function bridgeTraeSource(
               controller.error(upstreamError)
               return
             }
-            controller.enqueue(chunk({}, sawToolCalls ? 'tool_calls' : decoded.finishReason || 'stop'))
+            const decided = decideFinishReason(decoded.finishReason, toolCallDrafts)
+            reportTruncatedToolCall(decided, decoded.finishReason, toolCallDrafts, model, log)
+            controller.enqueue(chunk({}, decided.reason))
           }
         }
       }
@@ -348,9 +450,16 @@ function bridgeTraeSource(
         }
         // A clean EOF is a valid Trae termination even when it omits an
         // explicit done event. Synthesize the required OpenAI finish chunk.
+        //
+        // Without an upstream reason the bridge has to judge the tool calls
+        // itself: a call whose arguments do not close was cut off, and saying
+        // `tool_calls` would make the downstream treat the broken arguments as
+        // a malformed-but-complete response and fail the turn (issue #93).
         if (!emittedFinishReason) {
           emittedFinishReason = true
-          controller.enqueue(chunk({}, sawToolCalls ? 'tool_calls' : 'stop'))
+          const decided = decideFinishReason(undefined, toolCallDrafts)
+          reportTruncatedToolCall(decided, undefined, toolCallDrafts, model, log)
+          controller.enqueue(chunk({}, decided.reason))
         }
         controller.enqueue(encoder.encode('data: [DONE]\n\n'))
         controller.close()
