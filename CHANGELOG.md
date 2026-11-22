@@ -2,6 +2,21 @@
 
 ## 4.18.6 (2026-11-22)
 
+> **补记（2026-11-22 发布后实测）**：本节下面「输出上限本身」那一段关于 `max_tokens` 的
+> 说法**不成立**，据实更正——**请求里从来就没有 `max_tokens`**：活着的 SOLO 通道
+> （`llm_utils_chat`）按设计丢弃这个字段（`prepareSoloBody` 只构造已证实的信封，
+> `tests/solo.spec.ts` 已钉住；会转发它的 Raw Chat 通道是 `enabled: false` 的）。
+> 实测（CN 实时凭据，三次真实生成）：上游按**模型自己公布的 `max_tokens`** 截断
+> （`deepseek-v4.1-flash` = 32000，三次都精确停在 32000），与请求里写没写无关；
+> 而且上游到上限时给的是 `finish_reason: "stop"`，**不是 `"length"`**。
+>
+> 两条后果：① issue #93 原先建议的「只保留上游真实原因」**救不了报告者那一例**（上游说的是
+> `stop`），真正承重的是本版那条**结构性**判据（参数没闭合 → 报 `length`）；
+> ② 报告者的截断成因是**推理与答案共用同一个 32000 上限**（他用 `reasoningEffort: high`），
+> 不是「条目没配 `max_tokens`」。**插件侧没有旋钮能抬高上限**——能用的是降 reasoning effort、
+> 拆小工具调用、或换一个公布上限更大的配置。完整实测见
+> [`docs/ISSUE94_DIAGNOSIS.md`](https://github.com/dingminhua/dsh-connect-trae/blob/main/docs/ISSUE94_DIAGNOSIS.md)。
+
 修掉 issue #93：上游把工具参数**截断**了，桥接层却报 `tool_calls`，下游把一次可恢复的截断
 升级成整轮失败的协议错误（`Tool call "run_code": Unexpected end of JSON input`，
 `MALFORMED_RESPONSE`，工具根本没执行）。

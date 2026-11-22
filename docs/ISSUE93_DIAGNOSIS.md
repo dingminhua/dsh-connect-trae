@@ -163,6 +163,26 @@ dsh-connect-trae: the upstream reported finish_reason "length" while a tool call
 也报 `length`、完整调用（整体到达 / 分片到达 / EOF 到达）仍然是 `tool_calls`、没有工具调用
 时上游原因原样透传、warn 的字段与「完整调用不打 warn」。
 
+### 5.1 后补的实测：上游到上限时说的是 `stop`，不是 `length`
+
+2026-11-22 在本机 CN 实时凭据上实测（`scripts/probe-issue94-default-cap.mjs`）：三次真实生成，
+模型 `deepseek-v4.1-flash`，提示词要求连续输出到 50000 行，**每次都精确停在 32000 个输出
+token**（= 该模型在 wire 名单里公布的 `max_tokens`），而上游给的 `finish_reason` 是
+**`stop`**，不是 `length`。
+
+这条实测有两个后果：
+
+1. **issue 里建议的「保留上游真实原因」救不了报告者那一例**——上游说的是 `stop`，原样保留
+   仍然是 `stop`，下游照样抛 `MALFORMED_RESPONSE`。真正救它的是本版的**结构性**判据：
+   上游说 `stop`、但参数文本没闭合 → 报 `length`（4.2）。**这一条不是锦上添花，是承重墙。**
+2. **报告者那条截断的成因不是「条目没配 `max_tokens`」**——活着的 SOLO 通道按设计丢弃
+   `max_tokens`（`prepareSoloBody` 只构造已证实的信封；`tests/solo.spec.ts` 已钉住），
+   请求里**从来就没有**这个字段，带不带都一样。上游按**模型自己公布的上限**截断，
+   而那个上限是**推理与答案共用**的（pi-ai 源码注释：「Reasoning and the answer share
+   max_tokens here, so an uncapped reasoning phase can consume the whole response and leave
+   no answer and no tool call」）。他用 `reasoningEffort: high`，推理阶段吃掉了大部分额度，
+   答案（工具调用）被切在半路。详见 [`docs/ISSUE94_DIAGNOSIS.md`](ISSUE94_DIAGNOSIS.md)。
+
 ---
 
 ## 6. 已知的边界（写下来免得被当成已保证）
@@ -173,8 +193,9 @@ dsh-connect-trae: the upstream reported finish_reason "length" while a tool call
   `{"a":1}`）时，结构判据看不出异常。这种情况只有在**上游自己说了 `length`** 时才能识破；
   上游没说、连接又断了的时候，桥接层会把它当成一次完整调用——参数缺字段的风险由工具自身
   的校验兜底（这也是上游说 `length` 时我们选择丢弃而不是执行的原因）。
-- **上游模型条目没配 `max_tokens`** 是 issue 记录的复现条件之一。本版修的是「截断被升级成
-  协议错误」这件事；输出上限本身仍走上游默认值，配置侧要不要显式配 `max_tokens` 不在
-  本版范围内。
+- **输出上限本身不在本版范围内**。实测（5.1）：上游按模型自己公布的 `max_tokens` 截断，
+  而活着的通道不转发请求里的 `max_tokens`，所以**插件侧没有任何旋钮能抬高它**。
+  报告者能用的是：把 reasoning effort 降一档、别把大段内联脚本塞进一次工具调用、或换一个
+  公布上限更大的配置。详见 [`docs/ISSUE94_DIAGNOSIS.md`](ISSUE94_DIAGNOSIS.md)。
 - 本版**没有**改 `src/raw-chat.ts` 那条原生 raw 通道：它在 `decodeRawChatChunk()` 里原样
   保留上游的 `finish_reason`，没有 `sawToolCalls` 这一层覆盖，不存在同一个缺陷。
