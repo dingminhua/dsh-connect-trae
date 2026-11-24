@@ -1,5 +1,108 @@
 # Changelog
 
+## 4.18.8 (2026-11-24)
+
+修掉 issue #96：**在 DSH 0.2.3 上，会话里只要出现过一张图，此后每一次请求都失败**，报
+`Image request maxImageBytes must be a positive integer.`
+
+### 手搓的 profile 少了一个 0.2.3 新增的必填字段
+
+DSH 0.2.3 对**解析后**的 provider profile 做了两件与图像有关的事：
+
+| 字段 | 0.2.2 | 0.2.3 |
+| --- | --- | --- |
+| `requestImageMaxBytes` | 必填 | **已删除**（改名为 `maxImageBytes`） |
+| `maxImageBytes` | 不存在 | 可选（解析后的新名字） |
+| `requestImageBudgetCount` | 不存在 | **必填**（字节预算的除数） |
+
+这两件事都由宿主的 `resolveProfiles()` 完成——而**本插件从不走那条路**，它从活的 Trae
+目录手搓 `ResolvedPiAiProviderProfile` 字面量。于是 0.2.3 的改名和默认值对这两条路由都
+没有发生，`REQUEST_IMAGE_BUDGETS` 还停在 0.2.2 的五个字段。
+
+### `NaN` 骗过了宿主的守卫
+
+缺了除数，0.2.3 的 `resolveImageRequestBudget()` 逐行推下去：
+
+```text
+floor(20_971_520 / undefined / 4) * 3   → NaN
+Math.min(NaN, 1_048_576)                → NaN
+if (NaN < 1) throw INVALID_CONFIG       → NaN < 1 是 false，守卫不触发
+requestImageTarget() 把它写成 maxImageBytes → NaN
+附件层 checkedInteger() 拒绝            → INVALID_ATTACHMENT_REF
+```
+
+最关键的是第三步：守卫本该报出可读的 `INVALID_CONFIG`（「图像字节预算配错了」），实际报的
+却是 `INVALID_ATTACHMENT_REF`（「附件引用不对」），把人往完全错误的方向带。
+
+### 一张图毒掉整个会话，且不会自愈
+
+0.2.2 的 stream 直接把 profile 上的两个数传给附件层，从不调用 `resolveImageRequestBudget()`，
+所以缺字段无害。0.2.3 改成提前解析，而触发条件是 `options.messages.some(contentHasImage)`
+——扫的是**整个请求的历史**，不是这一轮新加的消息。
+
+实测（真实 `0.2.3-alpha.2` 包，修复前的 profile）：
+
+```text
+[1 pure-text                  ] OK
+[2 text turn, image in history] THROW INVALID_ATTACHMENT_REF
+```
+
+所以：会话里从没出现过图片 → 正常；出现过一张图 → **此后每一轮都失败，包括纯文字轮次**，
+而且不会自愈（历史里的图不会消失）。这解释了报告者的「0 次工具调用、378 毫秒」：第一张图
+进来之后，那条会话就废了。
+
+而用户躲不开：图片勾选框对 Trae 标了 `multimodal` 的模型是**勾中且只读**的（issue #16 的
+既定设计），报告者确认「无法勾选掉」。
+
+### 修法：两个拼写都写，除数按路由给
+
+peer 范围同时覆盖 0.2.2 与 0.2.3，所以**一个对象要同时满足两条线**：0.2.2 读
+`requestImageMaxBytes`，0.2.3 读 `maxImageBytes`，各自忽略对方不认识的那个 key。
+不需要版本分支，也**不能删旧拼写**——删了 0.2.2 那条线就退回它自己的默认值。
+
+除数是这次真正的取舍。解析后的上限是 `min(份额, 显式上限)`，所以除数一旦让份额掉到 1 MiB
+以下，**真正决定上限的就变成了份额**，那个显式写着的 1 MiB 成了摆设：
+
+| 除数 | 消费者 20 MiB 份额 | 企业 8 MiB 份额 | 显式 1 MiB 上限是否生效 |
+| --- | --- | --- | --- |
+| **14** | 1,123,473 | 449,388 | 仅消费者路由 |
+| **5** | 3,145,728 | 1,258,290 | 两条都生效 |
+| 6 | 2,621,439 | 1,048,575（**差 1 字节**） | 仅消费者路由 |
+| 20（宿主默认） | 786,432 | 314,571 | 都不生效 |
+
+`floor(20_971_520 / 14 / 4) * 3 = 1_123_473`，**15 就掉到 1_048_575——差一个字节**；企业
+路由 8 MiB 同理，5 给 1_258_290，6 给 1_048_575。所以取**消费者 14、企业 5**，每条路由都
+是「份额仍高于 1 MiB」的最大除数。若图省事全用 14，企业路由的每图上限会被悄悄压到
+449,388 字节（显式声明值的 43%）——那正是这个 bug 的另一种形态。
+
+### 为什么类型检查没拦住
+
+`devDependencies` 钉在 `0.2.2-rc.5`，所以类型环境里的 `ResolvedPiAiProviderProfile` 根本
+没有 `maxImageBytes` 和 `requestImageBudgetCount`，直接写进 `Pick<>` 会报 TS2344。改用本地
+接口 `PiAiImageBudgetFields023` 与 `Pick<>` 相交，让 0.2.2 的类型环境也能编译，且不假装
+0.2.2 有这两个字段。
+
+**根本修法是把 devDependency 提到 0.2.3 并让测试跑在 0.2.3 上**——本版先让代码在两条线上
+都正确，那一步单独做。
+
+### 验证
+
+新增 `tests/adapter-image-budget-023.spec.ts`，6 条断言**先红后绿**（修复前 5 条失败）。
+断言的是**值**不是「字段存在」：重算 0.2.3 的真实公式要求解析后上限 `=== 1_048_576`，
+要求每条路由的份额**严格大于** 1 MiB，并钉住每条路由的除数与份额具体数字——这样「把除数
+改成宿主默认 20」或「全用 14」都会被挡下。
+
+端到端用**构建产物 `lib/` 里真实的 profile** 跑真实 0.2.3 适配器，三条路由的文本轮次与
+带图轮次全部通过：
+
+```text
+[trae]            count=14 share=1123473 resolvedCap=1048576
+[trae-enterprise] count=5  share=1258290 resolvedCap=1048576
+[trae-global]     count=14 share=1123473 resolvedCap=1048576
+```
+
+详细推导与实测记录见 [`docs/ISSUE96_DIAGNOSIS.md`](docs/ISSUE96_DIAGNOSIS.md)。
+
 ## 4.18.7 (2026-11-22)
 
 修掉 issue #95：**输入框工具栏的积分读数与弹出浮层里的积分读数不同步**——同一屏上、同一个账号，

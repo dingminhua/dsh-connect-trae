@@ -130,6 +130,42 @@ const INERT_AUTH: { credentials: CredentialStore; authContext: AuthContext } = {
  * `imageOffloadCountQuantum` must be a positive integer no greater than
  * `maxRequestImages`; 10 ≤ 50 keeps the host's default ratio.
  *
+ * THE PER-IMAGE CAP HAS TWO SPELLINGS, AND BOTH MUST BE STATED (issue #96).
+ * Up to 0.2.2 the RESOLVED profile carried `requestImageMaxBytes`; from 0.2.3
+ * the host renamed that field to `maxImageBytes` on the resolved profile
+ * (`resolveProfiles` maps the CONFIG spelling `requestImageMaxBytes` onto the
+ * RESOLVED spelling `maxImageBytes`). This route hand-builds its resolved
+ * profile — it never goes through `resolveProfiles()` — so neither the rename
+ * nor its default happens for it. Stating both is what keeps the 1 MiB cap on
+ * both host lines: 0.2.2 reads `requestImageMaxBytes`, 0.2.3 reads
+ * `maxImageBytes`, and each ignores the key it does not know.
+ *
+ * `requestImageBudgetCount` is REQUIRED from 0.2.3, where
+ * `resolveImageRequestBudget()` divides the aggregate byte budget by it:
+ *
+ *   allocated = floor(maxRequestImageBytes / requestImageBudgetCount / 4) * 3
+ *   cap       = min(allocated, maxImageBytes ?? catalogBytes ?? 1 MiB)
+ *
+ * Omitting it divided by `undefined` → `NaN`, and `NaN < 1` is false, so the
+ * host's own `INVALID_CONFIG` guard did NOT fire: the NaN travelled into the
+ * attachment layer and came back as `INVALID_ATTACHMENT_REF` ("Image request
+ * maxImageBytes must be a positive integer"). 0.2.2 never called that function,
+ * so the missing field was inert there — which is why this only broke on 0.2.3.
+ *
+ * THE DIVISOR IS NOT A TASTE SETTING EITHER. The resolved cap is
+ * `min(share, explicit cap)`, so a divisor whose equal share drops below 1 MiB
+ * silently replaces the pinned cap with a smaller number nobody chose. Each
+ * route therefore gets the LARGEST divisor whose share still clears 1 MiB:
+ *
+ *   consumer 20 MiB: 14 → 1_123_473   (15 → 1_048_575, ONE BYTE short)
+ *   enterprise 8 MiB: 5 → 1_258_290   ( 6 → 1_048_575, ONE BYTE short)
+ *
+ * The host's own default of 20 would yield 786_432 and 314_571 — the second is
+ * a 3.3x narrowing of the enterprise per-image cap, from a field nobody would
+ * look at. A smaller divisor is merely wasteful (it inflates a share the
+ * explicit cap clamps immediately), so the value is pinned per route rather
+ * than shared, and the numbers are asserted in tests/adapter-image-budget-023.
+ *
  * The BYTE bound is the one field here that is not a host contract: it has to
  * match the gateway at the other end, and the gateways disagree (issue #81).
  * See {@link ENTERPRISE_MAX_REQUEST_IMAGE_BYTES}.
@@ -137,10 +173,27 @@ const INERT_AUTH: { credentials: CredentialStore; authContext: AuthContext } = {
 const REQUEST_IMAGE_BUDGETS = {
   maxRequestImageBytes: 20_971_520,
   requestImagePixelBudget: 4_194_304,
+  // 0.2.2 and earlier: the resolved profile's per-image cap.
   requestImageMaxBytes: 1_048_576,
+  // 0.2.3 and later: the same cap, under its new resolved-profile name.
+  maxImageBytes: 1_048_576,
   maxRequestImages: 50,
   imageOffloadCountQuantum: 10,
+  // 0.2.3 and later: required divisor of the aggregate byte budget. Largest
+  // value keeping the equal share above 1 MiB on a 20 MiB route.
+  requestImageBudgetCount: 14,
 } as const
+
+/**
+ * `requestImageBudgetCount` for the enterprise route.
+ *
+ * Separate from {@link REQUEST_IMAGE_BUDGETS} because the divisor depends on
+ * the route's own `maxRequestImageBytes`: that route carries 8 MiB, so the
+ * largest divisor keeping its share above 1 MiB is 5, not 14. Reusing 14 there
+ * would leave 449_388 bytes of share and silently cut the per-image cap to 43%
+ * of the value the same object declares.
+ */
+const ENTERPRISE_REQUEST_IMAGE_BUDGET_COUNT = 5
 
 /**
  * Request-image byte bound for the enterprise route, in bytes (8 MiB).
@@ -174,10 +227,40 @@ const REQUEST_IMAGE_BUDGETS = {
 const ENTERPRISE_MAX_REQUEST_IMAGE_BYTES = 8_388_608
 
 /**
+ * The 0.2.3-only image fields this profile must also carry (issue #96).
+ *
+ * WHY THIS EXISTS AT ALL. The plugin's `devDependencies` pin
+ * `@deepseek-ai/dsh-llm-pi-ai@0.2.2-rc.5`, so `ResolvedPiAiProviderProfile` in
+ * the typecheck environment has no `maxImageBytes` and no
+ * `requestImageBudgetCount`. The peer range admits 0.2.3, where both are real
+ * (one renamed, one required). Naming them through this interface keeps the
+ * hand-built literal honest on both host lines without a version branch — and
+ * without waiting for the devDependency bump to make the object typecheck.
+ *
+ * These are declared REQUIRED here even though 0.2.2 does not know them: this
+ * interface describes what the object always carries, and the plugin always
+ * states both. 0.2.2 simply ignores the keys it does not read. Naming them as
+ * optional would make it possible to drop one again without a type error,
+ * which is exactly how issue #96 shipped.
+ */
+interface PiAiImageBudgetFields023 {
+  /** 0.2.3+: resolved-profile name for the per-image cap. */
+  maxImageBytes: number
+  /** 0.2.3+: required divisor of `maxRequestImageBytes`. */
+  requestImageBudgetCount: number
+}
+
+/**
  * Image-request budgets for one route.
  *
  * The byte bound is region-specific; every other field is shared. Kept as a
  * function rather than two constants so the shared fields cannot drift apart.
+ *
+ * The enterprise arm overrides TWO fields, and they move together:
+ * `maxRequestImageBytes` shrinks to 8 MiB for issue #81, and
+ * `requestImageBudgetCount` shrinks with it so the equal share stays above the
+ * 1 MiB per-image cap. Overriding only the first would leave the divisor sized
+ * for a 20 MiB route and let the share — not the cap — decide the limit.
  *
  * The return type is the profile's own field types rather than
  * `typeof REQUEST_IMAGE_BUDGETS`: that constant is `as const`, so its
@@ -190,9 +273,13 @@ function requestImageBudgets(
 ): Pick<
   ResolvedPiAiProviderProfile,
   'maxRequestImageBytes' | 'requestImagePixelBudget' | 'requestImageMaxBytes' | 'maxRequestImages' | 'imageOffloadCountQuantum'
-> {
+> & PiAiImageBudgetFields023 {
   return providerId === TRAE_ENTERPRISE_PROVIDER
-    ? { ...REQUEST_IMAGE_BUDGETS, maxRequestImageBytes: ENTERPRISE_MAX_REQUEST_IMAGE_BYTES }
+    ? {
+        ...REQUEST_IMAGE_BUDGETS,
+        maxRequestImageBytes: ENTERPRISE_MAX_REQUEST_IMAGE_BYTES,
+        requestImageBudgetCount: ENTERPRISE_REQUEST_IMAGE_BUDGET_COUNT,
+      }
     : REQUEST_IMAGE_BUDGETS
 }
 
