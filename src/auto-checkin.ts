@@ -15,12 +15,32 @@ export function checkinDay(now: number): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 }
 
-export function foldCheckin(state: AutoCheckinState, rows: readonly TraePoolCheckinRow[], now: number): AutoCheckinState {
+/**
+ * 把一批签到结果折进当天进度。
+ *
+ * `deviceBlocked` 的语义取决于设备号是否按账号派生（`pool.perAccountCheckinDevice`）：
+ *
+ * - 共用整机设备号（默认）：`9095`/`claimed` 说明「这台机器今天的名额用完了」，
+ *   于是置 `deviceBlocked`，当天不再跑 —— 再跑只会重复撞同一面墙。
+ * - 按账号派生（opt-in）：`9095` 只说明「这个账号自己的名额用完了」，于是把它记进
+ *   `done`（当天不再重试这个账号），但**不**封锁整机，其余账号照常签。
+ */
+export function foldCheckin(
+  state: AutoCheckinState,
+  rows: readonly TraePoolCheckinRow[],
+  now: number,
+  options: { perAccountDevice?: boolean } = {},
+): AutoCheckinState {
   const done = new Set(state.done)
   for (const row of rows) if (row.status === 'already' || row.status === 'claimed') done.add(row.accountId)
+  const perAccount = options.perAccountDevice === true
+  if (perAccount) for (const row of rows) if (row.status === 'device-already') done.add(row.accountId)
   const failures = rows.some(row => row.status === 'failed') ? state.failures + 1 : 0
+  const spent = perAccount
+    ? state.deviceBlocked
+    : state.deviceBlocked || rows.some(row => row.status === 'device-already' || row.status === 'claimed')
   return { day: state.day, done: [...done],
-    deviceBlocked: state.deviceBlocked || rows.some(row => row.status === 'device-already' || row.status === 'claimed'),
+    deviceBlocked: spent,
     failures, retryAt: now + (rows.some(row => row.status === 'disabled') && failures === 0
       ? 30 * 60_000 : Math.min(30 * 60_000, 30_000 * 2 ** Math.min(failures, 6))) }
 }
@@ -31,6 +51,8 @@ export interface AutoCheckinDeps {
   write(state: AutoCheckinState): Promise<void>
   run(done: readonly string[]): Promise<readonly TraePoolCheckinRow[]>
   now?(): number
+  /** 设备号是否按账号派生（`pool.perAccountCheckinDevice`），决定 `9095` 的语义。 */
+  perAccountDevice?(): boolean
 }
 
 /** 单实例内串行执行。关闭开关或卸载后不再启动新批次。 */
@@ -53,7 +75,7 @@ export function createAutoCheckin(deps: AutoCheckinDeps): { tick(): Promise<void
         let rows: readonly TraePoolCheckinRow[]
         try { rows = await deps.run(state.done) }
         catch { rows = [{ accountId: '', accountName: '', status: 'failed' }] }
-        memory = foldCheckin(state, rows, deps.now?.() ?? Date.now())
+        memory = foldCheckin(state, rows, deps.now?.() ?? Date.now(), { perAccountDevice: deps.perAccountDevice?.() === true })
         await deps.write(memory)
       } finally { running = false }
     },

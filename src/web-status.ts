@@ -1147,6 +1147,9 @@ export async function traeWebPool(
     ...target.modelId === undefined ? {} : { targetModelId: target.modelId },
     targetModelSource: target.source,
     probeInputTokens: Math.max(0, preferences.probeInputTokens ?? 0),
+    // Only advertised when the SAVED document carries it, so a card newer than
+    // this Host hides the switch instead of writing a field the schema drops.
+    ...preferences.perAccountCheckinDevice === undefined ? {} : { perAccountCheckinDevice: preferences.perAccountCheckinDevice === true },
     ...target.staleModelId === undefined ? {} : { staleTargetModelId: target.staleModelId },
     ...preferences.memberAccountIds === undefined ? {} : { memberAccountIds: preferences.memberAccountIds },
     effectiveMemberAccountIds,

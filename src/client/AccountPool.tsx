@@ -260,6 +260,7 @@ export function AccountPool({ panel, pool, models, t, settingsScope, onChanged, 
       // 0 is a real choice ("minimal probe"), so it must not fall back to the
       // document's value: only an ABSENT field means "never touched".
       probeInputTokens: numberOr(base.probeInputTokens, numberOr(pool.probeInputTokens, 0)),
+      perAccountCheckinDevice: base.perAccountCheckinDevice === true,
     }
   }, [settingsTick, settingsScope, panel, pool.targetModelId, pool.staleTargetModelId, pool.probeInputTokens])
 
@@ -274,12 +275,21 @@ export function AccountPool({ panel, pool, models, t, settingsScope, onChanged, 
    */
   const probeSupported = typeof pool.probeInputTokens === 'number'
 
+  /**
+   * Whether the running Host knows the per-account check-in device switch.
+   *
+   * Same reasoning as {@link probeSupported}: a card newer than the Host must
+   * hide a control whose save the Host schema would drop.
+   */
+  const perAccountDeviceSupported = typeof pool.perAccountCheckinDevice === 'boolean'
+
   // The draft the user edits. The membership checkbox binds HERE (NON-NEGOTIABLE
   // #4), never to `account.member`.
   const [enabled, setEnabled] = useState(saved.enabled)
   const [autoCheckin, setAutoCheckin] = useState(saved.autoCheckin)
   const [targetModelId, setTargetModelId] = useState(saved.targetModelId ?? '')
   const [probeInputTokens, setProbeInputTokens] = useState(saved.probeInputTokens)
+  const [perAccountCheckinDevice, setPerAccountCheckinDevice] = useState(saved.perAccountCheckinDevice)
   const [selected, setSelected] = useState(() => new Set(saved.memberAccountIds ?? []))
   const [busy, setBusy] = useState<'test' | 'delete' | 'save' | undefined>(undefined)
   const [saveError, setSaveError] = useState<string | undefined>(undefined)
@@ -340,6 +350,7 @@ export function AccountPool({ panel, pool, models, t, settingsScope, onChanged, 
     || autoCheckin !== saved.autoCheckin
     || (targetModelId ?? '') !== (saved.targetModelId ?? '')
     || (probeSupported && probeInputTokens !== saved.probeInputTokens)
+    || (perAccountDeviceSupported && perAccountCheckinDevice !== saved.perAccountCheckinDevice)
     || !sameIds([...selected], saved.memberAccountIds)
 
   const writable = settingsScope?.getSnapshot().writable === true
@@ -354,8 +365,9 @@ export function AccountPool({ panel, pool, models, t, settingsScope, onChanged, 
   useEffect(() => { setEnabled(saved.enabled) }, [panel, saved.enabled]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { setTargetModelId(saved.targetModelId ?? '') }, [panel, saved.targetModelId]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { setProbeInputTokens(saved.probeInputTokens) }, [panel, saved.probeInputTokens]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setPerAccountCheckinDevice(saved.perAccountCheckinDevice) }, [panel, saved.perAccountCheckinDevice]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { setSelected(new Set(saved.memberAccountIds ?? [])) }, [panel, savedMemberKey]) // eslint-disable-line react-hooks/exhaustive-deps
-  const savedKey = useMemo(() => `${panel}:${saved.enabled}:${saved.targetModelId ?? ''}:${saved.probeInputTokens}:${savedMemberKey}`, [panel, saved.enabled, saved.targetModelId, saved.probeInputTokens, savedMemberKey])
+  const savedKey = useMemo(() => `${panel}:${saved.enabled}:${saved.targetModelId ?? ''}:${saved.probeInputTokens}:${saved.perAccountCheckinDevice}:${savedMemberKey}`, [panel, saved.enabled, saved.targetModelId, saved.probeInputTokens, saved.perAccountCheckinDevice, savedMemberKey])
   useEffect(() => { setSaveError(undefined) }, [savedKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggleMember = (accountId: string) => {
@@ -377,6 +389,7 @@ export function AccountPool({ panel, pool, models, t, settingsScope, onChanged, 
     setAutoCheckin(saved.autoCheckin)
     setTargetModelId(saved.targetModelId ?? '')
     setProbeInputTokens(saved.probeInputTokens)
+    setPerAccountCheckinDevice(saved.perAccountCheckinDevice)
     setSelected(new Set(saved.memberAccountIds ?? []))
     setSaveError(undefined)
     pushLog('info', t('row.poolLogDiscarded'))
@@ -394,6 +407,7 @@ export function AccountPool({ panel, pool, models, t, settingsScope, onChanged, 
         ...(targetModelId === '' ? {} : { targetModelId }),
         memberAccountIds: [...selected],
         ...(probeSupported ? { probeInputTokens } : {}),
+        ...(perAccountDeviceSupported ? { perAccountCheckinDevice } : {}),
       }
       await writeSettingsField(
         settingsScope,
@@ -406,6 +420,7 @@ export function AccountPool({ panel, pool, models, t, settingsScope, onChanged, 
             && sameIds(readPool.memberAccountIds, next.memberAccountIds)
             && (readPool.targetModelId ?? '') === (next.targetModelId ?? '')
             && (!probeSupported || (readPool.probeInputTokens ?? 0) === probeInputTokens)
+            && (!perAccountDeviceSupported || (readPool.perAccountCheckinDevice === true) === perAccountCheckinDevice)
         },
       )
       pushLog('ok', t('row.poolLogSaved'))
@@ -735,11 +750,30 @@ export function AccountPool({ panel, pool, models, t, settingsScope, onChanged, 
           </div>
           <p className="dsm-trae-pool-note">{t('row.poolAutoCheckinHint')}</p>
           <p className="dsm-trae-pool-note">{t('row.poolAutoCheckinDeviceHint')}</p>
+
           {pool.autoCheckin === true ? <p className="dsm-trae-pool-auto-checkin-status" role="status">{
             pool.autoCheckinState?.deviceBlocked === true ? t('row.poolAutoCheckinDeviceDone')
               : pool.autoCheckinState !== undefined ? t(pool.autoCheckinState.failures > 0 ? 'row.poolAutoCheckinRetry' : 'row.poolAutoCheckinProgress', { count: pool.autoCheckinState.done })
                 : t('row.poolAutoCheckinWaiting')
           }</p> : null}
+        </div> : null}
+
+        {/* The switch governs BOTH the automatic run and a manual 「一键签到」, so
+            it lives beside the check-in block rather than inside the auto-check-in
+            one: a user who never turns auto on still needs it for the button. */}
+        {panel === 'cn' && pool.checkinSupported && perAccountDeviceSupported ? <div className="dsm-trae-pool-set">
+          <span className="dsm-trae-pool-set-copy">
+            <b>{t('row.poolPerAccountDevice')}</b>
+            <span>{t('row.poolPerAccountDeviceHint')}</span>
+          </span>
+          <span className="dsm-trae-pool-set-ctl">
+            <label className="dsm-trae-switch dsm-trae-switch-pill">
+              <input type="checkbox" checked={perAccountCheckinDevice}
+                disabled={busy !== undefined || !writable}
+                aria-label={t('row.poolPerAccountDevice')}
+                onChange={event => { setPerAccountCheckinDevice(event.target.checked) }} />
+            </label>
+          </span>
         </div> : null}
       </div>
 

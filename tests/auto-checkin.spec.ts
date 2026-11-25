@@ -13,6 +13,13 @@ describe('automatic check-in', () => {
     const result = foldCheckin(empty(), [{accountId:'a',accountName:'A',status:'claimed'}, {accountId:'b',accountName:'B',status:'device-already'}], now)
     expect(result.done).toEqual(['a']); expect(result.deviceBlocked).toBe(true)
   })
+  it('treats a per-account device refusal as that account being done, not the machine', () => {
+    // Shared-device mode: `device-already` means the MACHINE spent its slot.
+    // Per-account mode: it means THIS ACCOUNT's own derived id was already used,
+    // so the account is finished for today and the machine is not blocked.
+    const result = foldCheckin(empty(), [{accountId:'a',accountName:'A',status:'claimed'}, {accountId:'b',accountName:'B',status:'device-already'}], now, {perAccountDevice: true})
+    expect(result.done).toEqual(['a', 'b']); expect(result.deviceBlocked).toBe(false)
+  })
   it('resumes saved progress and retries failures with backoff', async () => {
     let time = now
     const saved = {...empty(), done: ['a']}

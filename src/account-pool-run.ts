@@ -8,6 +8,9 @@
  *   WorkBuddy 没有这一层，所以这里多出一个 `device-already` 行状态，并且**一旦
  *   撞上 9095 就停止后续账号** —— 继续往下签只会让每个账号都撞上同一面墙，白
  *   发 N 次请求。这与 `probeModelsSequentially` 遇到 `auth` 即中止是同一条理由。
+ *   **例外**：`deps.perAccountDevice`（`pool.perAccountCheckinDevice`，默认关）
+ *   打开后，签到设备号按账号派生，9095 只说明「这个账号自己的额度用完了」，
+ *   于是不再中止整批 —— 那面墙不再是全机共用的一面。
  *
  * 三条固化成代码的规则：
  *
@@ -99,6 +102,13 @@ export interface TraePoolRunnerDeps {
   wait?: (ms: number) => Promise<void>
   /** Clock, injected so a batch stamps one moment for the whole run. */
   nowMs?: () => number
+  /**
+   * Whether each account presents its own check-in device id
+   * (`pool.perAccountCheckinDevice`). When true, `9095` is a fact about THAT
+   * ACCOUNT's derived id — not about the machine — so a refusal must not end the
+   * batch. Absent/false keeps the shared-device behaviour byte for byte.
+   */
+  perAccountDevice?: boolean
 }
 
 /**
@@ -120,6 +130,11 @@ export const POOL_BATCH_GAP_MS = 400
  * later account would hit the same wall and each of those calls is a wasted
  * upstream request against an endpoint that just said "stop".
  *
+ * That stop is only correct while every account shares the machine's id. With
+ * `deps.perAccountDevice` the id is per ACCOUNT, so the same `9095` says "this
+ * account already used its own slot" — the batch records it and keeps going,
+ * exactly like the `already`/`failed` cases.
+ *
  * Never throws: every problem becomes a row.
  */
 export async function checkinAllAccounts(
@@ -131,7 +146,7 @@ export async function checkinAllAccounts(
     if (index > 0) await (deps.wait ?? defaultWait)(POOL_BATCH_GAP_MS)
     const row = await checkinOne(target, deps)
     rows.push(row)
-    if (row.status === 'device-already') {
+    if (row.status === 'device-already' && deps.perAccountDevice !== true) {
       // Say so on the remaining rows rather than leaving them blank: a user who
       // sees two rows and then nothing cannot tell "not attempted" from "broken".
       for (const skipped of targets.slice(index + 1)) {

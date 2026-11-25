@@ -41,12 +41,12 @@ import type { TraeWebAccountState, TraeWebCredits } from './status-paths.ts'
 import type { TraeCheckinClaim, TraeCheckinStatus } from './usage.ts'
 import { configuredAccountsOf, drawImagePanelsOf, TRAE_REFRESH_INTERVAL_DEFAULT_MINUTES, TRAE_REFRESH_INTERVAL_MINUTES, unwrapVolatile, unwrapVolatileDeep } from './status-paths.ts'
 import type { TraeAdapter } from './adapter.ts'
-import { isTraeAccountId, traeAccountId, TraeCredentialStore } from './auth.ts'
+import { isTraeAccountId, traeAccountId, TraeCredentialStore, type TraeCredential } from './auth.ts'
 import { piAiRuntimeInfo } from './pi-ai-runtime.ts'
 import type { TraeActivityDiscount } from './promo.ts'
 import { applyImageSelection, deriveCatalog, discoveredCatalog, FALLBACK_CONTEXT_WINDOW, FALLBACK_TRAE_MODELS, fallbackModelsFor, mergeTraeModelSources, sanitizeCatalog, servedContextWindow, TraeCatalog, traeInputModalities, traeModelDisplayName, withChatCallableFunctions, type TraeModelInfo } from './catalog.ts'
 import { refreshTraeCredential, type TraeRefreshDevice } from './refresh.ts'
-import { readTraeIdentity, resolveTraeIdentity, type TraeIdentity } from './identity.ts'
+import { checkinDeviceIdOf, readTraeIdentity, resolveTraeIdentity, type TraeIdentity } from './identity.ts'
 import { traeStorageCandidates, type TraeEdition } from './paths.ts'
 import { orderTraeModels } from './model-order.ts'
 import { panelOfProvider, providerOfPanel, regionOfCredential, regionOfEdition, regionOfHost, regionOfPanel, regionOfUserRegion, REGION_GATEWAYS, TRAE_ENTERPRISE_HOST, TRAE_PANELS, type TraePanel, type TraeRegion, type TraeRegionGateways } from './region.ts'
@@ -619,6 +619,7 @@ const regionStateConfig = z.object({
     // 0 = the historical one-word probe. A larger value pads the probe request so
     // a size-based refusal shows up in the test instead of in the user's real turn.
     probeInputTokens: z.number().default(0).description('账号池测试请求填充的 token 量（0 = 最小请求，不填充）'),
+    perAccountCheckinDevice: z.boolean().default(false).description('多账号共用本机设备号时，每台设备每天只能签到一个账号。打开后为每个账号派生独立的签到设备号（默认关闭，关闭时行为与原来完全一致）。'),
   }).default({}),
 })
 
@@ -1272,7 +1273,13 @@ export function apply(ctx: Context, config: Config): void {
     // read still gets the read-only usage panel.
     const usageClient = new TraeUsageClient({
       credential: () => store.resolve(),
-      deviceId: async () => (await identity()).deviceId,
+      // `current()` rather than `resolve()`: this only needs to know WHICH
+      // account the shared client bills, and resolving here would refresh a
+      // token a second time on every check-in read.
+      deviceId: async () => {
+        const credential = await store.current()
+        return credential === undefined ? (await identity()).deviceId : await checkinDeviceIdFor(panel, credential, identity)
+      },
     })
 
     stacks[panel] = {
@@ -1321,7 +1328,10 @@ export function apply(ctx: Context, config: Config): void {
             const credential = store.resolveCredentialOf(accountId)
             return new TraeUsageClient({
               credential: async () => credential,
-              deviceId: async () => (await identity()).deviceId,
+              deviceId: async () => {
+                const value = await credential
+                return value === undefined ? (await identity()).deviceId : await checkinDeviceIdFor(panel, value, identity)
+              },
             })
           })()
         if (region === 'ai') {
@@ -1346,7 +1356,10 @@ export function apply(ctx: Context, config: Config): void {
             const credential = store.resolveCredentialOf(accountId)
             return new TraeUsageClient({
               credential: async () => credential,
-              deviceId: async () => (await identity()).deviceId,
+              deviceId: async () => {
+                const value = await credential
+                return value === undefined ? (await identity()).deviceId : await checkinDeviceIdFor(panel, value, identity)
+              },
             })
           })()
         const claim = await client.claimCheckin()
@@ -1526,6 +1539,30 @@ export function apply(ctx: Context, config: Config): void {
   /** This panel's saved pool preferences, unwrapped and defaulted to OFF. */
   const poolPreferencesOf = (panel: TraePanel): TraePoolPreferences =>
     unwrapVolatileDeep(regionStateOf(current(), panel).pool) ?? {}
+
+  /**
+   * Which `x-device-id` a CHECK-IN request for one account should carry.
+   *
+   * Trae keys the daily check-in slot on this header, and by default it is the
+   * installation's own id (`identity().deviceId`) — the same value the chat path
+   * sends, which is why a pool of several accounts spends one machine's single
+   * daily slot and the rest come back `9095`.
+   *
+   * With `pool.perAccountCheckinDevice` ON, each account gets a stable id derived
+   * from the machine id and the account id (`checkinDeviceIdOf`), so the accounts
+   * no longer collide on one slot. Default OFF means every request sends exactly
+   * the id it sent before this existed — the switch is the only thing that can
+   * change the header.
+   */
+  const checkinDeviceIdFor = async (
+    panel: TraePanel,
+    credential: TraeCredential,
+    base: () => Promise<TraeIdentity>,
+  ): Promise<string> => {
+    const value = await base()
+    if (poolPreferencesOf(panel).perAccountCheckinDevice !== true) return value.deviceId
+    return checkinDeviceIdOf(value, traeAccountId(credential))
+  }
 
   /**
    * Project one account's card credits onto the pool's ranking shape.
@@ -1873,14 +1910,23 @@ export function apply(ctx: Context, config: Config): void {
     const probeDeps = (): TraePoolRunnerDeps => ({
       credentialFor: accountId => stacks[panel].store.resolveCredentialOf(accountId),
       checkinStatusOf: async credential => {
-        const client = new TraeUsageClient({ credential: async () => credential, deviceId: async () => (await stacks[panel].identity()).deviceId })
+        const client = new TraeUsageClient({
+          credential: async () => credential,
+          deviceId: () => checkinDeviceIdFor(panel, credential, () => stacks[panel].identity()),
+        })
         return client.checkinStatus()
       },
       claimCheckinOf: async credential => {
-        const client = new TraeUsageClient({ credential: async () => credential, deviceId: async () => (await stacks[panel].identity()).deviceId })
+        const client = new TraeUsageClient({
+          credential: async () => credential,
+          deviceId: () => checkinDeviceIdFor(panel, credential, () => stacks[panel].identity()),
+        })
         return client.claimCheckin()
       },
       chatFor: credential => chatBridgeFor(traeAccountId(credential)),
+      // Read at call time, not at construction: the switch can be flipped
+      // between two batches without restarting the plugin.
+      perAccountDevice: poolPreferencesOf(panel).perAccountCheckinDevice === true,
     })
     /** How much text a probe should carry for this panel (0 = the minimal probe). */
     const probeInputTokensOf = (stored: TraePanel): number => {
@@ -1924,7 +1970,10 @@ export function apply(ctx: Context, config: Config): void {
         for (const target of await poolTargetsOf(stored)) {
           const credential = await stacks[stored].store.resolveCredentialOf(target.accountId)
           if (credential === undefined) continue
-          const client = new TraeUsageClient({ credential: async () => credential, deviceId: async () => (await stacks[stored].identity()).deviceId })
+          const client = new TraeUsageClient({
+            credential: async () => credential,
+            deviceId: () => checkinDeviceIdFor(stored, credential, () => stacks[stored].identity()),
+          })
           try {
             const status = await client.checkinStatus()
             const measured: TraePoolCheckinState = { checkedIn: status.checkedIn, deviceCheckedIn: status.didCheckedIn, enabled: status.enabled }
@@ -2389,6 +2438,9 @@ export function apply(ctx: Context, config: Config): void {
     read: readAutoCheckin,
     write: writeAutoCheckin,
     run: async done => await poolDepsOf('cn', done).checkin?.('cn') ?? [],
+    // `9095` means "this MACHINE is spent" only while all accounts share the
+    // machine's device id; with per-account ids it only finishes that account.
+    perAccountDevice: () => poolPreferencesOf('cn').perAccountCheckinDevice === true,
   })
   ctx.effect(() => {
     const tick = (): void => { void automaticCheckin.tick().catch(() => ctx.logger.warn('无法读取或保存 Trae 自动签到进度，请检查本地数据目录的访问权限。')) }

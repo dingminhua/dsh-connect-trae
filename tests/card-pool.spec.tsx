@@ -77,7 +77,7 @@ function makeScope(initial: Record<string, unknown> = {}, writable = true) {
  * shape `nextRegionPool` returns): a per-panel (`cn`) slot holding `pool`.
  * `cnSlotPool` is the saved `TraePoolPreferences` for the cn panel.
  */
-function regionsOf(cnSlotPool: { enabled?: boolean; targetModelId?: string; memberAccountIds?: string[] }): Record<string, unknown> {
+function regionsOf(cnSlotPool: { enabled?: boolean; targetModelId?: string; memberAccountIds?: string[]; probeInputTokens?: number; perAccountCheckinDevice?: boolean }): Record<string, unknown> {
   return {
     regions: {
       cn: { pool: cnSlotPool },
@@ -89,7 +89,7 @@ function regionsOf(cnSlotPool: { enabled?: boolean; targetModelId?: string; memb
 
 /** A settings document whose cn panel already saved a pool membership. */
 function pooledInitial(
-  poolPrefs: { enabled: boolean; targetModelId?: string; memberAccountIds: string[]; probeInputTokens?: number },
+  poolPrefs: { enabled: boolean; targetModelId?: string; memberAccountIds: string[]; probeInputTokens?: number; perAccountCheckinDevice?: boolean },
 ): Record<string, unknown> {
   return regionsOf({ ...poolPrefs })
 }
@@ -104,6 +104,7 @@ interface PoolOverride {
   checkinSupported?: boolean
   deleteSupported?: boolean
   probeInputTokens?: number
+  perAccountCheckinDevice?: boolean
   targetModelId?: string
   staleTargetModelId?: string
   targetModelSource?: TraeWebPool['targetModelSource']
@@ -145,6 +146,7 @@ function basePool(overrides: PoolOverride = {}): TraeWebPool {
     ...(overrides.targetModelId === undefined ? {} : { targetModelId: overrides.targetModelId }),
     targetModelSource: overrides.targetModelSource ?? 'preferred',
     probeInputTokens: overrides.probeInputTokens ?? 0,
+    ...(overrides.perAccountCheckinDevice === undefined ? {} : { perAccountCheckinDevice: overrides.perAccountCheckinDevice }),
     ...(overrides.staleTargetModelId === undefined ? {} : { staleTargetModelId: overrides.staleTargetModelId }),
     memberAccountIds: overrides.memberAccountIds ?? ['acc-a', 'acc-b'],
     effectiveMemberAccountIds: ['acc-a', 'acc-b'],
@@ -496,6 +498,49 @@ describe('AccountPool card section', () => {
     expect(select.value).toBe('10000')
     fireEvent.click(within(poolSection()).getByRole('button', { name: 'row.poolDiscard' }))
     expect((within(poolSection()).getByRole('combobox', { name: 'row.poolProbeSizeLabel' }) as HTMLSelectElement).value).toBe('50000')
+  })
+
+  it('hides the per-account check-in device switch when the Host does not advertise it', () => {
+    // Same clock skew as the probe size: the Host only learns the field on a
+    // restart, so a card newer than the Host must not offer a switch whose save
+    // the schema would drop and whose read-back would then fail.
+    const { scope } = makeScope(pooledInitial({ enabled: true, memberAccountIds: ['acc-a'] }))
+    renderPool(basePool(), scope)
+    expect(within(poolSection()).queryByRole('checkbox', { name: 'row.poolPerAccountDevice' })).toBeNull()
+  })
+
+  it('saves the per-account check-in device switch as a draft preference', async () => {
+    const { scope, calls } = makeScope(pooledInitial({ enabled: true, memberAccountIds: ['acc-a'] }))
+    renderPool(basePool({ perAccountCheckinDevice: false }), scope)
+
+    const toggle = within(poolSection()).getByRole('checkbox', { name: 'row.poolPerAccountDevice' }) as HTMLInputElement
+    expect(toggle.checked).toBe(false)
+
+    // Draft only until saved: no write, and the card says it is dirty.
+    fireEvent.click(toggle)
+    expect(toggle.checked).toBe(true)
+    expect(calls.length).toBe(0)
+
+    fireEvent.click(saveButton())
+    await waitFor(() => { expect(calls.length).toBe(1) })
+    const written = calls[0]!.value as { cn?: { pool?: { perAccountCheckinDevice?: boolean } } }
+    expect(written.cn?.pool?.perAccountCheckinDevice).toBe(true)
+
+  })
+
+  it('discards an unsaved per-account check-in device switch back to the saved value', () => {
+    // A separate render on purpose: after a save the SAVED value is already the
+    // new one, so the post-save discard above would (correctly) restore `true`.
+    // Discard only has something to undo while the draft is unsaved.
+    const { scope, calls } = makeScope(pooledInitial({ enabled: true, memberAccountIds: ['acc-a'] }))
+    renderPool(basePool({ perAccountCheckinDevice: false }), scope)
+    const toggle = within(poolSection()).getByRole('checkbox', { name: 'row.poolPerAccountDevice' }) as HTMLInputElement
+    fireEvent.click(toggle)
+    expect(toggle.checked).toBe(true)
+    fireEvent.click(within(poolSection()).getByRole('button', { name: 'row.poolDiscard' }))
+    const after = within(poolSection()).getByRole('checkbox', { name: 'row.poolPerAccountDevice' }) as HTMLInputElement
+    expect(after.checked).toBe(false)
+    expect(calls.length).toBe(0)
   })
 
   it('omits the check-in column when checkinSupported is false', () => {

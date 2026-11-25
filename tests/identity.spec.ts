@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { identityHeaders, pickTraeStorageIdentity, readTraeCliIdentity, readTraeIdentity, resolveTraeIdentity } from '../src/identity.ts'
+import { checkinDeviceIdOf, identityHeaders, pickTraeStorageIdentity, readTraeCliIdentity, readTraeIdentity, resolveTraeIdentity } from '../src/identity.ts'
 
 const cleanup: string[] = []
 afterEach(async () => { await Promise.all(cleanup.splice(0).map(path => rm(path, { recursive: true, force: true }))) })
@@ -209,6 +209,26 @@ describe('Trae persisted identity', () => {
       ],
       { platform: 'win32', home: root, env: {} },
     )).rejects.toThrow(/Trae storage was not found/)
+  })
+})
+
+describe('check-in device id derivation', () => {
+  const base = { edition: 'cn' as const, machineId: 'telemetry-machine', deviceId: '999000111222333', platform: 'darwin' as const }
+
+  it('derives a stable 32-hex id that is unique per account and never the machine id', () => {
+    const a = checkinDeviceIdOf(base, 'a'.repeat(24))
+    const b = checkinDeviceIdOf(base, 'b'.repeat(24))
+    // Stable: the whole point is that a derived id must not change between runs,
+    // otherwise the account would look like a new device every day.
+    expect(checkinDeviceIdOf(base, 'a'.repeat(24))).toBe(a)
+    expect(a).toMatch(/^[0-9a-f]{32}$/)
+    expect(a).not.toBe(b)
+    expect(a).not.toBe(base.deviceId)
+  })
+
+  it('keys the derivation on the machine id, so two machines cannot collide', () => {
+    const other = { ...base, deviceId: '999000111222334' }
+    expect(checkinDeviceIdOf(base, 'a'.repeat(24))).not.toBe(checkinDeviceIdOf(other, 'a'.repeat(24)))
   })
 })
 
