@@ -13,6 +13,7 @@ import {
   outcomeOfVerdict,
   pickAccount,
   pickFreeModel,
+  poolCreditsOf,
   poolKeyOfPanel,
   rankPool,
   resolveTargetModel,
@@ -584,5 +585,79 @@ describe('checkinAllAccounts', () => {
       claimCheckinOf: async () => { throw new Error('upstream 500') },
     }))
     expect(rows.every(row => row.status === 'failed')).toBe(true)
+  })
+})
+
+describe('poolCreditsOf (issue #102)', () => {
+  const weekMs = NOW + 5 * 86_400_000
+
+  it('ranks on the 7-DAY bucket, so credit lapsing in 3–7 days is not invisible', () => {
+    // The reported shape: both accounts have 0 within 3 days, but one has
+    // 1,143.70 lapsing within 7. The old code read `within3d`, so both projected
+    // `expiringSoon: 0` and ranking fell through to total credits — the account
+    // that should be spent first stayed invisible.
+    const projected = poolCreditsOf({
+      total: 1_843.70,
+      generalAvailable: 1_843.70,
+      workAvailable: 0,
+      expiry: {
+        within24h: { total: 0, packs: 0 },
+        within3d: { total: 0, packs: 0 },
+        within7d: { total: 1_143.70, packs: 4, earliestExpiresAtMs: weekMs },
+        expired: { total: 0, packs: 0 },
+      },
+    })
+    expect(projected.expiringSoon).toBe(1_143.70)
+    expect(projected.nearestExpiryMs).toBe(weekMs)
+  })
+
+  it('keeps the tiers independent: a 24-hour pack still wins the soonest date', () => {
+    // The 7-day bucket is CUMULATIVE and contains 24-hour credit too. Its
+    // `earliestExpiresAtMs` is the same instant as the 24h bucket's, so reading
+    // the 7-day bucket keeps the soonest date correct instead of moving it out.
+    const soon = NOW + 3_600_000
+    const projected = poolCreditsOf({
+      total: 500,
+      generalAvailable: 500,
+      workAvailable: 0,
+      expiry: {
+        within24h: { total: 100, packs: 1, earliestExpiresAtMs: soon },
+        within3d: { total: 300, packs: 2, earliestExpiresAtMs: soon },
+        within7d: { total: 700, packs: 3, earliestExpiresAtMs: soon },
+        expired: { total: 0, packs: 0 },
+      },
+    })
+    expect(projected.expiringSoon).toBe(700)
+    expect(projected.nearestExpiryMs).toBe(soon)
+  })
+
+  it('reports zero when there is no expiry summary at all', () => {
+    // An account whose upstream sent no end times must not be treated as
+    // at-risk; the projection stays total-shaped and rankable.
+    expect(poolCreditsOf({ total: 10, generalAvailable: 10, workAvailable: 0 })).toEqual({
+      total: 10,
+      generalAvailable: 10,
+      workAvailable: 0,
+      expiringSoon: 0,
+    })
+  })
+
+  it('ranks a 7-day-at-risk account ahead of a richer one with nothing lapsing', () => {
+    // End-to-end on the real ordering: this is the exact failure described in
+    // issue #102 — nearly equal totals, only one has 7-day credit at risk.
+    const atRisk = poolCreditsOf({
+      total: 1_843.70, generalAvailable: 1_843.70, workAvailable: 0,
+      expiry: {
+        within24h: { total: 0, packs: 0 }, within3d: { total: 0, packs: 0 },
+        within7d: { total: 1_143.70, packs: 4, earliestExpiresAtMs: weekMs },
+        expired: { total: 0, packs: 0 },
+      },
+    })
+    const rich = poolCreditsOf({ total: 1_844.77, generalAvailable: 1_844.77, workAvailable: 0 })
+    const ranked = rankPool([
+      member('rich', { credits: rich }),
+      member('at-risk', { credits: atRisk }),
+    ], NOW)
+    expect(ranked.map(row => row.account.id)).toEqual(['at-risk', 'rich'])
   })
 })

@@ -1,5 +1,25 @@
 # Changelog
 
+## 4.19.1 (2026-11-25)
+
+修掉 issue #102：账号池开着时，「N 积分将在 7 天内过期」会在两个账号的数之间反复横跳，看起来像读数坏了。两个缺陷叠加：
+
+### 一、提示没说它是「谁」的
+
+`credits.expiry` 由 `web_user_ent_usage` 的一次快照算出，而那次读用的是账号池轮换后**当前计费**的账号——这是 issue #95 时刻意做对的语义（id、名字、到期、余额必须说的是同一个账号）。但提示文案只报数字，不说账号名，于是换人计费时同一个提示就换了数：1,143 与 143 两个数都是真的，只是属于两个账号。
+
+**改法**：四条 `row.expiryWarning*` 中英文案统一加「账号 {account}：」前缀，卡片与 composer 浮层两个渲染点都传 `signedIn.accountName`。两处仍共用 `expiry-ladder.ts` 的同一套 key，不会再次各自漂移。
+
+### 二、池的排序键看不见 7 天桶（真正的 bug）
+
+`poolCreditsOfAccount()` 的 `expiringSoon` / `nearestExpiryMs` 取自 `within3d`，而提示报的是最紧的非空档（常常是 `within7d`）。实测两个账号 `within3d` 都是 0、但 7 天内到期分别 1,143.70 与 142.77：两边 `expiringSoon` 都是 0，`rankPool()` 的「快过期的先花」这条规则**从未触发**，排序直接落到总积分——两个账号余额常年只差 0.1~0.9 分，每扣一轮分就换人计费。这与 `rankPool` 注释里记的 workbuddy issue #70 是同一个 bug 形状，只是在 3 天/7 天这一层重现。
+
+**改法**：把投影抽成纯函数 `poolCreditsOf()`（`src/account-pool.ts`）并改用 `within7d`，`src/index.ts` 调用它。7 天桶是累积嵌套的，它的 `earliestExpiresAtMs` 与 24 小时桶是同一时刻，所以读宽档**不会**丢失紧急度，只是不再忽略 3–7 天之间那笔钱。字段注释里的「3 days」同步改成「7 days」。
+
+**测试（先红后绿，净增 6 条）**：`poolCreditsOf` 4 条——7 天桶可见、累积桶不丢最早到期时刻、无到期数据时为 0、端到端排序把 7 天风险账号排在余额更高的账号之前；composer 与卡片各 1 条——提示带账号名。全部先确认失败再实现到通过。
+
+验证：`pnpm run check`（双 tsconfig、118 文件 / 1537 例、构建完成）、`pnpm run verify:privacy`（17 项全过，无 SKIP）。
+
 ## 4.19.0 (2026-11-25)
 
 ### 可选「每个账号一个签到设备号」：多账号不再只领一份（issue #100 / PR #101）

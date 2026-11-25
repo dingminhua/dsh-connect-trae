@@ -189,8 +189,9 @@ export interface TraeAccountPanelProps {
  * expiry data is not evidence that nothing lapses, so the component stays silent
  * rather than reassuring.
  */
-function ExpiryNotice({ expiry, t }: {
+function ExpiryNotice({ expiry, accountName, t }: {
   expiry: TraeWebCreditExpiry
+  accountName: string
   t: TraeAccountPanelProps['t']
 }): ReactNode {
   // The TIER comes from the shared ladder (`./expiry-ladder.ts`), which the
@@ -201,6 +202,7 @@ function ExpiryNotice({ expiry, t }: {
   const notice = expiryNotice(expiry)
   if (notice === undefined) return null
   const message = t(expiryHeadlineKey(notice.tier), {
+    account: accountName,
     total: formatNumber(notice.total),
     packs: String(notice.packs),
   })
@@ -609,7 +611,7 @@ export function TraeAccountPanel({
           should do about my balance?" — and unlike them it is actionable while
           the account still works. */}
       {signedIn && creditsExpiry !== undefined
-        ? <ExpiryNotice expiry={creditsExpiry} t={t} />
+        ? <ExpiryNotice expiry={creditsExpiry} accountName={status.accountName} t={t} />
         : null}
       {rescanNote === undefined ? null : <p className="dsm-trae-usage-note" role="status">{rescanNote}</p>}
 

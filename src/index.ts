@@ -68,7 +68,7 @@ import { MAX_PROBE_INPUT_TOKENS, probeBody, probeModelsSequentially, probeOneMod
 import { TraeUsageClient } from './usage.ts'
 import { registerTraeUsageRoute, toCheckin, toCredits, type TraePoolCheckinState, type TraePoolDeps } from './web-status.ts'
 import type { TraePoolPreferences, TraeRefreshIntervalMinutes } from './status-paths.ts'
-import { billableMembers, effectiveMembersOf, pickAccount, poolKeyOfPanel, rankPool, resolveTargetModel } from './account-pool.ts'
+import { billableMembers, effectiveMembersOf, pickAccount, poolCreditsOf, poolKeyOfPanel, rankPool, resolveTargetModel } from './account-pool.ts'
 import type { TraePoolCredits, TraePoolMember, TraePoolOutcome, TraePoolProbe } from './account-pool.ts'
 import { checkinAllAccounts, probeUpdatesOf, testAllAccounts, type TraePoolRunnerDeps } from './account-pool-run.ts'
 import type { TraePoolCheckinRow, TraePoolTestRow } from './account-pool-run.ts'
@@ -1614,17 +1614,9 @@ export function apply(ctx: Context, config: Config): void {
   const poolCreditsOfAccount = async (panel: TraePanel, accountId: string): Promise<TraePoolCredits | undefined> => {
     const credits = await stacks[panel].creditsOfAccount(accountId)
     if (credits === undefined) return undefined
-    const within3d = credits.expiry?.within3d
-    const projected: TraePoolCredits = {
-      // The SPENDABLE figure, not the wider `available`: SOLO chat only drains the
-      // General bucket, so ranking by the total would put an account with a large
-      // Work balance and no General credit in front of one that can serve.
-      total: credits.generalAvailable,
-      generalAvailable: credits.generalAvailable,
-      workAvailable: credits.workAvailable,
-      expiringSoon: within3d?.total ?? 0,
-      ...within3d?.earliestExpiresAtMs === undefined ? {} : { nearestExpiryMs: within3d.earliestExpiresAtMs },
-    }
+    // The SPENDABLE figure, not the wider `available`, and the 7-DAY expiry
+    // bucket are both applied by the shared projection — see {@link poolCreditsOf}.
+    const projected = poolCreditsOf(credits)
     // Every successful read is also the router's copy of this balance.
     poolCreditCache[panel].set(accountId, projected)
     return projected

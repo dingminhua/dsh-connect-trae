@@ -126,6 +126,28 @@ function tab(id: PanelId): HTMLButtonElement {
   return found
 }
 
+describe('the card expiry notice names its account (issue #102)', () => {
+  it('attributes the expiry sentence to the account the usage document describes', async () => {
+    const usage = usageOf({
+      accountName: 'Pooled User',
+      credits: {
+        total: 1_843.70, consumed: 700, available: 1_143.70, workAvailable: 0, generalAvailable: 1_143.70,
+        accounts: [],
+        expiry: {
+          within24h: { total: 0, packs: 0 },
+          within3d: { total: 0, packs: 0 },
+          within7d: { total: 1_143.70, packs: 4, earliestExpiresAtMs: Date.now() + 3 * 86_400_000 },
+          expired: { total: 0, packs: 0 },
+        },
+      },
+    })
+    await renderOpen(usage)
+    const notice = globalThis.document.querySelector('.dsm-trae-expiry')
+    expect(notice).not.toBeNull()
+    expect(notice?.textContent).toContain('Pooled User')
+  })
+})
+
 describe('the card splits into three sections', () => {
   it('opens on the account section, with the other two panels hidden', async () => {
     await renderOpen()

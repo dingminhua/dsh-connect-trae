@@ -719,6 +719,18 @@ describe('the expiry ladder picks the tightest bucket that has credit', () => {
     expect(text).toContain('600')
   })
 
+  it('names the account the notice describes, so a pool switch reads as a new owner, not a broken figure (issue #102)', async () => {
+    // The usage document's expiry is always ONE account's — the one the pool
+    // just billed. Without a subject, a switch from A (1,143) to B (143) looks
+    // like the number broke; with it, it reads as "different account".
+    const text = await headlineOf({
+      within24h: { total: 0, packs: 0 },
+      within3d: { total: 0, packs: 0 },
+      within7d: { total: 600, packs: 2, earliestExpiresAtMs: at(5) },
+    })
+    expect(text).toContain('demo-user')
+  })
+
   it('names the soonest expiry of the tier it chose', async () => {
     // The 3-day tier has its own soonest time, and it is the one to show: a
     // pack inside that band is what the reader is planning around.

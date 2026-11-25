@@ -216,10 +216,11 @@ function soonestExpiryOf(expiry: TraeWebCreditExpiry): number | undefined {
  * card's account panel uses too — the two surfaces render the same locale
  * keys, so the choice must not be made twice.
  */
-function expiryMessageOf(expiry: TraeWebCreditExpiry, t: NonNullable<ComposerPointsProps['t']>): string {
+function expiryMessageOf(expiry: TraeWebCreditExpiry, accountName: string, t: NonNullable<ComposerPointsProps['t']>): string {
   const notice = expiryNotice(expiry)
   if (notice === undefined) return ''
   return t(expiryHeadlineKey(notice.tier), {
+    account: accountName,
     total: formatCredits(notice.total),
     packs: String(notice.packs),
   })
@@ -1071,7 +1072,7 @@ export function ComposerPoints(props: ComposerPointsProps) {
               so "there is a box" and "there is a sentence" cannot disagree. */}
           {activeRegion === 'cn' && expiryNoticeOf(signedIn) !== undefined
             ? <div className={`dsm-trae-expiry ${expiryToneClass(expiryNoticeOf(signedIn)!.tier)}`} role="status">
-                <span>{expiryMessageOf(signedIn!.credits!.expiry!, t)}</span>
+                <span>{expiryMessageOf(signedIn!.credits!.expiry!, signedIn!.accountName, t)}</span>
                 {expiryNoticeOf(signedIn)!.soonestExpiresAtMs === undefined
                   ? null
                   : <span className="dsm-trae-expiry-detail">
