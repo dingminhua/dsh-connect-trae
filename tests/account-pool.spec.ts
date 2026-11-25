@@ -561,6 +561,24 @@ describe('checkinAllAccounts', () => {
     expect(rows.map(row => row.status)).toEqual(['device-already', 'device-already'])
   })
 
+  it('keeps checking in later accounts when each account has its own device id', async () => {
+    // With per-account check-in device ids, `9095` is a fact about THIS ACCOUNT's
+    // own device id, so it must not stop the batch the way it does when every
+    // account shares the machine's single id.
+    let claims = 0
+    const rows = await checkinAllAccounts(targets, deps({
+      perAccountDevice: true,
+      claimCheckinOf: async () => {
+        claims += 1
+        return claims === 1
+          ? { claimed: false, code: 9095, message: 'device already claimed today' }
+          : { claimed: true, code: 0, message: '' }
+      },
+    }))
+    expect(claims).toBe(2)
+    expect(rows.map(row => row.status)).toEqual(['device-already', 'claimed'])
+  })
+
   it('reports a per-account failure without aborting the batch', async () => {
     const rows = await checkinAllAccounts(targets, deps({
       claimCheckinOf: async () => { throw new Error('upstream 500') },

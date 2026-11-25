@@ -286,6 +286,15 @@ export interface TraeWebPoolAccount {
 export interface TraeWebPool {
   autoCheckinState?: { done: number; deviceBlocked: boolean; failures: number }
   autoCheckin?: boolean
+  /**
+   * Whether this Host understands `perAccountCheckinDevice` at all.
+   *
+   * Same clock skew as `probeInputTokens`: the card bundle refreshes with the
+   * page, the Host only with a restart. A card that offered the switch in front
+   * of a Host whose schema does not declare it would write a key that is dropped
+   * on the way in and then fail its own read-back check. Absent = hide the row.
+   */
+  perAccountCheckinDevice?: boolean
   enabled: boolean
   /**
    * Whether this panel offers the daily check-in at all.
@@ -491,6 +500,19 @@ export interface TraePoolPreferences {
    * "works at my size" answer at the cost of spending real credit per test.
    */
   probeInputTokens?: number
+  /**
+   * Opt-in: give every pool account its OWN check-in device id.
+   *
+   * Trae keys the daily check-in slot on `x-device-id`, which is an
+   * installation id — so with several accounts in the pool only the first one
+   * is paid each day and the rest get business code `9095`. Turning this on
+   * derives a stable per-account id (`checkinDeviceIdOf`) for the two check-in
+   * routes only, and stops treating `9095` as a machine-wide stop.
+   *
+   * Default OFF: with the switch off, every request sends exactly the id it sent
+   * before this existed.
+   */
+  perAccountCheckinDevice?: boolean
 }
 
 /**

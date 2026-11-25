@@ -357,6 +357,26 @@ export async function resolveTraeIdentity(
   }
 }
 
+/**
+ * Per-account check-in device id (opt-in, `pool.perAccountCheckinDevice`).
+ *
+ * Trae keys the daily check-in slot on `x-device-id`, and that id is a property
+ * of the INSTALLATION, so a machine with several accounts in the pool pays only
+ * the first one per day: the rest get business code `9095` (see
+ * `src/account-pool-run.ts`). The fix users can opt into is to send a
+ * per-account id derived from the real machine id and the account id, so each
+ * account presents its own slot.
+ *
+ * Derived, never stored or random: an id that changed between runs would look
+ * like a brand new device every day, and an id that ignored the machine id
+ * would collide across machines. Same shape as the CLI fallback above
+ * (`sha256(seed).slice(0, 32)`), and it is NOT the value used by the chat path —
+ * only the two check-in routes are given this id.
+ */
+export function checkinDeviceIdOf(base: Pick<TraeIdentity, 'deviceId'>, accountId: string): string {
+  return createHash('sha256').update(`trae-checkin\0${base.deviceId}\0${accountId}`).digest('hex').slice(0, 32)
+}
+
 /** Headers derived from actual persisted identity, never a new random identity per request. */
 export function identityHeaders(identity: TraeIdentity): Record<string, string> {
   return {
