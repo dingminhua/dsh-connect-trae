@@ -46,7 +46,7 @@ import { piAiRuntimeInfo } from './pi-ai-runtime.ts'
 import type { TraeActivityDiscount } from './promo.ts'
 import { applyImageSelection, deriveCatalog, discoveredCatalog, FALLBACK_CONTEXT_WINDOW, FALLBACK_TRAE_MODELS, fallbackModelsFor, mergeTraeModelSources, sanitizeCatalog, servedContextWindow, TraeCatalog, traeInputModalities, traeModelDisplayName, withChatCallableFunctions, type TraeModelInfo } from './catalog.ts'
 import { refreshTraeCredential, type TraeRefreshDevice } from './refresh.ts'
-import { checkinDeviceIdOf, readTraeIdentity, resolveTraeIdentity, type TraeIdentity } from './identity.ts'
+import { checkinDeviceIdOf, checkinRetryDeviceIdOf, readTraeIdentity, resolveTraeIdentity, type TraeIdentity } from './identity.ts'
 import { traeStorageCandidates, type TraeEdition } from './paths.ts'
 import { orderTraeModels } from './model-order.ts'
 import { panelOfProvider, providerOfPanel, regionOfCredential, regionOfEdition, regionOfHost, regionOfPanel, regionOfUserRegion, REGION_GATEWAYS, TRAE_ENTERPRISE_HOST, TRAE_PANELS, type TraePanel, type TraeRegion, type TraeRegionGateways } from './region.ts'
@@ -699,6 +699,17 @@ const REGION_KEYS: readonly TraeRegion[] = ['cn', 'ai']
  * Ten minutes matches the sibling plugin's cache and is comfortably shorter than
  * a day, so a genuine second check-in still shows up on the next poll after it.
  */
+/**
+ * Extra claim attempts one account gets after `9074`, and the gap between them.
+ *
+ * Only used when `pool.perAccountCheckinDevice` is on: a retry is worth making
+ * only with a device id the endpoint has not already turned away today, and that
+ * per-account id is the switch's whole subject. Small on purpose — this is a
+ * second chance at a limited slot, not a way to fight the endpoint.
+ */
+const CHECKIN_BUSY_RETRIES = 2
+const CHECKIN_BUSY_RETRY_GAP_MS = 5_000
+
 const CHECKIN_CACHE_MS = 10 * 60_000
 
 /**
@@ -1540,6 +1551,10 @@ export function apply(ctx: Context, config: Config): void {
   const poolPreferencesOf = (panel: TraePanel): TraePoolPreferences =>
     unwrapVolatileDeep(regionStateOf(current(), panel).pool) ?? {}
 
+  /** Read at call time, not at construction, so a flip applies to the next batch. */
+  const perAccountDeviceOf = (panel: TraePanel): boolean =>
+    poolPreferencesOf(panel).perAccountCheckinDevice === true
+
   /**
    * Which `x-device-id` a CHECK-IN request for one account should carry.
    *
@@ -1558,10 +1573,15 @@ export function apply(ctx: Context, config: Config): void {
     panel: TraePanel,
     credential: TraeCredential,
     base: () => Promise<TraeIdentity>,
+    attempt = 0,
   ): Promise<string> => {
     const value = await base()
     if (poolPreferencesOf(panel).perAccountCheckinDevice !== true) return value.deviceId
-    return checkinDeviceIdOf(value, traeAccountId(credential))
+    const accountId = traeAccountId(credential)
+    // Attempt 0 is the day's stable id. A busy retry has to present a DIFFERENT
+    // one, because the id a 9074 just refused stays refused until tomorrow.
+    if (attempt <= 0) return checkinDeviceIdOf(value, accountId)
+    return checkinRetryDeviceIdOf(value, accountId, attempt)
   }
 
   /**
@@ -1908,17 +1928,20 @@ export function apply(ctx: Context, config: Config): void {
         })
         return client.checkinStatus()
       },
-      claimCheckinOf: async credential => {
+      claimCheckinOf: async (credential, attempt = 0) => {
         const client = new TraeUsageClient({
           credential: async () => credential,
-          deviceId: () => checkinDeviceIdFor(panel, credential, () => stacks[panel].identity()),
+          deviceId: () => checkinDeviceIdFor(panel, credential, () => stacks[panel].identity(), attempt),
         })
         return client.claimCheckin()
       },
       chatFor: credential => chatBridgeFor(traeAccountId(credential)),
       // Read at call time, not at construction: the switch can be flipped
       // between two batches without restarting the plugin.
-      perAccountDevice: poolPreferencesOf(panel).perAccountCheckinDevice === true,
+      perAccountDevice: perAccountDeviceOf(panel),
+      // A 9074 retry rotates the device id, so it rides on the same switch: with
+      // the switch off the batch makes exactly one request per account, as before.
+      ...perAccountDeviceOf(panel) ? { busyRetry: { attempts: CHECKIN_BUSY_RETRIES, gapMs: CHECKIN_BUSY_RETRY_GAP_MS } } : {},
     })
     /** How much text a probe should carry for this panel (0 = the minimal probe). */
     const probeInputTokensOf = (stored: TraePanel): number => {

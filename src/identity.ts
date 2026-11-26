@@ -377,6 +377,30 @@ export function checkinDeviceIdOf(base: Pick<TraeIdentity, 'deviceId'>, accountI
   return createHash('sha256').update(`trae-checkin\0${base.deviceId}\0${accountId}`).digest('hex').slice(0, 32)
 }
 
+/**
+ * The id a RETRY of one account's check-in presents after a busy refusal (9074).
+ *
+ * `9074`「当前参与用户太多」is transient load, but measured behaviour is that the
+ * exact id it just refused stays refused for the rest of the day: the same derived
+ * id failed 20 times over five-minute gaps, while a different id succeeded on the
+ * next call. So a retry needs a different id — still derived from the machine id
+ * and account id (cross-machine collisions stay impossible, nothing is stored),
+ * salted with the attempt number so it is reproducible within the run.
+ *
+ * `attempt` must be >= 1. Attempt 0 is always `checkinDeviceIdOf`, so the first
+ * request of a day carries the same stable id it carried before this existed.
+ */
+export function checkinRetryDeviceIdOf(
+  base: Pick<TraeIdentity, 'deviceId'>,
+  accountId: string,
+  attempt: number,
+): string {
+  return createHash('sha256')
+    .update(`trae-checkin\0${base.deviceId}\0${accountId}\0retry\0${String(Math.trunc(attempt))}`)
+    .digest('hex')
+    .slice(0, 32)
+}
+
 /** Headers derived from actual persisted identity, never a new random identity per request. */
 export function identityHeaders(identity: TraeIdentity): Record<string, string> {
   return {

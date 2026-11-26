@@ -25,7 +25,7 @@ describe('automatic check-in', () => {
     const saved = {...empty(), done: ['a']}
     const run = vi.fn(async () => [{accountId:'b',accountName:'B',status:'failed' as const}])
     const write = vi.fn(async () => {})
-    const runner = createAutoCheckin({enabled: () => true, read: async () => saved, write, run, now: () => time})
+    const runner = createAutoCheckin({enabled: () => true, read: async () => saved, write, run, now: () => time, random: () => 0})
     await runner.tick(); await runner.tick()
     expect(run).toHaveBeenCalledTimes(1); expect(run).toHaveBeenCalledWith(['a'])
     time += 60_000; await runner.tick(); expect(run).toHaveBeenCalledTimes(2)
@@ -34,15 +34,52 @@ describe('automatic check-in', () => {
   it('does not repeat completed device work until the date changes', async () => {
     let time = now
     const run = vi.fn(async () => [])
-    const runner = createAutoCheckin({enabled: () => true, read: async () => ({...empty(),deviceBlocked:true}), write: async () => {},run,now: () => time})
+    const runner = createAutoCheckin({enabled: () => true, read: async () => ({...empty(),deviceBlocked:true}), write: async () => {},run,now: () => time, random: () => 0})
     await runner.tick(); expect(run).not.toHaveBeenCalled()
     time += 86400_000; await runner.tick(); expect(run).toHaveBeenCalledTimes(1)
   })
   it('serializes overlapping timer callbacks', async () => {
     let finish!: () => void
     const run = vi.fn(async () => { await new Promise<void>(resolve => {finish=resolve}); return [] })
-    const runner = createAutoCheckin({enabled: () => true, read: async () => undefined, write: async () => {},run,now: () => now})
+    const runner = createAutoCheckin({enabled: () => true, read: async () => undefined, write: async () => {},run,now: () => now, random: () => 0})
     const first = runner.tick(); await Promise.resolve(); await runner.tick()
     finish(); await first; expect(run).toHaveBeenCalledTimes(1)
+  })
+
+  it('stages the first attempt of a fresh day instead of firing at midnight', async () => {
+    // Measured 2026-11-26: the 00:00:00 shot is the one 9074 refuses most often,
+    // and every install fires at that same instant. A fresh day therefore waits a
+    // bounded random gap, and the staged deadline is persisted so a restart does
+    // not re-roll it (and so the panel can show when the next attempt will be).
+    let time = now
+    const run = vi.fn(async () => [])
+    const write = vi.fn(async () => {})
+    const runner = createAutoCheckin({enabled: () => true, read: async () => undefined, write, run, now: () => time, random: () => 0.5})
+    await runner.tick()
+    expect(run).not.toHaveBeenCalled()
+    expect(write).toHaveBeenCalledTimes(1)
+    const staged = (write.mock.calls[0] as unknown[])[0] as AutoCheckinState
+    expect(staged.retryAt).toBeGreaterThan(time)
+    time = staged.retryAt
+    await runner.tick()
+    expect(run).toHaveBeenCalledTimes(1)
+  })
+  it('does not stage an attempt when the gap is zero', async () => {
+    // `random: () => 0` must stay byte for byte on the old path: no extra write,
+    // no delay. Every existing install that has no random source behaves so.
+    const run = vi.fn(async () => [])
+    const write = vi.fn(async () => {})
+    const runner = createAutoCheckin({enabled: () => true, read: async () => undefined, write, run, now: () => now, random: () => 0})
+    await runner.tick()
+    expect(run).toHaveBeenCalledTimes(1)
+    expect(write).toHaveBeenCalledTimes(1)
+  })
+  it('spreads retry deadlines apart, so two installs do not retry on the same second', () => {
+    const failed = [{accountId:'a',accountName:'A',status:'failed' as const}]
+    const at = (random: number) => foldCheckin(empty(), failed, now, {random: () => random}).retryAt
+    expect(at(0)).toBe(now + 60_000)
+    expect(at(0.99)).toBeGreaterThan(at(0))
+    // The jitter must never shorten the wait into a hot loop.
+    expect(at(0)).toBeGreaterThanOrEqual(now + 30_000)
   })
 })
