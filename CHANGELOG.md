@@ -1,5 +1,63 @@
 # Changelog
 
+## 4.19.2 (2026-11-26)
+
+修掉 issue #98：在会话里挂上 `mode_prompt` 这个工具后，走 Trae 的每一轮都 `400`，
+报 `tools.15.function.parameters must be a JSON Schema of type object`。换成别的
+provider 同一套工具就正常——不是账号、凭据或网络的问题。
+
+### 根因：一个「属性映射表」被当成了 schema 发出去
+
+`mode_prompt` 由第三方插件 `@local/dsh-modes-pack` 注册，它直接调
+`ctx.tools.register()` 并传入 DSH 的**简写参数 DSL**：
+
+```json
+{ "mode":   { "type": "string", "required": true, "enum": ["project","creator-plus"] },
+  "action": { "type": "string", "required": true, "enum": ["read","write"] },
+  "text":   { "type": "string" } }
+```
+
+这不是 JSON Schema。把它编译成 `{ type: "object", properties, required }` 的是
+`defineTool()`；而 `tools.register()` **只校验 `output.schema`，不看
+`definition.parameters`**。于是这份映射表被原样塞进 `tools[15].function.parameters`，
+Trae 的 DeepSeek 后端在入口处要求每个工具的 `parameters` 是 object 根，且 `tools.N`
+**整批一起校验**，一个不合法就整轮 400。多数 provider 对 schema 宽松，所以只有
+Trae 爆。
+
+### 插件侧的防守：补一个 object 根，别让上游替调用方判死
+
+`normalizeTraeToolSchema`（issue #49 加的那条）只做一件事——把属性内的 draft-3
+`required: true` 提升成父级数组，**不补根级 `type: "object"`**，所以救不了这个形状。
+本版补上第二个半边：
+
+- 认出一个「裸属性映射表」并把它包成 `{ type: "object", properties, required }`，
+  与 `defineTool()` 的产物一致——**不加 `additionalProperties: false`**，
+  DSL 编译器本来也不加，加了会反过来禁止工具真正要收的参数。
+- 判断范围刻意收窄。只在两个位置尝试包裹：`normalizeTraeToolSchema` 的直接入参，
+  以及任何 `parameters` 键的值。**`properties` 容器本身不参与判断**——它也是
+  「名字 → schema」的映射，按形状猜会把每个合法 schema 的属性再包一层，
+  产生 `{ type: "object", properties: { properties: … } }`。
+- 空对象、只含 `type` 的叶子、工具记录都不会被误包。
+
+### 测试（先红后绿，净增 3 条）
+
+`tests/raw-chat.spec.ts` 新增：裸映射表长出 object 根；修复穿到 raw-chat draft
+而合法的 schema 逐字节不变；不是映射表的东西不被乱包。先确认前两条失败
+（`Tests 2 failed | 12 passed`）再实现到通过。用变异验证过它们真能抓回归：
+把包裹分支关掉，这两条立刻红。
+
+验证：`pnpm test` 118 文件 / 1548 例全过（原 1545 + 新 3）；typecheck 双 tsconfig
+0 error；build 完成；`verify:privacy` 17 项全过、无 SKIP。
+
+### 边界（写下来免得被当成已保证）
+
+- 这只修「缺 object 根」这一种不合法。**其它**畸形 schema（属性里写 `required: 5`、
+  `type` 拼错、`required` 列了不存在的字段）仍然会把整轮打挂——插件不是 schema
+  校验器，也不该替调用方静默改写语义。
+- 注册侧的正解在 `modes-pack`：用 `defineTool()` 包裹，或把 `parameters` 换成
+  原始 JSON Schema。本版是插件侧的最后一道防线，不是替代品。
+- 这条修复只在 Trae 的两条请求路径上跑（raw-chat 与 SOLO）。其它 provider 不经手。
+
 ## 4.19.1 (2026-11-25)
 
 修掉 issue #102：账号池开着时，「N 积分将在 7 天内过期」会在两个账号的数之间反复横跳，看起来像读数坏了。两个缺陷叠加：

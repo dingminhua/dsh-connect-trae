@@ -118,3 +118,54 @@ describe('JSON Schema draft-3 required normalisation (issue #49)', () => {
     expect(tools[0]?.function.parameters).toEqual({ type: 'object', properties: { path: { type: 'string', required: true } } })
   })
 })
+
+// Issue #98: a third-party plugin registered a tool through the raw
+// `ctx.tools.register()` seam and handed it DSH's shorthand parameter map —
+// `{ mode: { type: 'string', required: true, enum: [...] }, … }` with NO root
+// `type: "object"` and NO `properties`. `tools.register()` only validates
+// `output.schema`, so that map reached the wire verbatim and Trae's DeepSeek
+// backend answered `400`: `tools.15.function.parameters must be a JSON Schema
+// of type object`. The draft-3 rewrite (issue #49) does not help here: it lifts
+// per-property booleans but never adds a missing object root.
+describe('object-root repair for shorthand parameter maps (issue #98)', () => {
+  /** The exact `parameters` value issue #98 reported for `mode_prompt`. */
+  const shorthand = {
+    mode: { type: 'string', required: true, enum: ['project', 'creator-plus'] },
+    action: { type: 'string', required: true, enum: ['read', 'write'] },
+    text: { type: 'string' },
+  }
+
+  it('gives a bare property map an object root so the batch is not rejected', () => {
+    expect(normalizeTraeToolSchema(shorthand)).toEqual({
+      type: 'object',
+      properties: {
+        mode: { type: 'string', enum: ['project', 'creator-plus'] },
+        action: { type: 'string', enum: ['read', 'write'] },
+        text: { type: 'string' },
+      },
+      required: ['mode', 'action'],
+    })
+  })
+
+  it('carries the repair into the raw-chat draft, leaving valid schemas alone', () => {
+    const valid = { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] }
+    const tools = [
+      { type: 'function' as const, function: { name: 'mode_prompt', parameters: shorthand } },
+      { type: 'function' as const, function: { name: 'read', parameters: valid } },
+    ]
+    const body = buildTraeRawChatDraft({ model: 'deepseek-v4.1-flash', messages: [{ role: 'user', content: 'hi' }], tools })
+    expect(body.tools?.[0]?.function.parameters).toMatchObject({ type: 'object' })
+    expect((body.tools?.[0]?.function.parameters as Record<string, unknown>)['properties']).toBeDefined()
+    // A schema that already had a root is untouched, byte for byte.
+    expect(body.tools?.[1]?.function.parameters).toEqual(valid)
+  })
+
+  it('does not invent a root for things that are not property maps', () => {
+    // Values that are not all schemas: a tool record, an empty object, a leaf.
+    expect(normalizeTraeToolSchema({ type: 'string' })).toEqual({ type: 'string' })
+    expect(normalizeTraeToolSchema({})).toEqual({})
+    expect(normalizeTraeToolSchema({ type: 'function', function: { name: 'x' } })).toEqual({ type: 'function', function: { name: 'x' } })
+    // Already object-rooted, even without properties.
+    expect(normalizeTraeToolSchema({ type: 'object' })).toEqual({ type: 'object' })
+  })
+})

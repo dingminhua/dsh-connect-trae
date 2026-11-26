@@ -26,12 +26,31 @@ export const TRAE_RAW_CHAT_V1_PATH = '/api/ide/v1/llm_raw_chat'
  * array already present), then drops the boolean. Non-object property entries
  * are left untouched — draft-4 forbids boolean schemas anyway, so no boolean
  * `required` can hide inside them.
+ *
+ * Issue #98 added the second half of the same repair: a tool whose `parameters`
+ * is a bare PROPERTY MAP rather than a schema gets an object root. See
+ * `looksLikePropertyMap` below for why that shape reaches this function at all.
  */
 export function normalizeTraeToolSchema(value: unknown): unknown {
+  return normalizeSchemaNode(value, true)
+}
+
+/**
+ * The recursive worker. `allowWrap` says "an object HERE may be a bare property
+ * map", and it is set at exactly two places: the value this function was called
+ * with (a `parameters` value handed in directly), and the value of any
+ * `parameters` key met on the way down. It is NOT set for a `properties`
+ * container — that object is also a map of name → schema, so guessing by shape
+ * alone would rewrap every valid schema's properties and produce
+ * `{ type: 'object', properties: { properties: … } }`.
+ */
+function normalizeSchemaNode(value: unknown, allowWrap: boolean): unknown {
   if (Array.isArray(value)) {
     let changed = false
     const items = value.map((item) => {
-      const next = normalizeTraeToolSchema(item)
+      // An array is never a property map; its elements are schemas or tool
+      // records, and a tool record reaches its `parameters` by key below.
+      const next = normalizeSchemaNode(item, false)
       if (next !== item) changed = true
       return next
     })
@@ -42,7 +61,7 @@ export function normalizeTraeToolSchema(value: unknown): unknown {
   const result: Record<string, unknown> = {}
   for (const [key, entry] of Object.entries(source)) {
     if (key === 'required' && typeof entry === 'boolean') continue
-    result[key] = normalizeTraeToolSchema(entry)
+    result[key] = normalizeSchemaNode(entry, key === 'parameters')
   }
   const properties = source['properties']
   if (typeof properties === 'object' && properties !== null && !Array.isArray(properties)) {
@@ -58,8 +77,72 @@ export function normalizeTraeToolSchema(value: unknown): unknown {
       }
     }
     if (promoted.length > 0) result['required'] = promoted
+  } else if (allowWrap && looksLikePropertyMap(source)) {
+    // Issue #98: rewrap the bare map into the exact schema DSH's own
+    // `defineTool()` would have produced, so the repair matches the first-party
+    // compile pipeline rather than inventing a shape: `{ type: 'object',
+    // properties, required }`, with NO `additionalProperties` — the DSL compiler
+    // does not emit one, and adding it would forbid arguments the tool expects.
+    //
+    // `result` holds exactly the property entries here: `looksLikePropertyMap`
+    // rejects any schema/envelope key, so nothing else survived the loop above.
+    const declared: Record<string, unknown> = {}
+    const promoted: string[] = []
+    for (const [name, entry] of Object.entries(result)) {
+      declared[name] = entry
+      // Read the boolean off the SOURCE: the loop above already stripped it from
+      // `entry` (which may even be the very same object identity).
+      if ((source[name] as Record<string, unknown>)['required'] === true) promoted.push(name)
+    }
+    return {
+      type: 'object',
+      properties: declared,
+      ...promoted.length > 0 ? { required: promoted } : {},
+    }
   }
   return JSON.stringify(result) === JSON.stringify(value) ? value : result
+}
+
+/**
+ * Keys that mean "this object is a SCHEMA or a TOOL RECORD", never a property
+ * map. Issue #98's shape is a map with only property names as keys, so seeing
+ * any of these means the object is not one.
+ */
+const NOT_A_PROPERTY_MAP_KEY = new Set([
+  'type', 'properties', 'required', 'additionalProperties', 'items',
+  'oneOf', 'anyOf', 'allOf', 'enum', 'const', 'title', 'description',
+  'function', 'name', 'parameters', 'strict',
+])
+
+/**
+ * Whether `value` is DSH's shorthand PARAMETER MAP — `{ field: schema, … }` —
+ * rather than a JSON Schema (issue #98).
+ *
+ * This shape can only reach a Trae request through the raw `ctx.tools.register()`
+ * seam: it validates `output.schema` but not `definition.parameters`, so a plugin
+ * that passes the DSL map straight through ships it verbatim, while
+ * `defineTool()` would have compiled it to `{ type: 'object', properties, … }`.
+ * Trae's DeepSeek backend requires an object root and rejects the whole batch
+ * otherwise: `400 tools.15.function.parameters must be a JSON Schema of type object`.
+ *
+ * The bar is deliberately high, because a false positive would rewrite a valid
+ * schema: at least one entry, no schema/envelope key anywhere, and EVERY entry
+ * an object carrying a string `type` (or a structural keyword). A map of
+ * primitives, an empty object, and a tool record all fail this test.
+ */
+function looksLikePropertyMap(source: Record<string, unknown>): boolean {
+  const names = Object.keys(source)
+  if (names.length === 0) return false
+  for (const name of names) if (NOT_A_PROPERTY_MAP_KEY.has(name)) return false
+  return names.every((name) => isSchemaLike(source[name]))
+}
+
+/** A value that could be the right-hand side of a property entry. */
+function isSchemaLike(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  const record = value as Record<string, unknown>
+  if (typeof record['type'] === 'string') return true
+  return ['properties', 'items', 'enum', 'oneOf', 'anyOf', 'allOf'].some((key) => Object.hasOwn(record, key))
 }
 
 /** Issue #49: apply `normalizeTraeToolSchema` to an OpenAI-style tool list. */
