@@ -89,9 +89,8 @@ export interface TraePoolRunnerDeps {
   credentialFor(accountId: string): Promise<TraeCredential | undefined>
   /** Today's check-in state for one credential (CN only). */
   checkinStatusOf(credential: TraeCredential): Promise<TraeCheckinStatus>
-  /** Claim today's reward for one credential (CN only). */
   /**
-   * Claim one account's check-in.
+   * Claim one account's check-in (CN only).
    *
    * `attempt` is 0 for the first request of the day and grows by one per busy
    * retry, so the caller can present a different `x-device-id` for each attempt

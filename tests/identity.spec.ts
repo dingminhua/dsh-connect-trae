@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { checkinDeviceIdOf, identityHeaders, pickTraeStorageIdentity, readTraeCliIdentity, readTraeIdentity, resolveTraeIdentity } from '../src/identity.ts'
+import { checkinDeviceIdOf, checkinRetryDeviceIdOf, identityHeaders, pickTraeStorageIdentity, readTraeCliIdentity, readTraeIdentity, resolveTraeIdentity } from '../src/identity.ts'
 
 const cleanup: string[] = []
 afterEach(async () => { await Promise.all(cleanup.splice(0).map(path => rm(path, { recursive: true, force: true }))) })
@@ -229,6 +229,31 @@ describe('check-in device id derivation', () => {
   it('keys the derivation on the machine id, so two machines cannot collide', () => {
     const other = { ...base, deviceId: '999000111222334' }
     expect(checkinDeviceIdOf(base, 'a'.repeat(24))).not.toBe(checkinDeviceIdOf(other, 'a'.repeat(24)))
+  })
+
+  it('gives every 9074 retry its own id, still derived and never the first-attempt id', () => {
+    // A retry only helps because the id `9074` refused stays refused for the rest
+    // of the day, so each attempt must present a DIFFERENT id — while staying
+    // derivable (nothing stored) and stable for the same attempt number, which is
+    // what makes a restart mid-batch reproducible.
+    const account = 'a'.repeat(24)
+    const first = checkinDeviceIdOf(base, account)
+    const one = checkinRetryDeviceIdOf(base, account, 1)
+    const two = checkinRetryDeviceIdOf(base, account, 2)
+    expect(one).toMatch(/^[0-9a-f]{32}$/)
+    expect(one).not.toBe(first)
+    expect(one).not.toBe(two)
+    expect(checkinRetryDeviceIdOf(base, account, 1)).toBe(one)
+    // Attempts are whole numbers: a caller that hands over 1.9 gets attempt 1's id.
+    expect(checkinRetryDeviceIdOf(base, account, 1.9)).toBe(one)
+  })
+
+  it('scopes a 9074 retry id to the account and the machine', () => {
+    const attempt = 1
+    expect(checkinRetryDeviceIdOf(base, 'a'.repeat(24), attempt))
+      .not.toBe(checkinRetryDeviceIdOf(base, 'b'.repeat(24), attempt))
+    expect(checkinRetryDeviceIdOf(base, 'a'.repeat(24), attempt))
+      .not.toBe(checkinRetryDeviceIdOf({ ...base, deviceId: '999000111222334' }, 'a'.repeat(24), attempt))
   })
 })
 

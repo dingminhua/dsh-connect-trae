@@ -692,14 +692,6 @@ export const Config: z<Config> = z.object({
 const REGION_KEYS: readonly TraeRegion[] = ['cn', 'ai']
 
 /**
- * How long a measured check-in state stays usable (issue #77).
- *
- * The upstream rewards ONE check-in per device per day, so a figure measured
- * minutes ago cannot have changed; re-reading it is a pure upstream round-trip.
- * Ten minutes matches the sibling plugin's cache and is comfortably shorter than
- * a day, so a genuine second check-in still shows up on the next poll after it.
- */
-/**
  * Extra claim attempts one account gets after `9074`, and the gap between them.
  *
  * Only used when `pool.perAccountCheckinDevice` is on: a retry is worth making
@@ -710,6 +702,14 @@ const REGION_KEYS: readonly TraeRegion[] = ['cn', 'ai']
 const CHECKIN_BUSY_RETRIES = 2
 const CHECKIN_BUSY_RETRY_GAP_MS = 5_000
 
+/**
+ * How long a measured check-in state stays usable (issue #77).
+ *
+ * The upstream rewards ONE check-in per device per day, so a figure measured
+ * minutes ago cannot have changed; re-reading it is a pure upstream round-trip.
+ * Ten minutes matches the sibling plugin's cache and is comfortably shorter than
+ * a day, so a genuine second check-in still shows up on the next poll after it.
+ */
 const CHECKIN_CACHE_MS = 10 * 60_000
 
 /**
