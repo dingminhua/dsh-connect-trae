@@ -79,13 +79,17 @@ In the account pool, open **More settings** and choose **Claude style** or **Def
 
 The domestic personal account pool offers automatic check-in, disabled by default. Enable and save to check in selected members while DSH runs. Progress survives restarts and failed attempts retry with backoff. This setting is independent of automatic billing selection. Trae limits daily rewards per device, so not every member can receive a reward. Global and enterprise panels do not offer automatic check-in.
 
+The first attempt of a new day lands at a random point within 20 minutes of startup, and every retry adds 0–20% jitter on top of its backoff — midnight is when every client fires at once, and staggering there matters more than being a few seconds early.
+
 ### Several accounts on one device id (optional)
 
 Trae keys the daily check-in slot on `x-device-id`, which is an installation-level value: with several accounts on one machine, only the first one in the batch is paid each day and the rest get business code `9095`. The default behaviour stops there — `9095` counts as "this machine is done for today" and the remaining accounts are not attempted again that day.
 
 Turning on **Give each account its own check-in device id** in the pool settings and saving derives a stable, distinct `x-device-id` per account for the two check-in routes only (`sha256('trae-checkin\0' + machine id + '\0' + account id)`, first 32 hex chars), and `9095` no longer ends the batch — it means only that THIS account's slot is spent. Chat, usage and refresh paths keep the real device id, byte for byte.
 
-The switch is **off by default**; while it is off every request sends exactly the `x-device-id` it sent before. Two things stay true when it is on: one account still gets at most one reward per day (the grant side de-duplicates on account × calendar day, so a repeated claim is an idempotent success), and the upstream occasionally answers `9074` ("too many users right now") — that is a rate limit, not a device limit; wait and retry.
+The switch is **off by default**; while it is off every request sends exactly the `x-device-id` it sent before. Two things stay true when it is on: one account still gets at most one reward per day (the grant side de-duplicates on account × calendar day, so a repeated claim is an idempotent success), and the upstream occasionally answers `9074` ("too many users right now") — that is a rate limit, not a device limit.
+
+A device id that `9074` has turned away stays refused for the rest of the day (measured: the same id failed 20 times in a row, while a fresh one succeeded on the very next call). So with the switch on, automatic check-in gives each account two extra attempts, each carrying a different derived id (`sha256('trae-checkin\0' + machine id + '\0' + account id + '\0retry\0' + attempt)`). With the switch off it is still one request per account, exactly as before.
 
 ## How it works
 

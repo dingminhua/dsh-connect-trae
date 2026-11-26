@@ -580,6 +580,49 @@ describe('checkinAllAccounts', () => {
     expect(rows.map(row => row.status)).toEqual(['device-already', 'claimed'])
   })
 
+  it('retries a busy refusal with a fresh device id when the caller allows it', async () => {
+    // Measured 2026-11-26: `9074`「当前参与用户太多」is transient load, but the id it
+    // refused stays refused for the rest of the day — the same id failed 20 times
+    // over five-minute gaps, while a different id succeeded on the very next call.
+    // So the retry must present a different id, and the seam that carries the
+    // attempt number is `claimCheckinOf(credential, attempt)`.
+    const attempts: number[] = []
+    const rows = await checkinAllAccounts(targets.slice(0, 1), deps({
+      perAccountDevice: true,
+      busyRetry: { attempts: 2, gapMs: 0 },
+      claimCheckinOf: async (_credential, attempt = 0) => {
+        attempts.push(attempt)
+        return attempt === 0
+          ? { claimed: false, code: 9074, message: '当前参与用户太多' }
+          : { claimed: true, code: 0, message: '' }
+      },
+    }))
+    expect(attempts).toEqual([0, 1])
+    expect(rows.map(row => row.status)).toEqual(['claimed'])
+  })
+
+  it('gives up after the configured attempts and reports the busy code', async () => {
+    let claims = 0
+    const rows = await checkinAllAccounts(targets.slice(0, 1), deps({
+      perAccountDevice: true,
+      busyRetry: { attempts: 2, gapMs: 0 },
+      claimCheckinOf: async () => { claims += 1; return { claimed: false, code: 9074, message: '当前参与用户太多' } },
+    }))
+    expect(claims).toBe(3)
+    expect(rows.map(row => row.status)).toEqual(['failed'])
+    expect(rows[0]?.message).toBe('当前参与用户太多')
+  })
+
+  it('does not retry a busy refusal unless the caller asked for it', async () => {
+    // Default path must stay byte for byte: one request, one `failed` row.
+    let claims = 0
+    const rows = await checkinAllAccounts(targets.slice(0, 1), deps({
+      claimCheckinOf: async () => { claims += 1; return { claimed: false, code: 9074, message: '当前参与用户太多' } },
+    }))
+    expect(claims).toBe(1)
+    expect(rows.map(row => row.status)).toEqual(['failed'])
+  })
+
   it('reports a per-account failure without aborting the batch', async () => {
     const rows = await checkinAllAccounts(targets, deps({
       claimCheckinOf: async () => { throw new Error('upstream 500') },

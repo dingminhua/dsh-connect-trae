@@ -90,7 +90,15 @@ export interface TraePoolRunnerDeps {
   /** Today's check-in state for one credential (CN only). */
   checkinStatusOf(credential: TraeCredential): Promise<TraeCheckinStatus>
   /** Claim today's reward for one credential (CN only). */
-  claimCheckinOf(credential: TraeCredential): Promise<TraeCheckinClaim>
+  /**
+   * Claim one account's check-in.
+   *
+   * `attempt` is 0 for the first request of the day and grows by one per busy
+   * retry, so the caller can present a different `x-device-id` for each attempt
+   * (`checkinRetryDeviceIdOf`). Attempt 0 must stay the stable id, so a batch that
+   * never meets `9074` sends exactly what it sent before this parameter existed.
+   */
+  claimCheckinOf(credential: TraeCredential, attempt?: number): Promise<TraeCheckinClaim>
   /**
    * One minimal real chat call for one credential.
    *
@@ -109,6 +117,18 @@ export interface TraePoolRunnerDeps {
    * batch. Absent/false keeps the shared-device behaviour byte for byte.
    */
   perAccountDevice?: boolean
+  /**
+   * How many EXTRA attempts one account may make after `9074`「当前参与用户太多」,
+   * and the gap between them. Absent means zero retries — one request per account,
+   * exactly the behaviour before this existed.
+   *
+   * `9074` is transient load, not a refusal of the account, but the id it just
+   * refused stays refused for the rest of the day (measured 2026-11-26: the same
+   * id failed 20 times over five-minute gaps, while a different id succeeded on the
+   * next call). So a retry is only worth making together with a NEW device id —
+   * that pairing is what the Host wires through `claimCheckinOf`'s `attempt`.
+   */
+  busyRetry?: { attempts: number; gapMs: number }
 }
 
 /**
@@ -119,6 +139,15 @@ export interface TraePoolRunnerDeps {
  * rather than a rate-limit workaround.
  */
 export const POOL_BATCH_GAP_MS = 400
+
+/**
+ * Trae's "too many participants" code for the daily check-in claim.
+ *
+ * Not a refusal of this account: the request lost a race for a limited slot. The
+ * claim can succeed later — but only from an id the endpoint has not already
+ * turned away today (see `TraePoolRunnerDeps.busyRetry`).
+ */
+const CHECKIN_BUSY = 9074
 
 /**
  * Check in every account, one at a time.
@@ -197,7 +226,7 @@ async function checkinOne(
     // plugin deciding with a weaker signal than the one it can ask for.
   }
   try {
-    const claim = await deps.claimCheckinOf(credential)
+    const claim = await claimWithBusyRetry(credential, deps)
     if (claim.claimed) return { ...base, status: 'claimed', credit: status.credits, ...nonEmpty(claim.message) }
     if (claim.code === CHECKIN_DEVICE_ALREADY_CLAIMED) {
       return { ...base, status: 'device-already', message: claim.message }
@@ -206,6 +235,27 @@ async function checkinOne(
   } catch (error: unknown) {
     return { ...base, status: 'failed', message: messageOf(error) }
   }
+}
+
+/**
+ * One claim, plus the busy retries the caller opted into.
+ *
+ * Every retry carries its attempt number out to `claimCheckinOf`, because a retry
+ * from the SAME device id is known not to work (see `busyRetry`). Stops at the
+ * first non-`9074` answer, so a real refusal (`9095`) or a success is never
+ * retried, and the caller's attempt budget is never spent on them.
+ */
+async function claimWithBusyRetry(credential: TraeCredential, deps: TraePoolRunnerDeps): Promise<TraeCheckinClaim> {
+  const extra = Math.max(0, Math.trunc(deps.busyRetry?.attempts ?? 0))
+  const gap = Math.max(0, deps.busyRetry?.gapMs ?? 0)
+  const total = extra + 1
+  let claim = await deps.claimCheckinOf(credential, 0)
+  for (let attempt = 1; attempt < total; attempt += 1) {
+    if (claim.claimed || claim.code !== CHECKIN_BUSY) return claim
+    if (gap > 0) await (deps.wait ?? defaultWait)(gap)
+    claim = await deps.claimCheckinOf(credential, attempt)
+  }
+  return claim
 }
 
 /**
