@@ -131,8 +131,8 @@ export interface TraePoolCredits {
  * THE HORIZON IS 7 DAYS, NOT 3 (issue #102). The card's expiry notice reports
  * the tightest NON-EMPTY tier, which is often the 7-day one; using `within3d`
  * here made the ranking blind to exactly the credit the user was warned about.
- * Two accounts with nothing lapsing in 3 days but 1,143 vs 143 lapsing in 7
- * both projected `expiringSoon: 0`, so the "spend what lapses first" rule —
+ * Two accounts with nothing lapsing in 3 days but credit lapsing in 7 both
+ * projected `expiringSoon: 0`, so the "spend what lapses first" rule —
  * the whole point of {@link rankPool}'s expiry key — never fired and ranking
  * fell through to total credits. The 7-day bucket is cumulative and nested, so
  * its `earliestExpiresAtMs` is also the 24-hour bucket's soonest time: reading

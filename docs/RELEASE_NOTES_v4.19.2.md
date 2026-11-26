@@ -28,8 +28,8 @@ tools.15.function.parameters must be a JSON Schema of type object
 
 | 入口 | 编译 `parameters` 吗 |
 | --- | --- |
-| `defineTool()` | **编译**。把映射表变成 `{ type: "object", properties, required }`（`lib/index.js:800-809`、`845`） |
-| `tools.register()` | **不编译**。只校验 `output.schema`，`definition.parameters` 原样收下（`lib/index.js:2762-2770`） |
+| `defineTool()` | **编译**。把映射表变成 `{ type: "object", properties, required }`（`lib/index.js:274-283`，`defineTool()` 在 `:320` 调用它） |
+| `tools.register()` | **不编译**。只校验 `output.schema`（`:437`），`definition.parameters` 原样收下（`:433-445`） |
 
 同一份映射表，走 `defineTool()` 会被编译、走 `register()` 会原样穿过——产物长得完全不一样，而失败只发生在某一个严格 provider 的入口。多数 provider 对 schema 宽松，所以只有 Trae 爆。
 

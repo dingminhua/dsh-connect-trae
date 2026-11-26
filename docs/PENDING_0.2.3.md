@@ -59,7 +59,7 @@ devDependency 提到 0.2.3 后，`ResolvedPiAiProviderProfile` 就有 `maxImageB
 | `/plugins/dsh-connect-trae/account-credits` | GET |
 | `/plugins/dsh-connect-trae/account-status` | GET |
 
-五条写入 POST 路由（`accounts`/refresh、`transfer`、`models/refresh`、`models/test`、
+六条写入 POST 路由（`accounts`/refresh、`transfer`、`models/refresh`、`models/test`、
 `checkin`、`pool`）**保持 `required`**——它们现在 401 是正确行为。
 
 注释要写**真实理由**：不是「有回环守卫所以安全」（`loopbackOrigin()` 只看 `Origin` 头，
@@ -72,7 +72,7 @@ devDependency 提到 0.2.3 后，`ResolvedPiAiProviderProfile` 就有 `maxImageB
 **对象的内容**才能挡住，断言 HTTP 行为需要真宿主。
 
 - 断言三条只读路由的注册对象带 `auth === 'anonymous'`；
-- 断言五条写入路由**不带** `auth`（防止顺手放宽写入路由）；
+- 断言六条写入路由**不带** `auth`（防止顺手放宽写入路由）；
 - 断言 profile 字面量带 `maxImageBytes` 与 `requestImageBudgetCount`（issue #96 已有的
   `tests/adapter-image-budget-023.spec.ts` 覆盖，升级后应仍然通过）。
 

@@ -1,5 +1,100 @@
 # Changelog
 
+## 未发布
+
+> 这一节记的是 **4.19.2 之后**的改动。4.19.2 已发布，它的小节不再回改——
+> 往已发布版本的 CHANGELOG 里补内容，会让下个版本的发布说明声称 4.19.2
+> 发布过它没有的东西。
+
+### 一、补 4.19.2 漏记的一项：自动签到的 9074 换号重试
+
+4.19.2 的发布说明只写了 issue #98（schema 补 object 根），但同一版**还**包含了
+PR #104 的三处用户可见改动，双语 README 都已描述，CHANGELOG 与 GitHub Release
+却一字未提。按「CHANGELOG 记结论与依据」的要求补记在这里：
+
+| 改动 | 内容 |
+| --- | --- |
+| 首发错开 | 新的一天首次尝试落在启动后 0～20 分钟（`FIRST_ATTEMPT_SPREAD_MS`），窗口写入状态文件，重启不重掷 |
+| 退避抖动 | 在基准步长上随机加 0～20%（`RETRY_SPREAD_RATIO`），**只加不减**，不会把退避变成热循环 |
+| 换号重试 | 每个账号在 `9074` 后多两次机会（2 次 / 间隔 5 秒），每次换一个派生号（`checkinRetryDeviceIdOf`）；`attempt 0` 仍是当天那个稳定号 |
+
+**关于「这是不是绕过活动规则」——4.19.0 里写过「不做轮换、不重试」，4.19.2 反着做了，
+所以理由必须写下来。** 4.19.0 拒绝的是「靠大量设备号把一个账号的额度刷多份」。
+issue #103 的实测排除了这个方向：换 `x-machine-id`、换 UA、换设备号**形状**全部无效，
+说明 `9074` 不是指纹或风控判断，是名额挤兑；而且发放侧按「账号 × 自然日」去重，
+同一账号换号重复 claim 是幂等成功——**换号重试不产生多一份奖励**，只是让「被挤兑撞掉的
+那一次」还有机会重来。上限刻意很小（2 次、5 秒），不是对抗端点。
+
+**已知缺口（本次未修）**：重试号的盐只有「本机号 + 账号 + attempt」，**不含日期或轮次**，
+所以每一天的 attempt 序列都是 `0,1,2` 同一组。若某天第一轮三个号全被 `9074` 拒绝，
+当天其余轮次重发的仍是那三个已被拒的号——修复把「结构上不可能」推迟了一轮，没有彻底消除。
+彻底做法是在盐里加当天的 `failures` 或轮次计数，需要把该值传进池的 deps。
+
+### 二、schema 补根修复的三个缺口（同一 seam）
+
+issue #98 的修复（随 4.19.2 发布）覆盖了报告里那个形状，但代码审计发现它漏了三格，
+都是同一个「映射表没被编译」的问题：
+
+1. **参数名撞 schema 关键字时完全不生效。** 第一版按**键名**判断「这像不像映射表」，
+   于是参数名叫 `type` / `name` / `description` / `title` / `enum` / `const` / `strict`
+   的映射表被误判成 schema，包裹分支直接跳过——那正是本 issue 要修的 400。
+   DSH 的参数名不受限制，`rename({name:{type:'string'}})` 完全合法。
+   **改法**：判断依据从「键名」换成「值的形状」——schema 的 `type` 是字符串，
+   而叫 `type` 的参数映射到的是对象。只有 `properties` / `parameters` 两个容器键
+   仍然无条件排除（它们的值形状重叠到无法区分）。
+2. **空映射表 `parameters: {}` 不被包裹。** 无参工具在 DSL 里就是 `{}`，
+   `defineTool()` 把它编译成 `{ type: 'object', properties: {} }`。留空同样是缺根 400。
+3. **DSH 的 `type: 'json'` 叶子原样出去。** JSON Schema 里「任意 JSON 值」是没有
+   `type` 的 schema，`json` 不是合法类型值，同一个严格后端会拒。现在编译成 `{}`。
+
+**边界（仍然不改）**：其它畸形 schema（属性里写 `required: 5`、`type` 拼错、
+`required` 列了不存在的字段）照样会把整轮打挂——这是 seam 守卫，不是 schema 编译器，
+替调用方静默改写语义比报错更糟。`properties` 容器内部的值不参与判断：合法 DSL 的嵌套
+对象必须是 `{type:'object',properties}`，手写 DSL 的畸形嵌套不在兜底范围内。
+
+### 三、把真实积分数值从仓库里清掉（隐私）
+
+4.19.1 的 CHANGELOG 写了两个账号的**真实**积分（并自述「两个数都是真的」），
+同一组数字还进了 `src/account-pool.ts` 的注释与 `tests/account-pool.spec.ts` 的夹具。
+`tools/demo-accounts.ts` 自己写着「a balance is as identifying as the account name」，
+这条正是它禁止的事；而这些文件里 CHANGELOG 随 npm 包分发，属于「发出去就收不回来」。
+
+**改法**：CHANGELOG 改成量级描述（「千级与百级」），源码注释与测试夹具换成编造的数值。
+历史不重写（既有决定），4.19.1 那一节保持原样不动，只在此说明。
+
+**为什么两道门禁都没拦住**：`tests/privacy.spec.ts` 的 `FORBIDDEN_HASHES` 只哈希账号名 /
+id / 本机路径，`verify:privacy` 只看 PNG 字节、OCR 文本与版权署名——**没有一条检查看
+数值型余额**。「17 项全过」是真的，泄露也是真的。
+
+### 四、文档与脚本的准确性修正
+
+- `docs/ISSUE98_*`、`docs/RELEASE_NOTES_v4.19.2.md` 里引用的 `@deepseek-ai/dsh-tools`
+  行号是错的（写成 `800-809` / `2762-2770`，实际 `274-283` / `433-445`，`defineTool()`
+  在 `:320` 调用）。已更正并标注以 `0.2.2-rc.5` 为准。
+- `docs/ISSUE98_DIAGNOSIS.md` 把「required 提升分支」误称为「包裹逻辑」——那个分支当时
+  只提升 required，从不包裹。措辞已改。
+- `@local/dsh-modes-pack` 的行号由报告者提供，本机未安装该插件、未复核，已在文中标明。
+- `src/account-pool-run.ts` 把实测间隔写成「five-minute gaps」，与 issue #103 的
+  「间隔 5 秒」差 60 倍，同一批改动的 `src/auto-checkin.ts` 写的是 5s。已对齐。
+- `docs/PENDING_0.2.3.md` 写「五条写入 POST 路由」，实际列了六条。已改。
+- `RELEASING.md` 说 `verify:release`「共 20 项检查」，实际随包文件数变化（22～23 项）。
+  改成不写死数字。
+- `scripts/verify-release.mjs` 在没有随包文件改动时把「tag 之后的提交」打印成「无」，
+  读起来像「没有任何提交」，会掩盖 tag 不是分支顶端这件事。改成报文件数。
+- `AGENTS.md` 第 4 节说 pack 清单不该有 `scripts/`，但 `scripts/verify-windows.mjs`
+  是在 `files` 白名单里**有意**随包的。措辞收紧到 `scripts/verify-release.mjs`。
+
+### 测试与验证
+
+`tests/raw-chat.spec.ts` 净增 3 条（参数名撞关键字、空映射表、`json` 叶子），
+**先确认三条全红**（`Tests 3 failed | 14 passed`）再实现到通过。另外把一条既有断言
+按新语义修正：`normalizeTraeToolSchema({})` 现在返回 `{ type: 'object', properties: {} }`，
+因为该入口收到的值就是 `parameters`，`{}` 在那里只有一个读法。
+
+全仓 118 文件 / 1551 例全过；typecheck 双 tsconfig 0 error；`verify:privacy` 17 项全过、
+无 SKIP；`verify:release` 对已发布的 4.19.2 仍报 23 项一致（本节属于 4.19.2 之后的改动，
+不影响已发布产物）。
+
 ## 4.19.2 (2026-11-26)
 
 修掉 issue #98：在会话里挂上 `mode_prompt` 这个工具后，走 Trae 的每一轮都 `400`，

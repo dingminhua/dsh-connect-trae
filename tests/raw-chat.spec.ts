@@ -161,11 +161,54 @@ describe('object-root repair for shorthand parameter maps (issue #98)', () => {
   })
 
   it('does not invent a root for things that are not property maps', () => {
-    // Values that are not all schemas: a tool record, an empty object, a leaf.
+    // Values that are not all schemas: a leaf, a tool record.
     expect(normalizeTraeToolSchema({ type: 'string' })).toEqual({ type: 'string' })
-    expect(normalizeTraeToolSchema({})).toEqual({})
     expect(normalizeTraeToolSchema({ type: 'function', function: { name: 'x' } })).toEqual({ type: 'function', function: { name: 'x' } })
     // Already object-rooted, even without properties.
     expect(normalizeTraeToolSchema({ type: 'object' })).toEqual({ type: 'object' })
+    // An empty object IS wrapped when handed in directly: at this entry point the
+    // value is a `parameters`, and `{}` there is a no-argument tool. See the
+    // "empty parameter map" case below; the position, not the shape, decides.
+    expect(normalizeTraeToolSchema({})).toEqual({ type: 'object', properties: {} })
+  })
+
+  it('wraps a map whose parameter names collide with schema keywords', () => {
+    // The FIRST version judged "is this a property map" by looking at KEY NAMES,
+    // so a parameter named `type`, `name` or `description` made the whole map
+    // look like a schema and the repair silently did nothing — the exact 400 this
+    // issue is about, still there. A DSH parameter name is unconstrained, so the
+    // decision has to read the VALUE: a schema's `type` is a string, while a
+    // parameter called `type` maps to an object.
+    for (const key of ['type', 'name', 'description', 'title', 'enum', 'const', 'strict']) {
+      expect(normalizeTraeToolSchema({ [key]: { type: 'string', required: true } })).toEqual({
+        type: 'object',
+        properties: { [key]: { type: 'string' } },
+        required: [key],
+      })
+    }
+    // A parameter literally called `properties` maps to a schema OBJECT, which is
+    // indistinguishable from a schema's own container — documented not to wrap.
+    expect(normalizeTraeToolSchema({ properties: { type: 'object' } })).toEqual({ properties: { type: 'object' } })
+  })
+
+  it('gives an EMPTY parameter map an object root too', () => {
+    // `parameters: {}` is what a no-argument tool compiles to, and `defineTool()`
+    // turns it into `{ type: 'object', properties: {} }`. Left bare it is the same
+    // missing-root 400. At the parameters position there is no other reading.
+    const tools = [{ type: 'function' as const, function: { name: 'noop', parameters: {} } }]
+    const body = buildTraeRawChatDraft({ model: 'deepseek-v4.1-flash', messages: [{ role: 'user', content: 'hi' }], tools })
+    expect(body.tools?.[0]?.function.parameters).toEqual({ type: 'object', properties: {} })
+  })
+
+  it('compiles the DSH `json` leaf to an annotation-only schema', () => {
+    // DSH's DSL has a `json` type meaning "any JSON value"; JSON Schema spells
+    // that as a schema with no `type`. Shipping `type: "json"` verbatim is
+    // rejected by the same strict backend, so the repair has to mirror
+    // `defineTool()` here as well.
+    expect(normalizeTraeToolSchema({ data: { type: 'json', required: true } })).toEqual({
+      type: 'object',
+      properties: { data: {} },
+      required: ['data'],
+    })
   })
 })

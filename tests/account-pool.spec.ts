@@ -636,21 +636,21 @@ describe('poolCreditsOf (issue #102)', () => {
 
   it('ranks on the 7-DAY bucket, so credit lapsing in 3–7 days is not invisible', () => {
     // The reported shape: both accounts have 0 within 3 days, but one has
-    // 1,143.70 lapsing within 7. The old code read `within3d`, so both projected
+    // a four-figure sum lapsing within 7. The old code read `within3d`, so both
     // `expiringSoon: 0` and ranking fell through to total credits — the account
     // that should be spent first stayed invisible.
     const projected = poolCreditsOf({
-      total: 1_843.70,
-      generalAvailable: 1_843.70,
+      total: 1_842.50,
+      generalAvailable: 1_842.50,
       workAvailable: 0,
       expiry: {
         within24h: { total: 0, packs: 0 },
         within3d: { total: 0, packs: 0 },
-        within7d: { total: 1_143.70, packs: 4, earliestExpiresAtMs: weekMs },
+        within7d: { total: 1_140.60, packs: 4, earliestExpiresAtMs: weekMs },
         expired: { total: 0, packs: 0 },
       },
     })
-    expect(projected.expiringSoon).toBe(1_143.70)
+    expect(projected.expiringSoon).toBe(1_140.60)
     expect(projected.nearestExpiryMs).toBe(weekMs)
   })
 
@@ -689,14 +689,14 @@ describe('poolCreditsOf (issue #102)', () => {
     // End-to-end on the real ordering: this is the exact failure described in
     // issue #102 — nearly equal totals, only one has 7-day credit at risk.
     const atRisk = poolCreditsOf({
-      total: 1_843.70, generalAvailable: 1_843.70, workAvailable: 0,
+      total: 1_842.50, generalAvailable: 1_842.50, workAvailable: 0,
       expiry: {
         within24h: { total: 0, packs: 0 }, within3d: { total: 0, packs: 0 },
-        within7d: { total: 1_143.70, packs: 4, earliestExpiresAtMs: weekMs },
+        within7d: { total: 1_140.60, packs: 4, earliestExpiresAtMs: weekMs },
         expired: { total: 0, packs: 0 },
       },
     })
-    const rich = poolCreditsOf({ total: 1_844.77, generalAvailable: 1_844.77, workAvailable: 0 })
+    const rich = poolCreditsOf({ total: 1_843.40, generalAvailable: 1_843.40, workAvailable: 0 })
     const ranked = rankPool([
       member('rich', { credits: rich }),
       member('at-risk', { credits: atRisk }),

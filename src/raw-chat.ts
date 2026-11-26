@@ -85,11 +85,11 @@ function normalizeSchemaNode(value: unknown, allowWrap: boolean): unknown {
     // does not emit one, and adding it would forbid arguments the tool expects.
     //
     // `result` holds exactly the property entries here: `looksLikePropertyMap`
-    // rejects any schema/envelope key, so nothing else survived the loop above.
+    // rejects the container keys, so nothing else survived the loop above.
     const declared: Record<string, unknown> = {}
     const promoted: string[] = []
     for (const [name, entry] of Object.entries(result)) {
-      declared[name] = entry
+      declared[name] = compileDslLeaf(entry)
       // Read the boolean off the SOURCE: the loop above already stripped it from
       // `entry` (which may even be the very same object identity).
       if ((source[name] as Record<string, unknown>)['required'] === true) promoted.push(name)
@@ -108,11 +108,20 @@ function normalizeSchemaNode(value: unknown, allowWrap: boolean): unknown {
  * map. Issue #98's shape is a map with only property names as keys, so seeing
  * any of these means the object is not one.
  */
-const NOT_A_PROPERTY_MAP_KEY = new Set([
-  'type', 'properties', 'required', 'additionalProperties', 'items',
-  'oneOf', 'anyOf', 'allOf', 'enum', 'const', 'title', 'description',
-  'function', 'name', 'parameters', 'strict',
-])
+/**
+ * Keys whose VALUE only makes sense as a schema keyword. Used together with a
+ * shape check, never on its own — see `looksLikePropertyMap`.
+ *
+ * `type`, `name`, `description`, `title`, `enum`, `const`, `strict` and `items`
+ * are deliberately NOT listed: a DSH parameter name is unconstrained, so
+ * `{ type: { type: 'string' } }` is a perfectly ordinary one-parameter map, and
+ * judging by key names alone made the repair skip exactly those tools (the
+ * `400` this issue is about then survived). The decision therefore reads the
+ * VALUE: a schema's `type` is a string, while a parameter called `type` maps to
+ * an object. The keys kept here are the ones whose value shape overlaps too
+ * little to tell apart, so they stay disqualifying.
+ */
+const SCHEMA_CONTAINER_KEYS = new Set(['properties', 'parameters'])
 
 /**
  * Whether `value` is DSH's shorthand PARAMETER MAP — `{ field: schema, … }` —
@@ -125,15 +134,20 @@ const NOT_A_PROPERTY_MAP_KEY = new Set([
  * Trae's DeepSeek backend requires an object root and rejects the whole batch
  * otherwise: `400 tools.15.function.parameters must be a JSON Schema of type object`.
  *
- * The bar is deliberately high, because a false positive would rewrite a valid
- * schema: at least one entry, no schema/envelope key anywhere, and EVERY entry
- * an object carrying a string `type` (or a structural keyword). A map of
- * primitives, an empty object, and a tool record all fail this test.
+ * An EMPTY object counts as a map here, not as "not a schema": at the parameters
+ * position `{}` is what a no-argument tool compiles to, and there is no other
+ * reading of it. (An empty object on its own is a valid unconstrained schema,
+ * but only at a property position — which is why the caller, not this function,
+ * decides whether wrapping is even allowed.)
+ *
+ * Everything else is judged by VALUE, not by key name: every entry must itself
+ * look like a schema, and no entry may be a bare string/number/null. A tool
+ * record (`function: {...}`) and a leaf (`type: 'string'`) both fail that.
  */
 function looksLikePropertyMap(source: Record<string, unknown>): boolean {
   const names = Object.keys(source)
-  if (names.length === 0) return false
-  for (const name of names) if (NOT_A_PROPERTY_MAP_KEY.has(name)) return false
+  if (names.length === 0) return true
+  for (const name of names) if (SCHEMA_CONTAINER_KEYS.has(name)) return false
   return names.every((name) => isSchemaLike(source[name]))
 }
 
@@ -143,6 +157,26 @@ function isSchemaLike(value: unknown): boolean {
   const record = value as Record<string, unknown>
   if (typeof record['type'] === 'string') return true
   return ['properties', 'items', 'enum', 'oneOf', 'anyOf', 'allOf'].some((key) => Object.hasOwn(record, key))
+}
+
+/**
+ * Compile one DSH DSL property schema to the JSON Schema the wire accepts.
+ *
+ * Only the one difference that breaks the request is handled: DSH's `type: 'json'`
+ * means "any JSON value", which JSON Schema spells as a schema with NO `type`.
+ * Shipping `type: 'json'` verbatim is rejected by the same strict backend that
+ * rejects a missing object root (`4027 … must be a JSON Schema`), so it has to be
+ * dropped here — `defineTool()` does the same via `compileValueSchema`.
+ *
+ * Everything else is left alone on purpose: this is a seam guard, not a schema
+ * compiler. Rewriting more would silently change what a tool accepts.
+ */
+function compileDslLeaf(value: unknown): unknown {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return value
+  const record = value as Record<string, unknown>
+  if (record['type'] !== 'json') return value
+  const { type: _dropped, ...rest } = record
+  return rest
 }
 
 /** Issue #49: apply `normalizeTraeToolSchema` to an OpenAI-style tool list. */

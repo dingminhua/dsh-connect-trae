@@ -32,15 +32,15 @@ tools.15.function.parameters must be a JSON Schema of type object
 
 ## 二、它为什么能走到 wire 上
 
-`mode_prompt` 由第三方插件 `@local/dsh-modes-pack` 注册（`index.js:441-466`），它
+`mode_prompt` 由第三方插件 `@local/dsh-modes-pack` 注册（`index.js:441-466`，此位置由报告者提供；本机未安装该插件，未复核），它
 直接调 `ctx.tools.register()` 并传入上面这份 DSL 映射表。
 
-关键的接线在 `@deepseek-ai/dsh-tools`：
+关键的接线在 `@deepseek-ai/dsh-tools`（以下行号以本机安装的 `0.2.2-rc.5` 为准）：
 
 | 入口 | 是否编译 `parameters` |
 | --- | --- |
-| `defineTool()` | **是**。`parameterSchemaSpecToJsonSchema()` 把映射表编译成 `{ type: "object", properties, required }`（`lib/index.js:800-809`、`845`） |
-| `tools.register()` | **否**。只 `assertSupportedJsonSchema(output.schema)`，`definition.parameters` 原样收下（`lib/index.js:2762-2770`） |
+| `defineTool()` | **是**。`parameterSchemaSpecToJsonSchema()` 把映射表编译成 `{ type: "object", properties, required }`（`lib/index.js:274-283`，`defineTool()` 在 `:320` 调用它） |
+| `tools.register()` | **否**。只 `assertSupportedJsonSchema(output.schema)`（`:437`），`definition.parameters` 原样收下（`:433-445`） |
 
 于是走 `register()` 的那份映射表一个字节没变地上了 wire。多数 provider 对 schema
 宽松，Trae 这个后端严格，就爆在这里。
@@ -51,9 +51,9 @@ tools.15.function.parameters must be a JSON Schema of type object
 ## 三、为什么 issue #49 的修复没挡住
 
 `normalizeTraeToolSchema`（v4.18.x，issue #49）只做一件事：把属性内的 draft-3
-`required: true` 提升成父级的 `required` 数组。它的包裹逻辑挂在
+`required: true` 提升成父级的 `required` 数组。它唯一那段提升逻辑挂在
 `typeof source['properties'] === 'object'` 这个分支上——**这个形状根本没有
-`properties` 键**，于是整段被跳过，原样返回。
+`properties` 键**，于是整段被跳过，原样返回；当时也不存在任何补根级 `type` 的代码。
 
 它也不补根级 `type: "object"`。两件事都缺，所以救不了。
 

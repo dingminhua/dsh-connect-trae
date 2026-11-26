@@ -123,7 +123,7 @@ export interface TraePoolRunnerDeps {
    *
    * `9074` is transient load, not a refusal of the account, but the id it just
    * refused stays refused for the rest of the day (measured 2026-11-26: the same
-   * id failed 20 times over five-minute gaps, while a different id succeeded on the
+   * id failed 20 times at 5s intervals, while a different id succeeded on the
    * next call). So a retry is only worth making together with a NEW device id —
    * that pairing is what the Host wires through `claimCheckinOf`'s `attempt`.
    */

@@ -92,4 +92,5 @@ pnpm run verify:privacy      # 只扫发布物：PNG 字节流 + OCR 渲染文�
 1. **`npm login` 与 `npm publish` 交给维护者跑**，AI 不代跑（2FA 授权窗口很短，
    转述链路赶不上）。AI 负责跑检查、改版本号、写 CHANGELOG、commit、打 tag、push。
 2. **发包前必须有一次独立审查**，确认本次 diff 里没有私货，且 `npm pack --dry-run`
-   的清单里没有 `tests/`、`scripts/`。
+   的清单里没有 `tests/`、`scripts/verify-release.mjs`。`scripts/verify-windows.mjs`
+   是**有意**随包的（README 指引 Windows 用户跑它），不要当成漏出去的脚本。

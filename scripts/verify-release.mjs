@@ -203,8 +203,11 @@ if (tagCommit !== headCommit) {
   record(
     'tag 之后的提交',
     true,
+    // Say how many COMMITS, not just how many files: the old wording printed
+    // "无" whenever no shipped file changed, which reads as "no commits at all"
+    // and hid the fact that the tag was not the branch tip.
     touched.length === 0
-      ? `无（HEAD = ${headCommit.slice(0, 8)}）`
+      ? `${changedPaths.length} 个文件，均非随包文件，不影响发布产物（HEAD = ${headCommit.slice(0, 8)}）`
       : `${changedPaths.length} 个文件，其中随包文件：${touched.join(', ')}；内容一致性由下方逐文件比对判定`,
     { blocking: false },
   )

@@ -193,7 +193,8 @@ pnpm run verify:release          # 核验 package.json 里的当前版本
 pnpm run verify:release -- 3.7.0 # 核验指定版本（复查旧 tag 时用）
 ```
 
-脚本（`scripts/verify-release.mjs`）一次做完四件事，共 20 项检查：
+脚本（`scripts/verify-release.mjs`）一次做完四件事，逐项记录（**项数不固定**——随包文件有
+多少个就比多少个，当前为 22～23 项，取决于 HEAD 是否就是 tag）：
 
 1. **tag 指向 HEAD**，并报告工作树是否干净；
 2. **registry 上确有该版本**，且 `latest` 指向它；
