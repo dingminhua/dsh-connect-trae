@@ -1574,14 +1574,17 @@ export function apply(ctx: Context, config: Config): void {
     credential: TraeCredential,
     base: () => Promise<TraeIdentity>,
     attempt = 0,
+    round = 0,
   ): Promise<string> => {
     const value = await base()
     if (poolPreferencesOf(panel).perAccountCheckinDevice !== true) return value.deviceId
     const accountId = traeAccountId(credential)
     // Attempt 0 is the day's stable id. A busy retry has to present a DIFFERENT
-    // one, because the id a 9074 just refused stays refused until tomorrow.
+    // one, because the id a 9074 just refused stays refused until tomorrow — and
+    // it has to differ per ROUND too, or every later round of the day would
+    // re-send the ids an earlier round already burned.
     if (attempt <= 0) return checkinDeviceIdOf(value, accountId)
-    return checkinRetryDeviceIdOf(value, accountId, attempt)
+    return checkinRetryDeviceIdOf(value, accountId, attempt, round)
   }
 
   /**
@@ -1892,7 +1895,7 @@ export function apply(ctx: Context, config: Config): void {
    * The bag is built per REQUEST, so it captures the panel and never has to be
    * told which tab asked.
    */
-  const poolDepsOf = (panel: TraePanel, checkinDone: readonly string[] = []): TraePoolDeps => {
+  const poolDepsOf = (panel: TraePanel, checkinDone: readonly string[] = [], checkinRound = 0): TraePoolDeps => {
     // One `chatStream` bridge PER credential for the life of this bag: a test
     // batch must address the account it is measuring, never whichever account is
     // currently selected (issue #25's rule — looking at a neighbour is not a
@@ -1928,10 +1931,10 @@ export function apply(ctx: Context, config: Config): void {
         })
         return client.checkinStatus()
       },
-      claimCheckinOf: async (credential, attempt = 0) => {
+      claimCheckinOf: async (credential, attempt = 0, round = checkinRound) => {
         const client = new TraeUsageClient({
           credential: async () => credential,
-          deviceId: () => checkinDeviceIdFor(panel, credential, () => stacks[panel].identity(), attempt),
+          deviceId: () => checkinDeviceIdFor(panel, credential, () => stacks[panel].identity(), attempt, round),
         })
         return client.claimCheckin()
       },
@@ -1939,6 +1942,12 @@ export function apply(ctx: Context, config: Config): void {
       // Read at call time, not at construction: the switch can be flipped
       // between two batches without restarting the plugin.
       perAccountDevice: perAccountDeviceOf(panel),
+      // The runner normalises this and passes it back in as `round`; without the
+      // field it would silently clamp every round to 0 and a later batch of the
+      // same day would re-send the ids an earlier one already burned (issue #103).
+      // Not switch-gated on purpose: round 0 is byte-identical to before, and the
+      // derivation only consults it when a retry is actually made.
+      checkinRound,
       // A 9074 retry rotates the device id, so it rides on the same switch: with
       // the switch off the batch makes exactly one request per account, as before.
       ...perAccountDeviceOf(panel) ? { busyRetry: { attempts: CHECKIN_BUSY_RETRIES, gapMs: CHECKIN_BUSY_RETRY_GAP_MS } } : {},
@@ -2452,7 +2461,7 @@ export function apply(ctx: Context, config: Config): void {
     enabled: () => poolPreferencesOf('cn').autoCheckin === true,
     read: readAutoCheckin,
     write: writeAutoCheckin,
-    run: async done => await poolDepsOf('cn', done).checkin?.('cn') ?? [],
+    run: async (done, round) => await poolDepsOf('cn', done, round).checkin?.('cn') ?? [],
     // `9095` means "this MACHINE is spent" only while all accounts share the
     // machine's device id; with per-account ids it only finishes that account.
     perAccountDevice: () => poolPreferencesOf('cn').perAccountCheckinDevice === true,

@@ -25,10 +25,20 @@ issue #103 的实测排除了这个方向：换 `x-machine-id`、换 UA、换设
 同一账号换号重复 claim 是幂等成功——**换号重试不产生多一份奖励**，只是让「被挤兑撞掉的
 那一次」还有机会重来。上限刻意很小（2 次、5 秒），不是对抗端点。
 
-**已知缺口（本次未修）**：重试号的盐只有「本机号 + 账号 + attempt」，**不含日期或轮次**，
-所以每一天的 attempt 序列都是 `0,1,2` 同一组。若某天第一轮三个号全被 `9074` 拒绝，
-当天其余轮次重发的仍是那三个已被拒的号——修复把「结构上不可能」推迟了一轮，没有彻底消除。
-彻底做法是在盐里加当天的 `failures` 或轮次计数，需要把该值传进池的 deps。
+**审计后补修：重试号现在按「轮次」换新（本次已修）。** 4.19.2 那版把盐写成
+「本机号 + 账号 + attempt」，**不含日期也不含轮次**——于是每一天每一轮算出的
+`attempt 1` / `attempt 2` 都是同样两个号。自动签到每 30 分钟跑一轮，某天第一轮三个号
+全被 `9074` 拒掉之后，当天剩下的十九轮重发的还是那三个已被拒的号：等于把「结构上不可能」
+推迟了一轮，没有消除。
+
+现在盐里多了当天已失败批次数（`state.failures`）：`checkinRetryDeviceIdOf` 接受
+`round` 参数，`AutoCheckinDeps.run` 把它传出去，经由 `poolDepsOf` →
+`claimCheckinOf` → `checkinDeviceIdFor` 一路落到派生函数。**`round` 为 0 时哈希串与
+改动前逐字节相同**，所以一天里没撞过第二次 `9074` 的批次行为完全不变；手动签到走的是
+不带 `round` 的 3 参调用，仍是当天那个稳定号。
+
+刻意不用时间戳当盐：重启会从状态文件读回同一个 `failures`，同一轮内算出的号依然可复现
+（同一天里「第 N 轮的第 M 次尝试」是确定的），不会因为重启就变成一批新设备号。
 
 ### 二、schema 补根修复的三个缺口（同一 seam）
 
@@ -91,7 +101,19 @@ id / 本机路径，`verify:privacy` 只看 PNG 字节、OCR 文本与版权署�
 按新语义修正：`normalizeTraeToolSchema({})` 现在返回 `{ type: 'object', properties: {} }`，
 因为该入口收到的值就是 `parameters`，`{}` 在那里只有一个读法。
 
-全仓 118 文件 / 1551 例全过；typecheck 双 tsconfig 0 error；`verify:privacy` 17 项全过、
+`tests/account-pool.spec.ts` 净增 3 条（派生函数按轮次换号、runner 把轮次传到位、
+以及「轮次必须从 deps 读」的守卫），先确认失败（`expected 2 to be 4`——两轮算出的号
+确实是同一组）再实现；并分别做了变异验证：把盐里的轮次去掉、或让 runner 不传轮次，
+对应用例立刻红。另按新签名更新一条既有断言（`run` 现在收到 `(done, round)`，第二轮是 `1`）。
+
+**接线时踩到一个只有人眼能发现的坑，记在这里**：第一版只把 `round` 写成
+`claimCheckinOf` 的**默认参数**（`round = checkinRound`），却忘了把 `checkinRound`
+放进 `TraePoolRunnerDeps`——于是 `deps.checkinRound` 恒为 `undefined`，runner 把它
+归一化成 0，**每个轮次又退回同一个号**。`tsc` 完全看不见这件事：默认参数让字段缺失
+也能编译通过，测试也会绿。补上字段后又加了一条守卫用例，专门只设 deps 字段、忽略
+第三参数来读，把这条断掉的线钉住。
+
+全仓 118 文件 / 1554 例全过；typecheck 双 tsconfig 0 error；`verify:privacy` 17 项全过、
 无 SKIP；`verify:release` 对已发布的 4.19.2 仍报 23 项一致（本节属于 4.19.2 之后的改动，
 不影响已发布产物）。
 

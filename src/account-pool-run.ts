@@ -92,12 +92,18 @@ export interface TraePoolRunnerDeps {
   /**
    * Claim one account's check-in (CN only).
    *
-   * `attempt` is 0 for the first request of the day and grows by one per busy
+   * `attempt` is 0 for the first request of a batch and grows by one per busy
    * retry, so the caller can present a different `x-device-id` for each attempt
    * (`checkinRetryDeviceIdOf`). Attempt 0 must stay the stable id, so a batch that
    * never meets `9074` sends exactly what it sent before this parameter existed.
+   *
+   * `round` is the day's count of already failed batches. It matters because
+   * `9074` refuses an id for the rest of the DAY, not for one batch: without it,
+   * every later round of the same day derived the same three ids and re-sent ids
+   * the upstream had already turned away. Round 0 is the first attempt of a day
+   * and leaves the derivation unchanged.
    */
-  claimCheckinOf(credential: TraeCredential, attempt?: number): Promise<TraeCheckinClaim>
+  claimCheckinOf(credential: TraeCredential, attempt?: number, round?: number): Promise<TraeCheckinClaim>
   /**
    * One minimal real chat call for one credential.
    *
@@ -126,8 +132,17 @@ export interface TraePoolRunnerDeps {
    * id failed 20 times at 5s intervals, while a different id succeeded on the
    * next call). So a retry is only worth making together with a NEW device id —
    * that pairing is what the Host wires through `claimCheckinOf`'s `attempt`.
+   *
+   * `round` lets the caller rotate the salt per day-round; see `checkinRound`.
    */
   busyRetry?: { attempts: number; gapMs: number }
+  /**
+   * Which batch of the day this is (`0` = the day's first attempt). Handed to
+   * `claimCheckinOf` so a retry id is not one an earlier round already burned.
+   * Absent means 0, which is the day's first attempt and byte-identical to the
+   * behaviour before this existed.
+   */
+  checkinRound?: number
 }
 
 /**
@@ -247,12 +262,15 @@ async function checkinOne(
 async function claimWithBusyRetry(credential: TraeCredential, deps: TraePoolRunnerDeps): Promise<TraeCheckinClaim> {
   const extra = Math.max(0, Math.trunc(deps.busyRetry?.attempts ?? 0))
   const gap = Math.max(0, deps.busyRetry?.gapMs ?? 0)
+  // Negative or fractional rounds are normalised here rather than in the
+  // derivation, so every caller gets the same reading of a bad value.
+  const round = Math.max(0, Math.trunc(deps.checkinRound ?? 0))
   const total = extra + 1
-  let claim = await deps.claimCheckinOf(credential, 0)
+  let claim = await deps.claimCheckinOf(credential, 0, round)
   for (let attempt = 1; attempt < total; attempt += 1) {
     if (claim.claimed || claim.code !== CHECKIN_BUSY) return claim
     if (gap > 0) await (deps.wait ?? defaultWait)(gap)
-    claim = await deps.claimCheckinOf(credential, attempt)
+    claim = await deps.claimCheckinOf(credential, attempt, round)
   }
   return claim
 }

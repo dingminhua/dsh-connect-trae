@@ -77,7 +77,14 @@ export interface AutoCheckinDeps {
   enabled(): boolean
   read(): Promise<AutoCheckinState | undefined>
   write(state: AutoCheckinState): Promise<void>
-  run(done: readonly string[]): Promise<readonly TraePoolCheckinRow[]>
+  /**
+   * Run one batch. `round` is the day's count of ALREADY FAILED batches
+   * (`state.failures`), handed out so a retry can derive a device id upstream has
+   * not refused yet: `9074` refuses an id for the rest of the day (issue #103), so
+   * a retry that repeats a round's ids was never going to help. Round 0 is the
+   * day's first attempt and behaves byte-identically to before rounds existed.
+   */
+  run(done: readonly string[], round: number): Promise<readonly TraePoolCheckinRow[]>
   now?(): number
   /** 设备号是否按账号派生（`pool.perAccountCheckinDevice`），决定 `9095` 的语义。 */
   perAccountDevice?(): boolean
@@ -119,7 +126,7 @@ export function createAutoCheckin(deps: AutoCheckinDeps): { tick(): Promise<void
         }
         if (now < state.retryAt) return
         let rows: readonly TraePoolCheckinRow[]
-        try { rows = await deps.run(state.done) }
+        try { rows = await deps.run(state.done, state.failures) }
         catch { rows = [{ accountId: '', accountName: '', status: 'failed' }] }
         memory = foldCheckin(state, rows, deps.now?.() ?? Date.now(), {
           perAccountDevice: deps.perAccountDevice?.() === true,

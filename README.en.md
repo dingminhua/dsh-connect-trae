@@ -89,7 +89,7 @@ Turning on **Give each account its own check-in device id** in the pool settings
 
 The switch is **off by default**; while it is off every request sends exactly the `x-device-id` it sent before. Two things stay true when it is on: one account still gets at most one reward per day (the grant side de-duplicates on account × calendar day, so a repeated claim is an idempotent success), and the upstream occasionally answers `9074` ("too many users right now") — that is a rate limit, not a device limit.
 
-A device id that `9074` has turned away stays refused for the rest of the day (measured: the same id failed 20 times in a row, while a fresh one succeeded on the very next call). So with the switch on, automatic check-in gives each account two extra attempts, each carrying a different derived id (`sha256('trae-checkin\0' + machine id + '\0' + account id + '\0retry\0' + attempt)`). With the switch off it is still one request per account, exactly as before.
+A device id that `9074` has turned away stays refused for the rest of the day (measured: the same id failed 20 times in a row, while a fresh one succeeded on the very next call). So with the switch on, automatic check-in gives each account two extra attempts, each carrying a different derived id (`sha256('trae-checkin\0' + machine id + '\0' + account id + '\0retry\0' + attempt [+ '\0round\0' + round])`). The round is the day's count of failed batches: `9074` refuses an id for the whole day, so from the second batch on the retry has to present an id no earlier batch burned — otherwise it re-sends the very ids that were just refused. With the switch off it is still one request per account, exactly as before.
 
 ## How it works
 

@@ -27,8 +27,12 @@ describe('automatic check-in', () => {
     const write = vi.fn(async () => {})
     const runner = createAutoCheckin({enabled: () => true, read: async () => saved, write, run, now: () => time, random: () => 0})
     await runner.tick(); await runner.tick()
-    expect(run).toHaveBeenCalledTimes(1); expect(run).toHaveBeenCalledWith(['a'])
+    // The second argument is the day's failed-batch count, which salts the retry
+    // device id: a second round must not re-send ids `9074` already refused.
+    expect(run).toHaveBeenCalledTimes(1); expect(run).toHaveBeenCalledWith(['a'], 0)
     time += 60_000; await runner.tick(); expect(run).toHaveBeenCalledTimes(2)
+    // The first batch reported a failure, so this round is 1.
+    expect(run).toHaveBeenLastCalledWith(['a'], 1)
     expect(write).toHaveBeenCalledTimes(2)
   })
   it('does not repeat completed device work until the date changes', async () => {

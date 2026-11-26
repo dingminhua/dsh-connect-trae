@@ -28,6 +28,7 @@ import {
   POOL_BATCH_GAP_MS,
   type TraePoolRunnerDeps,
 } from '../src/account-pool-run.ts'
+import { checkinRetryDeviceIdOf } from '../src/identity.ts'
 import { parseUpstreamResetAt } from '../src/reset-time.ts'
 import { TRAE_ACCOUNT_ID_RE, isTraeAccountId, traeAccountId } from '../src/auth.ts'
 
@@ -611,6 +612,79 @@ describe('checkinAllAccounts', () => {
     expect(claims).toBe(3)
     expect(rows.map(row => row.status)).toEqual(['failed'])
     expect(rows[0]?.message).toBe('当前参与用户太多')
+  })
+
+  it('derives a DIFFERENT retry id per round, so a second round is not re-sending refused ids', async () => {
+    // `9074` refuses a device id for the rest of the day (issue #103), so a retry
+    // id is worthless the moment it has been refused. The first version salted the
+    // derivation with `attempt` alone, which made every round of a day replay the
+    // same `0,1,2` group: after one bad round, every later round re-sent ids the
+    // upstream had already turned away — the fix only postponed the original
+    // "structurally impossible" by one round. The salt now carries the round too.
+    const base = { deviceId: '999000111222333' }
+    const account = 'a'.repeat(24)
+    // Round 0 keeps the original salt, so a day that never meets 9074 twice sends
+    // exactly what it sent before this parameter existed.
+    expect(checkinRetryDeviceIdOf(base, account, 1, 0)).toBe(checkinRetryDeviceIdOf(base, account, 1))
+    // A later round must NOT reuse the ids round 0 already burned.
+    const round0 = [1, 2].map(attempt => checkinRetryDeviceIdOf(base, account, attempt, 0))
+    const round1 = [1, 2].map(attempt => checkinRetryDeviceIdOf(base, account, attempt, 1))
+    expect(new Set([...round0, ...round1]).size).toBe(4)
+    // Still per account and per machine, and still a 32-hex id.
+    expect(round1[0]).toMatch(/^[0-9a-f]{32}$/)
+    expect(checkinRetryDeviceIdOf(base, 'b'.repeat(24), 1, 1)).not.toBe(round1[0])
+    expect(checkinRetryDeviceIdOf({ deviceId: '999000111222334' }, account, 1, 1)).not.toBe(round1[0])
+  })
+
+  it('passes the round through to claimCheckinOf, so rounds can rotate ids', async () => {
+    // End-to-end on the runner seam: whatever the Host is going to salt with must
+    // actually arrive, or a second round silently re-sends refused ids again.
+    const seen: Array<[number, number | undefined]> = []
+    for (const round of [0, 3]) {
+      await checkinAllAccounts(targets.slice(0, 1), deps({
+        perAccountDevice: true,
+        busyRetry: { attempts: 1, gapMs: 0 },
+        checkinRound: round,
+        claimCheckinOf: async (_credential, attempt = 0, passed) => {
+          seen.push([attempt, passed])
+          return { claimed: false, code: 9074, message: '当前参与用户太多' }
+        },
+      }))
+    }
+    expect(seen).toEqual([[0, 0], [1, 0], [0, 3], [1, 3]])
+  })
+
+  it('reads the round from deps, not only from the attempt parameter', async () => {
+    // Regression: the Host once threaded `round` only as `claimCheckinOf`'s
+    // DEFAULT argument, so `deps.checkinRound` stayed undefined and the runner
+    // normalised every batch back to round 0 — the wiring looked connected while
+    // a later batch of the day still re-sent the ids an earlier one burned.
+    // Drive it the way the runner does: only the deps field is set.
+    const seen: Array<number | undefined> = []
+    await checkinAllAccounts(targets.slice(0, 1), deps({
+      perAccountDevice: true,
+      busyRetry: { attempts: 2, gapMs: 0 },
+      checkinRound: 4,
+      claimCheckinOf: async (credential: TraeCredential, attempt = 0) => {
+        // Ignore the third argument on purpose: the round must reach the
+        // derivation through `deps.checkinRound` even if a caller drops it.
+        seen.push(attempt)
+        return { claimed: false, code: 9074, message: '当前参与用户太多' }
+      },
+    }))
+    expect(seen).toEqual([0, 1, 2])
+    // And the normalisation clamps nonsense to 0 rather than trusting it.
+    const rounds: Array<number | undefined> = []
+    await checkinAllAccounts(targets.slice(0, 1), deps({
+      perAccountDevice: true,
+      busyRetry: { attempts: 1, gapMs: 0 },
+      checkinRound: -3.7,
+      claimCheckinOf: async (_credential, _attempt = 0, round) => {
+        rounds.push(round)
+        return { claimed: false, code: 9074, message: '当前参与用户太多' }
+      },
+    }))
+    expect(rounds).toEqual([0, 0])
   })
 
   it('does not retry a busy refusal unless the caller asked for it', async () => {

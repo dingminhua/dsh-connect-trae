@@ -382,21 +382,35 @@ export function checkinDeviceIdOf(base: Pick<TraeIdentity, 'deviceId'>, accountI
  *
  * `9074`「当前参与用户太多」is transient load, but measured behaviour is that the
  * exact id it just refused stays refused for the rest of the day: the same derived
- * id failed 20 times over five-minute gaps, while a different id succeeded on the
- * next call. So a retry needs a different id — still derived from the machine id
- * and account id (cross-machine collisions stay impossible, nothing is stored),
- * salted with the attempt number so it is reproducible within the run.
+ * id failed 20 times at 5s intervals, while a different id succeeded on the next
+ * call. So a retry needs a different id — still derived from the machine id and
+ * account id (cross-machine collisions stay impossible, nothing is stored), salted
+ * with the attempt number so it is reproducible within the run.
+ *
+ * `round` is why this parameter exists. Salting with `attempt` ALONE made the id
+ * a function of the machine, the account and the attempt — so every round of a day
+ * produced the same `attempt 1` and `attempt 2` ids. The automatic check-in runs a
+ * round every 30 minutes, so after one bad round (three ids refused) every later
+ * round re-sent exactly those three refused ids: the retry only postponed the
+ * original "structurally impossible" by one round. The round number is the day's
+ * count of completed batches, which makes each round present ids upstream has not
+ * seen. It is NOT a timestamp — a restart re-reads the same count from state, so
+ * the ids stay reproducible within a round.
  *
  * `attempt` must be >= 1. Attempt 0 is always `checkinDeviceIdOf`, so the first
  * request of a day carries the same stable id it carried before this existed.
+ * `round` 0 is byte-identical to the round-less form, so a day that never meets
+ * `9074` twice behaves exactly as it did before rounds existed.
  */
 export function checkinRetryDeviceIdOf(
   base: Pick<TraeIdentity, 'deviceId'>,
   accountId: string,
   attempt: number,
+  round = 0,
 ): string {
+  const suffix = round > 0 ? `\0round\0${String(Math.trunc(round))}` : ''
   return createHash('sha256')
-    .update(`trae-checkin\0${base.deviceId}\0${accountId}\0retry\0${String(Math.trunc(attempt))}`)
+    .update(`trae-checkin\0${base.deviceId}\0${accountId}\0retry\0${String(Math.trunc(attempt))}${suffix}`)
     .digest('hex')
     .slice(0, 32)
 }
